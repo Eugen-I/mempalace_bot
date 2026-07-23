@@ -1,0 +1,7 @@
+aiogram>=3.27
+python-dotenv>=1.2
+openai>=2.32
+google-genai>=1.73
+yt-dlp>=2026.7
+faster-whisper>=1.2
+rich>=15.0

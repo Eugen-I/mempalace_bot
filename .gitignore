@@ -1,0 +1,36 @@
+# Секреты и ключи
+.env
+*.key
+
+# Кеш Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Виртуальное окружение
+venv/
+.venv/
+
+# Локальные данные (если запускаете не в ~/Documents/mempalace)
+*.db
+*.sqlite
+models.json
+models_V1.json
+mempalace/
+*.pdf
+nohup.out
+
+# Резервные копии
+* Kopie*
+*~
+
+# Логи
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
