@@ -677,7 +677,7 @@ async def process_user_message(message: types.Message):
                 subprocess.run(["/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession", "-suspend"], check=False)
             await message.answer("✅ Выполнено.")
         except Exception as e:
-            await message.answer(f"❌ Ошибка: {e}")
+            await message.answer("❌ Ошибка выполнения команды.")
         return
 
     # 2. 📝 Быстрая заметка (!)

@@ -31,15 +31,9 @@ while true; do
     
     echo -e "${YELLOW}Загрузка списка моделей...${NC}"
     
-    # Получаем список моделей. Используем --format json если возможно, иначе обычный вывод
-    # Попытка использовать jq для точности
-    if command -v jq &> /dev/null; then
-        mapfile -t model_names < <(ollama list --format json 2>/dev/null | jq -r '.models[].name' 2>/dev/null)
-    else
-        # Резервный вариант: парсим обычный вывод ollama list
-        # Пропускаем первую строку (заголовок) и берем первое слово (имя модели)
-        mapfile -t model_names < <(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}')
-    fi
+    # Парсим обычный вывод ollama list
+    # Пропускаем первую строку (заголовок) и берем первое слово (имя модели)
+    IFS=$'\n' read -d '' -r -a model_names < <(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' && printf '\0')
 
     # Фильтруем пустые строки
     clean_models=()
