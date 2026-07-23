@@ -316,7 +316,6 @@ cp _scripts/*.command "MemPalace Bot.app/Contents/Resources/Scripts/"
 
 **Как обновить бота:**
 - Выполните в Терминале: `cd ~/Documents/mempalace_bot && git pull && source venv/bin/activate && pip install -r requirements.txt`
-- Или используйте `GitHub_update.command` (находится в корне проекта)
 
 **Как найти логи:**
 - Логи бота: файл `bot_debug.log` в папке проекта
