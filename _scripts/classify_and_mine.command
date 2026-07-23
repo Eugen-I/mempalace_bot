@@ -17,9 +17,9 @@
 # откуда его запустили)
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Переходим в папку скрипта — это нужно, чтобы Python нашёл
-# все локальные модули (config.py, services/, handlers/)
-cd "$DIR"
+# Переходим в корень проекта — там лежат config.py, services/, handlers/
+BOT_DIR="$HOME/Documents/mempalace_bot"
+cd "$BOT_DIR"
 
 # Путь к Python из виртуального окружения MemPalace
 # (оно создано автоматически при установке mempalace)
@@ -45,7 +45,7 @@ echo ""
 
 # Запускаем Python-скрипт
 # Если скрипт завершится с ошибкой — покажем это в выводе
-$PYTHON classify_and_mine.py
+$PYTHON "$DIR/classify_and_mine.py"
 
 # Проверяем код возврата последней команды
 EXIT_CODE=$?
@@ -53,7 +53,7 @@ EXIT_CODE=$?
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     echo "✅ Скрипт выполнен успешно."
-else:
+else
     echo "⚠️ Скрипт завершился с ошибкой (код: $EXIT_CODE)."
     echo "   Проверь вывод выше для подробностей."
 fi

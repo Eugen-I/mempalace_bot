@@ -3,7 +3,7 @@
 # Переходим в папку скрипта
 cd "$(dirname "$0")"
 
-BOT_FILE="palace_bot.py"
+BOT_FILE="main.py"
 
 echo "=========================================="
 echo "   MemPalace: Принудительная очистка"

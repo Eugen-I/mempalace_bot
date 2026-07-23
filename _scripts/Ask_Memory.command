@@ -1,7 +1,6 @@
 #!/bin/bash
-cd "$HOME/Documents/mempalace"
-source ~/.zshrc
-source venv/bin/activate
+DATA_DIR="$HOME/Documents/mempalace"
+BOT_DIR="$HOME/Documents/mempalace_bot"
 
 # ПРОВЕРКА OLLAMA: если не запущена, запускаем приложение
 if ! pgrep -x "ollama" > /dev/null; then
@@ -9,20 +8,12 @@ if ! pgrep -x "ollama" > /dev/null; then
     open -a Ollama
     sleep 4 # Ждем инициализации
 fi
-DATA_DIR="$HOME/Documents/mempalace"
-BOT_DIR="$HOME/Documents/mempalace_bot"
 cd "$DATA_DIR"
-source venv/bin/activate
+source "$DATA_DIR/venv/bin/activate" || { echo "❌ Не удалось активировать venv."; exit 1; }
 
 ACTIVE=$(cat .current_ai 2>/dev/null || echo "gemini")
 echo "🤖 Запуск MemPalace CLI с моделью: $ACTIVE"
 python3 "$BOT_DIR/cli_ask.py"
-# Выводим текущую модель для контроля
-ACTIVE=$(cat .current_ai 2>/dev/null || echo "gemini")
-echo "🤖 Запуск MemPalace с моделью: $ACTIVE"
-
-# Запускаем основной скрипт
-#python3 ask_gemini.py
 
 echo "---------------------------------------"
 echo "Сессия завершена. Закрытие через 2 сек..."

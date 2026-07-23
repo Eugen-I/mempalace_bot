@@ -357,10 +357,12 @@ async def chat_loop(chat_path: str):
             # 4. Формирование контекста (ИНИЦИАЛИЗИРУЕТСЯ ЗДЕСЬ, ДО ВЫЗОВА ИИ)
             palace_context = await search_palace_context("фото сон сюрреализм пиктореализм психология идеи образы", limit=7)
             
-            from services.prompts import PHOTO_ANALYSIS_PROMPT
-            photo_sys = PHOTO_ANALYSIS_PROMPT
-            if palace_context:
-                photo_sys += f"\n--- ЛИЧНЫЕ ЗАПИСИ (Контекст из базы) ---\n{palace_context}"
+            from services.prompts import get_smart_prompt
+            photo_sys = get_smart_prompt(
+                context=palace_context,
+                query="анализ фотографии, символика, связь с заметками",
+                has_images=True
+            )
 
             photo_ctx = [{"role": "system", "content": photo_sys}]
             photo_ctx.extend(messages[-10:] if len(messages) > 10 else messages)

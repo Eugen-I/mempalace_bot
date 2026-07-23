@@ -13,7 +13,16 @@ import shutil
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("ClassifyAndMine")
 
-BOT_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# ищем корень проекта (там лежит config.py)
+BOT_DIR = SCRIPT_DIR
+for _ in range(5):
+    if os.path.isfile(os.path.join(BOT_DIR, 'config.py')):
+        break
+    parent = os.path.dirname(BOT_DIR)
+    if parent == BOT_DIR:
+        break
+    BOT_DIR = parent
 sys.path.insert(0, BOT_DIR)
 
 from config import NOTES_DIR, INSIGHTS_DIR, RESEARCH_DIR, PDF_ARCHIVE_DIR, DATA_DIR
