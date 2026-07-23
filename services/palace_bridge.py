@@ -97,6 +97,59 @@ def export_note_verbatim(note_path: str) -> str | None:
     shutil.copy2(note_path, dest)
     return dest
 
+async def _run_mempalace(args: list[str]) -> str:
+    cmd = [sys.executable, "-m", "mempalace"] + args
+    logger.info(f"[MEMPalace] {' '.join(cmd)}")
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        cwd=DATA_DIR, env=_get_palace_env()
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        err = stderr.decode().strip()
+        return f"❌ {err}" if err else "❌ Ошибка выполнения команды."
+    return stdout.decode("utf-8").strip()
+
+async def palace_status() -> str:
+    return await _run_mempalace(["status"])
+
+async def palace_list_wings() -> str:
+    return await _run_mempalace(["list_wings"])
+
+async def palace_list_rooms(wing: str) -> str:
+    return await _run_mempalace(["list_rooms", wing])
+
+async def palace_get_taxonomy() -> str:
+    return await _run_mempalace(["get_taxonomy"])
+
+async def palace_traverse(room: str) -> str:
+    return await _run_mempalace(["traverse", room])
+
+async def palace_find_tunnels(wing1: str, wing2: str) -> str:
+    return await _run_mempalace(["find_tunnels", wing1, wing2])
+
+async def palace_wake_up() -> str:
+    return await _run_mempalace(["wake-up"])
+
+async def palace_split(path: str = "") -> str:
+    cmd = ["split"]
+    if path: cmd.append(path)
+    return await _run_mempalace(cmd)
+
+async def palace_compress() -> str:
+    return await _run_mempalace(["compress"])
+
+async def palace_repair() -> str:
+    return await _run_mempalace(["repair"])
+
+async def palace_hook_run(name: str = "") -> str:
+    cmd = ["hook", "run"]
+    if name: cmd.append(name)
+    return await _run_mempalace(cmd)
+
+async def palace_instructions() -> str:
+    return await _run_mempalace(["instructions"])
+
 async def sync_to_palace(target_path: str = None) -> str:
     mine_target = target_path or PALACE_SYNC_DIR
     if not os.path.exists(mine_target) or (os.path.isdir(mine_target) and not os.listdir(mine_target)):
