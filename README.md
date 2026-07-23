@@ -257,7 +257,7 @@ python3 cli_ask.py
 **Бот не отвечает:**
 - Проверьте, запущен ли скрипт (в Терминале должно быть видно `Bot polling started`)
 - Проверьте, правильно ли введён токен в `.env`
-- Напишите мне в Telegram: @author_username
+
 
 **Ошибка «Module not found»:**
 - Выполните `pip install -r requirements.txt` ещё раз
