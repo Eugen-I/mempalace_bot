@@ -34,3 +34,7 @@ nohup.out
 *.swo
 *~
 .DS_Store
+Icon
+
+# Личные скрипты (не для публикации)
+_scripts/index_critic.py
