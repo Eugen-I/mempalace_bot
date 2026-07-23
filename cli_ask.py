@@ -39,7 +39,7 @@ from typing import List, Dict, Optional
 from rich.console import Console
 from rich.syntax import Syntax
 from services.code_mode import is_coding_context, load_coding_prompt, ensure_project_dir, read_project_files
-from services.palace_bridge import search_palace_context, export_chat_verbatim, sync_to_palace
+from services.palace_bridge import search_palace_context, export_chat_verbatim, sync_to_palace, palace_status, palace_list_wings, palace_list_rooms, palace_get_taxonomy, palace_traverse, palace_find_tunnels, palace_wake_up, palace_split, palace_compress, palace_repair, palace_instructions
 
 console = Console()
 
@@ -58,7 +58,7 @@ from config import (
 )
 from services.ai_engine import get_current_ai, get_ai_response_async, invalidate_ai_cache
 from services.multimodal import check_capability
-from services.palace_bridge import search_palace_context, export_chat_verbatim, sync_to_palace
+from services.palace_bridge import search_palace_context, export_chat_verbatim, sync_to_palace, palace_status, palace_list_wings, palace_list_rooms, palace_get_taxonomy, palace_traverse, palace_find_tunnels, palace_wake_up, palace_split, palace_compress, palace_repair, palace_instructions
 from services.memory import get_memory_context, extract_and_store_facts
 
 # 🎨 ЦВЕТОВАЯ РАЗМЕТКА И ФОРМАТИРОВАНИЕ
@@ -278,6 +278,17 @@ HELP_TEXT = f"""{C.CYAN}========================================================
     sync             → Синхронизировать текущий чат с MemPalace (verbatim)
     /photos          - Список фото в папке
     /analyze_photo   - Анализ фото ИИ
+    {C.YELLOW}🏰 УПРАВЛЕНИЕ ДВОРЦОМ:{C.END}
+    /palace           → Меню управления дворцом (статус, крылья, иерархия)
+    /status           → Статус MemPalace
+    /wings            → Список крыльев
+    /rooms <крыло>    → Комнаты в крыле (напр. /rooms dreams)
+    /taxonomy         → Полная иерархия дворца
+    /traverse <комн>  → Обход графа знаний
+    /tunnels <к1> <к2>→ Связи между крыльями
+    /wakeup           → Загрузить дворец в контекст
+    /repair           → Перестроить векторный индекс
+    /compress         → Сжать хранилище
     {C.YELLOW}⚙️ СИСТЕМНЫЕ:{C.END}
     /settings        → Сменить модель ИИ
     q, й, Ctrl+C     → Выход с сохранением
@@ -446,6 +457,91 @@ async def chat_loop(chat_path: str):
             print(f"{C.CYAN}🔍 Ищу в MemPalace{' (крыло: ' + wing + ')' if wing else ''}...{C.END}")
             res = await search_palace_context(search_text, limit=3, wing=wing)
             print(f"\n{C.GREEN}{format_for_terminal(res)}{C.END}\n")
+            continue
+
+        # 🏰 Дворец — команды управления MemPalace
+        if cmd == "/status":
+            print(f"{C.CYAN}🏰 Получаю статус MemPalace...{C.END}")
+            res = await palace_status()
+            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
+            continue
+
+        if cmd == "/wings":
+            print(f"{C.CYAN}📂 Загружаю список крыльев...{C.END}")
+            res = await palace_list_wings()
+            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
+            continue
+
+        if cmd.startswith("/rooms "):
+            wing = cmd[7:].strip()
+            if not wing:
+                print(f"{C.RED}❌ Укажите крыло: /rooms dreams{C.END}")
+                continue
+            print(f"{C.CYAN}🏷 Загружаю комнаты в крыле {wing}...{C.END}")
+            res = await palace_list_rooms(wing)
+            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
+            continue
+
+        if cmd == "/taxonomy":
+            print(f"{C.CYAN}🌐 Загружаю полную иерархию...{C.END}")
+            res = await palace_get_taxonomy()
+            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
+            continue
+
+        if cmd.startswith("/traverse "):
+            room = cmd[10:].strip()
+            if not room:
+                print(f"{C.RED}❌ Укажите комнату: /traverse <имя>{C.END}")
+                continue
+            print(f"{C.CYAN}🔗 Обхожу граф знаний: {room}...{C.END}")
+            res = await palace_traverse(room)
+            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
+            continue
+
+        if cmd.startswith("/tunnels "):
+            parts = cmd[9:].strip().split()
+            if len(parts) < 2:
+                print(f"{C.RED}❌ Укажите два крыла: /tunnels dreams philosophy{C.END}")
+                continue
+            print(f"{C.CYAN}🌉 Ищу связи между {parts[0]} и {parts[1]}...{C.END}")
+            res = await palace_find_tunnels(parts[0], parts[1])
+            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
+            continue
+
+        if cmd == "/wakeup":
+            print(f"{C.CYAN}🌙 Загружаю дворец в контекст...{C.END}")
+            res = await palace_wake_up()
+            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
+            continue
+
+        if cmd == "/repair":
+            print(f"{C.YELLOW}⚠️ Перестройка векторного индекса может занять время...{C.END}")
+            print(f"{C.CYAN}🔁 Запускаю repair...{C.END}")
+            res = await palace_repair()
+            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
+            continue
+
+        if cmd == "/compress":
+            print(f"{C.CYAN}🗜 Сжимаю хранилище...{C.END}")
+            res = await palace_compress()
+            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
+            continue
+
+        if cmd == "/palace":
+            print(f"{C.CYAN}🏰 Дворец MemPalace — команды:{C.END}")
+            for line in [
+                "/status     — статистика дворца",
+                "/wings      — список крыльев",
+                "/rooms X    — комнаты в крыле",
+                "/taxonomy   — полная иерархия",
+                "/traverse X — обход графа знаний",
+                "/tunnels X Y — связи между крыльями",
+                "/wakeup     — загрузить в контекст",
+                "/repair     — перестроить индекс",
+                "/compress   — сжать хранилище",
+            ]:
+                print(f"  {C.YELLOW}{line}{C.END}")
+            print()
             continue
 
         # 🔄 Синхронизация с MemPalace

@@ -97,12 +97,13 @@ dp.message.middleware(security_middleware)
 dp.callback_query.middleware(security_middleware)
 
 # 6. ПОДКЛЮЧЕНИЕ РОУТЕРОВ
-from handlers import chat, settings, notes, pdf, voice
+from handlers import chat, settings, notes, pdf, voice, palace
 dp.include_router(chat.router)
 dp.include_router(settings.router)
 dp.include_router(notes.router)
 dp.include_router(pdf.router)
 dp.include_router(voice.router)
+dp.include_router(palace.router)
 
 fallback_router = Router()
 dp.include_router(fallback_router)
@@ -116,6 +117,7 @@ async def cmd_start(message: types.Message):
         [types.KeyboardButton(text="📂 Список чатов"), types.KeyboardButton(text="⚙️ Настройки")],
         [types.KeyboardButton(text="🔍 Поиск по крылу"), types.KeyboardButton(text="🔄 Синхронизация")],
         [types.KeyboardButton(text="📹 Скачать видео"), types.KeyboardButton(text="🎵 Скачать MP3")],
+        [types.KeyboardButton(text="🏰 Дворец")],
     ], resize_keyboard=True)
     await message.answer("🦾 MemPalace запущен.", reply_markup=kb)
     logger.info(f"User {message.from_user.id} started.")
@@ -517,6 +519,13 @@ async def cb_wing_search_select(callback: types.CallbackQuery):
     )
     await callback.answer()
 
+
+# КНОПКА: Дворец
+@fallback_router.message(F.text == "🏰 Дворец")
+@allowed_only
+async def cmd_palace_button(message: types.Message):
+    from handlers.palace import cmd_palace
+    await cmd_palace(message)
 
 # КНОПКА: Синхронизация
 @fallback_router.message(F.text == "🔄 Синхронизация")
