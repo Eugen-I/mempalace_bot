@@ -936,10 +936,10 @@ async def process_user_message(message: types.Message):
         msgs.append({"role": "user", "content": clean_q})
         msgs.append({"role": "assistant", "content": answer})
         data["messages"] = msgs[-50:]
-        try: 
+        try:
             save_chat(fpath, data)
-        except: 
-            pass
+        except Exception as e:
+            logger.warning(f"Не удалось сохранить чат: {e}")
 
         # Авто-синхронизация с MemPalace (каждые 5 сообщений)
         _sync_counter[uid] = _sync_counter.get(uid, 0) + 1

@@ -6,7 +6,7 @@ cd "$HOME/Documents/mempalace"
 source venv/bin/activate
 
 # 3. Обновляем базу данных (майнинг)
-python3 -m mempalace mine "/my_notes"
+python3 -m mempalace mine "$HOME/Documents/mempalace/my_notes"
 
 # 4. Показываем текущий статус
 python3 -m mempalace status

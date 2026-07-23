@@ -5,7 +5,20 @@ cd "$HOME/Documents/mempalace"
 echo "Внимание: Сейчас база данных MemPalace будет полностью очищена."
 echo "Ваши файлы в my_notes останутся на месте, но ИИ их 'забудет'."
 echo "------------------------------------------------------------"
+echo ""
+echo "Нажмите Y и Enter для подтверждения, любую другую клавишу для отмены:"
+read -n 1 confirm
+echo ""
 
+if [[ "$confirm" != "Y" && "$confirm" != "y" ]]; then
+    echo "❌ Отменено."
+    echo "Нажмите Enter для выхода..."
+    read
+    exit 0
+fi
+
+echo ""
+echo "🗑 Очищаю базу данных..."
 # Удаляем папку с базой данных
 rm -rf ~/.mempalace/palace
 

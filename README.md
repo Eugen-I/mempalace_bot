@@ -45,7 +45,7 @@ brew install anomalyco/tap/mempalace
 
 ```bash
 cd ~/Documents
-git clone https://github.com/ВАШ_ЛОГИН/mempalace_bot.git
+git clone https://github.com/Eugen-I/mempalace_bot.git
 cd mempalace_bot
 ```
 
@@ -77,6 +77,7 @@ TELEGRAM_BOT_TOKEN= — ваш токен от @BotFather (как получит
 ADMIN_ID= — ваш ID в Telegram (как узнать — ниже)
 ALLOWED_USERS= — ID других пользователей (через запятую)
 GEMINI_API_KEY= — ключ от Google Gemini (как получить — ниже)
+OPENAI_API_KEY= — ключ от OpenAI (если используете GPT-4o; получить на https://platform.openai.com/api-keys)
 ```
 
 > 💡 Если ваша папка MemPalace находится **не** в `~/Documents/mempalace`, добавьте в `.env` строку:
@@ -255,10 +256,42 @@ python3 cli_ask.py
 **Бот не отвечает:**
 - Проверьте, запущен ли скрипт (в Терминале должно быть видно `Bot polling started`)
 - Проверьте, правильно ли введён токен в `.env`
-
+- Проверьте, что бот запущен только один раз — два экземпляра конфликтуют
+- Используйте `KillPalaceBot.command` для принудительной остановки, затем запустите снова
 
 **Ошибка «Module not found»:**
 - Выполните `pip install -r requirements.txt` ещё раз
+- Убедитесь, что виртуальное окружение активировано: `source venv/bin/activate`
+
+**Ошибка «venv/bin/activate: No such file or directory»:**
+- Виртуальное окружение не создано. Выполните `python3.12 -m venv venv` в папке проекта
+
+**Ошибка «TELEGRAM_BOT_TOKEN not found»:**
+- Проверьте, что файл `.env` существует в папке `~/Documents/mempalace/`
+- Проверьте, что в нём есть строка `TELEGRAM_BOT_TOKEN=ваш_токен`
+
+**Бот запущен, но не видит команды:**
+- Убедитесь, что вы пишете боту в Telegram, а не ищете его в поиске
+- Нажмите `/start` для инициализации
+
+**PDF не обрабатывается:**
+- Убедитесь, что установлен Tesseract: `brew install tesseract tesseract-lang`
+- Большие PDF (50+ страниц) обрабатываются дольше — подождите
+
+**YouTube не скачивается:**
+- Убедитесь, что установлен `ffmpeg`: `brew install ffmpeg`
+- Ссылка должна быть на видео, не на плейлист
+
+**Ошибка «No module named 'yt_dlp'»:**
+- Выполните `pip install -r requirements.txt` — все зависимости установятся заново
+
+**Как обновить бота:**
+- Выполните в Терминале: `cd ~/Documents/mempalace_bot && git pull && source venv/bin/activate && pip install -r requirements.txt`
+- Или используйте `GitHub_update.command` (находится в корне проекта)
+
+**Как найти логи:**
+- Логи бота: файл `bot_debug.log` в папке проекта
+- Логи запуска: файл `nohup.out` в папке проекта (удаляется автоматически)
 
 ## 📄 Лицензия
 

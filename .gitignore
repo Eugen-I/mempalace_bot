@@ -18,6 +18,7 @@ models.json
 models_V1.json
 mempalace/
 *.pdf
+*.app
 nohup.out
 
 # Резервные копии
