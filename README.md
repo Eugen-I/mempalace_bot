@@ -77,8 +77,14 @@ cp .env.example .env
 ```
 TELEGRAM_BOT_TOKEN= — ваш токен от @BotFather (как получить — ниже)
 ADMIN_ID= — ваш ID в Telegram (как узнать — ниже)
+ALLOWED_USERS= — ID других пользователей (через запятую)
 GEMINI_API_KEY= — ключ от Google Gemini (как получить — ниже)
 ```
+
+> 💡 Если ваша папка MemPalace находится **не** в `~/Documents/mempalace`, добавьте в `.env` строку:
+> ```
+> MEMPALACE_DATA_DIR=/путь/к/вашей/папке/mempalace
+> ```
 
 **Как получить TELEGRAM_BOT_TOKEN:**
 1. Откройте Telegram, найдите @BotFather
