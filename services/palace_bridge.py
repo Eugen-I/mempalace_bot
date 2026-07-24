@@ -75,6 +75,39 @@ async def search_palace_context(query: str, limit: int = 5, wing: str = "", room
         logger.error(f"Error searching MemPalace: {e}", exc_info=True)
         return ""
 
+async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
+    """Комбинированный поиск: текст + Knowledge Graph."""
+    text_result = await search_palace_context(query, limit, wing)
+
+    kg_block = ""
+    try:
+        from services.palace_mcp import get_mcp
+        mcp = get_mcp()
+        await mcp.start()
+
+        kg_raw = await mcp.call_tool("mempalace_kg_query", {"entity": query.strip(), "direction": "both"})
+        kg_data = json.loads(kg_raw)
+        kg_facts = kg_data.get("facts", [])
+        if kg_facts:
+            lines = ["\n--- СВЯЗИ ИЗ ГРАФА ЗНАНИЙ (KG) ---"]
+            for f in kg_facts[:10]:
+                s = f.get("subject", "?")
+                p = f.get("predicate", "?")
+                o = f.get("object", "?")
+                label = {"wrote": "написал", "contains_idea": "→ идея", "contains_quote": "→ цитата", "topic": "тема"}.get(p, p)
+                lines.append(f"  • {s} {label}: {o}")
+            kg_block = "\n".join(lines) + "\n--- КОНЕЦ KG ---\n"
+    except Exception:
+        pass
+
+    combined = text_result
+    if kg_block and text_result:
+        combined = text_result + "\n" + kg_block
+    elif kg_block:
+        combined = kg_block
+
+    return combined
+
 def export_chat_verbatim(chat_path: str, chat_name: str) -> str | None:
     if not os.path.exists(chat_path): return None
     with open(chat_path, "r", encoding="utf-8") as f:
@@ -113,20 +146,9 @@ async def _run_mempalace(args: list[str]) -> str:
 async def palace_status() -> str:
     return await _run_mempalace(["status"])
 
-async def palace_list_wings() -> str:
-    return await _run_mempalace(["list_wings"])
-
-async def palace_list_rooms(wing: str) -> str:
-    return await _run_mempalace(["list_rooms", wing])
-
-async def palace_get_taxonomy() -> str:
-    return await _run_mempalace(["get_taxonomy"])
-
-async def palace_traverse(room: str) -> str:
-    return await _run_mempalace(["traverse", room])
-
-async def palace_find_tunnels(wing1: str, wing2: str) -> str:
-    return await _run_mempalace(["find_tunnels", wing1, wing2])
+async def palace_mcp() -> str:
+    """Показать команду настройки MCP."""
+    return await _run_mempalace(["mcp"])
 
 async def palace_wake_up() -> str:
     return await _run_mempalace(["wake-up"])
@@ -139,16 +161,44 @@ async def palace_split(path: str = "") -> str:
 async def palace_compress() -> str:
     return await _run_mempalace(["compress"])
 
+async def palace_compact() -> str:
+    return await _run_mempalace(["compact"])
+
 async def palace_repair() -> str:
     return await _run_mempalace(["repair"])
 
-async def palace_hook_run(name: str = "") -> str:
-    cmd = ["hook", "run"]
-    if name: cmd.append(name)
-    return await _run_mempalace(cmd)
-
 async def palace_instructions() -> str:
-    return await _run_mempalace(["instructions"])
+    return (
+        "<b>📖 Как работать с Дворцом MemPalace</b>\n\n"
+        "<b>🏰 Что такое Дворец?</b>\n"
+        "Это твоя база знаний. Все заметки, файлы и диалоги "
+        "раскладываются по <b>крыльям</b> и <b>комнатам</b>.\n\n"
+        "<b>🕸️ Крылья</b> — большие разделы (проекты, люди, темы).\n"
+        "  Пример: «my_notes», «projects», «chats».\n\n"
+        "<b>🪪 Комнаты</b> — подтемы внутри крыла.\n"
+        "  Пример: в крыле «my_notes»: «философия», «архетипы», «daily».\n\n"
+        "<b>🏛️ Структура:</b>\n"
+        "  Крыло → Комната → Записи (каждая запись — фрагмент текста)\n\n"
+        "<b>🔄 Туннели</b> — связи между комнатами РАЗНЫХ крыльев.\n"
+        "  Если тема «интегралы» есть и в «math», и в «physics» — "
+        "возникает туннель.\n"
+        "  Поиск: введите два крыла → покажет их общие темы.\n"
+        "  Если крыло одно — туннелей нет, пользуйтесь 🔀 Траверс.\n\n"
+        "<b>🧠 Граф знаний (KG)</b> — база фактов.\n"
+        "  Связи: «Сущность → отношение → значение».\n"
+        "  Пример: «Max → работает_над → MemPalace».\n"
+        "  Поиск по сущности покажет все связанные факты.\n\n"
+        "<b>🔧 Обслуживание:</b>\n"
+        "  • Перестроить индекс — после ручного добавления файлов\n"
+        "  • Сжать БД — очистить старые сегменты ChromaDB (compact)\n"
+        "  • Сжать текст — удалить дубликаты и объединить похожее\n"
+        "  • Загрузить в контекст — подгрузить крыло в память\n\n"
+        "<b>💡 Советы:</b>\n"
+        "  • После майнинга проверь Статус — увидишь новые крылья\n"
+        "  • Найди пересечения через Туннели → Между крыльями\n"
+        "  • Ищи факты в KG — там выводы ИИ\n"
+        "  • Если база тормозит — запусти Сжать БД (compact)\n"
+    )
 
 async def sync_to_palace(target_path: str = None) -> str:
     mine_target = target_path or PALACE_SYNC_DIR

@@ -9,6 +9,7 @@ import os
 import sys
 import re
 import logging
+import tempfile
 # Скрываем INFO/WARNING от всех модулей, оставляем только ERROR
 logging.basicConfig(level=logging.ERROR, format='%(levelname)s: %(message)s')
 logger = logging.getLogger("CLI")
@@ -39,7 +40,8 @@ from typing import List, Dict, Optional
 from rich.console import Console
 from rich.syntax import Syntax
 from services.code_mode import is_coding_context, load_coding_prompt, ensure_project_dir, read_project_files
-from services.palace_bridge import search_palace_context, export_chat_verbatim, sync_to_palace, palace_status, palace_list_wings, palace_list_rooms, palace_get_taxonomy, palace_traverse, palace_find_tunnels, palace_wake_up, palace_split, palace_compress, palace_repair, palace_instructions
+from services.palace_bridge import search_palace_context, search_with_kg, export_chat_verbatim, sync_to_palace, palace_status, palace_mcp, palace_wake_up, palace_split, palace_compress, palace_compact, palace_repair, palace_instructions
+from services.palace_mcp import get_mcp
 
 console = Console()
 
@@ -58,7 +60,7 @@ from config import (
 )
 from services.ai_engine import get_current_ai, get_ai_response_async, invalidate_ai_cache
 from services.multimodal import check_capability
-from services.palace_bridge import search_palace_context, export_chat_verbatim, sync_to_palace, palace_status, palace_list_wings, palace_list_rooms, palace_get_taxonomy, palace_traverse, palace_find_tunnels, palace_wake_up, palace_split, palace_compress, palace_repair, palace_instructions
+from services.palace_bridge import search_palace_context, search_with_kg, export_chat_verbatim, sync_to_palace, palace_status, palace_mcp, palace_wake_up, palace_split, palace_compress, palace_compact, palace_repair, palace_instructions
 from services.memory import get_memory_context, extract_and_store_facts
 
 # 🎨 ЦВЕТОВАЯ РАЗМЕТКА И ФОРМАТИРОВАНИЕ
@@ -190,8 +192,14 @@ def save_code_from_text(text: str, project_dir: str, filename_hint: str = "scrip
 
 
 def save_chat(path: str, data: Dict) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        dirpath = os.path.dirname(path)
+        with tempfile.NamedTemporaryFile('w', dir=dirpath, delete=False, encoding='utf-8') as tmp:
+            json.dump(data, tmp, ensure_ascii=False, indent=2)
+            tmp_path = tmp.name
+        os.replace(tmp_path, path)
+    except Exception as e:
+        print(f"❌ Ошибка сохранения чата {path}: {e}")
 
 def list_chats() -> List[str]:
     if not os.path.exists(CHATS_DIR):
@@ -279,16 +287,22 @@ HELP_TEXT = f"""{C.CYAN}========================================================
     /photos          - Список фото в папке
     /analyze_photo   - Анализ фото ИИ
     {C.YELLOW}🏰 УПРАВЛЕНИЕ ДВОРЦОМ:{C.END}
-    /palace           → Меню управления дворцом (статус, крылья, иерархия)
-    /status           → Статус MemPalace
-    /wings            → Список крыльев
-    /rooms <крыло>    → Комнаты в крыле (напр. /rooms dreams)
-    /taxonomy         → Полная иерархия дворца
-    /traverse <комн>  → Обход графа знаний
-    /tunnels <к1> <к2>→ Связи между крыльями
+    /palace           → Список команд дворца
+    /status           → Статус MemPalace (крылья, комнаты, записи)
+    /wings            → Список всех крыльев
+    /rooms [крыло]    → Список комнат (крыло опционально)
+    /taxonomy         → Полная таксономия: крыло→комната→записи
+    /graph            → Статистика графа дворца
+    /traverse <комната> [шаги] → Пройти по графу из комнаты
+    /tunnels [a] [b]  → Туннели между крыльями
+    /follow <крыло> <комната> → Пройти туннели из комнаты
+    /kg <сущность>    → Поиск в графе знаний
+    /kgstats          → Статистика графа знаний
+    /mcp              → Инструкция по настройке MCP
     /wakeup           → Загрузить дворец в контекст
     /repair           → Перестроить векторный индекс
-    /compress         → Сжать хранилище
+    /compact          → Сжать БД (очистить сегменты ChromaDB)
+    /compress         → Сжать текст (AAAK Dialect)
     {C.YELLOW}⚙️ СИСТЕМНЫЕ:{C.END}
     /settings        → Сменить модель ИИ
     q, й, Ctrl+C     → Выход с сохранением
@@ -466,45 +480,9 @@ async def chat_loop(chat_path: str):
             print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
             continue
 
-        if cmd == "/wings":
-            print(f"{C.CYAN}📂 Загружаю список крыльев...{C.END}")
-            res = await palace_list_wings()
-            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
-            continue
-
-        if cmd.startswith("/rooms "):
-            wing = cmd[7:].strip()
-            if not wing:
-                print(f"{C.RED}❌ Укажите крыло: /rooms dreams{C.END}")
-                continue
-            print(f"{C.CYAN}🏷 Загружаю комнаты в крыле {wing}...{C.END}")
-            res = await palace_list_rooms(wing)
-            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
-            continue
-
-        if cmd == "/taxonomy":
-            print(f"{C.CYAN}🌐 Загружаю полную иерархию...{C.END}")
-            res = await palace_get_taxonomy()
-            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
-            continue
-
-        if cmd.startswith("/traverse "):
-            room = cmd[10:].strip()
-            if not room:
-                print(f"{C.RED}❌ Укажите комнату: /traverse <имя>{C.END}")
-                continue
-            print(f"{C.CYAN}🔗 Обхожу граф знаний: {room}...{C.END}")
-            res = await palace_traverse(room)
-            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
-            continue
-
-        if cmd.startswith("/tunnels "):
-            parts = cmd[9:].strip().split()
-            if len(parts) < 2:
-                print(f"{C.RED}❌ Укажите два крыла: /tunnels dreams philosophy{C.END}")
-                continue
-            print(f"{C.CYAN}🌉 Ищу связи между {parts[0]} и {parts[1]}...{C.END}")
-            res = await palace_find_tunnels(parts[0], parts[1])
+        if cmd == "/mcp":
+            print(f"{C.CYAN}🔌 Получаю команду настройки MCP...{C.END}")
+            res = await palace_mcp()
             print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
             continue
 
@@ -521,8 +499,14 @@ async def chat_loop(chat_path: str):
             print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
             continue
 
+        if cmd == "/compact":
+            print(f"{C.CYAN}🗜️ Запускаю compact (очистка сегментов БД)...{C.END}")
+            res = await palace_compact()
+            print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
+            continue
+
         if cmd == "/compress":
-            print(f"{C.CYAN}🗜 Сжимаю хранилище...{C.END}")
+            print(f"{C.CYAN}📦 Сжимаю текст хранилища...{C.END}")
             res = await palace_compress()
             print(f"{C.GREEN}{format_for_terminal(res)}{C.END}\n")
             continue
@@ -530,17 +514,235 @@ async def chat_loop(chat_path: str):
         if cmd == "/palace":
             print(f"{C.CYAN}🏰 Дворец MemPalace — команды:{C.END}")
             for line in [
-                "/status     — статистика дворца",
-                "/wings      — список крыльев",
-                "/rooms X    — комнаты в крыле",
-                "/taxonomy   — полная иерархия",
-                "/traverse X — обход графа знаний",
-                "/tunnels X Y — связи между крыльями",
-                "/wakeup     — загрузить в контекст",
+                "/status     — статистика дворца (крылья, комнаты, записи)",
+                "/wings      — список всех крыльев",
+                "/rooms      — список комнат",
+                "/taxonomy   — полная таксономия",
+                "/graph      — статистика графа",
+                "/traverse   — траверс графа из комнаты",
+                "/tunnels    — туннели между крыльями",
+                "/follow     — пройти туннели из комнаты",
+                "/kg         — поиск в графе знаний",
+                "/kgstats    — статистика KG",
+                "/mcp        — инструкция MCP",
+                "/wakeup     — загрузить дворец в контекст",
                 "/repair     — перестроить индекс",
-                "/compress   — сжать хранилище",
+                "/compact    — сжать БД (очистить старые сегменты)",
+                "/compress   — сжать текст (AAAK Dialect)",
             ]:
                 print(f"  {C.YELLOW}{line}{C.END}")
+            print()
+            continue
+
+        # 🕸️ Список крыльев
+        if cmd == "/wings":
+            print(f"{C.CYAN}🕸️ Загружаю список крыльев...{C.END}")
+            try:
+                mcp = get_mcp()
+                await mcp.start()
+                raw = await mcp.call_tool("mempalace_list_wings")
+                import json as _json
+                parsed = _json.loads(raw)
+                wings = parsed.get("wings", {})
+                for name, count in sorted(wings.items(), key=lambda x: -x[1]):
+                    display = name.replace("mempalace_", "").replace("_", " ").title()
+                    print(f"  {C.GREEN}{display}:{C.END} {count} записей")
+            except Exception as e:
+                print(f"{C.RED}❌ Ошибка: {e}{C.END}")
+            print()
+            continue
+
+        # 🪪 Комнаты
+        if cmd.startswith("/rooms"):
+            parts = cmd.split(maxsplit=1)
+            wing = parts[1] if len(parts) > 1 else None
+            print(f"{C.CYAN}🪪 Загружаю комнаты{' крыла ' + wing if wing else ''}...{C.END}")
+            try:
+                mcp = get_mcp()
+                await mcp.start()
+                args = {"wing": wing} if wing else {}
+                raw = await mcp.call_tool("mempalace_list_rooms", args)
+                import json as _json
+                parsed = _json.loads(raw)
+                rooms = parsed.get("rooms", {})
+                wing_name = parsed.get("wing", wing or "все")
+                print(f"  {C.BOLD}{C.YELLOW}Комнаты «{wing_name}»:{C.END}\n")
+                for idx, (room, count) in enumerate(sorted(rooms.items()), 1):
+                    print(f"  {idx}. {C.BOLD}{room}{C.END} — {count}")
+            except Exception as e:
+                print(f"{C.RED}❌ Ошибка: {e}{C.END}")
+            print()
+            continue
+
+        # 🏛️ Таксономия
+        if cmd == "/taxonomy":
+            print(f"{C.CYAN}🏛️ Загружаю таксономию...{C.END}")
+            try:
+                mcp = get_mcp()
+                await mcp.start()
+                raw = await mcp.call_tool("mempalace_get_taxonomy")
+                import json as _json
+                parsed = _json.loads(raw)
+                tax = parsed.get("taxonomy", {})
+                for wing, rooms in sorted(tax.items()):
+                    display = wing.replace("_", " ").title()
+                    total = sum(rooms.values())
+                    print(f"  {C.YELLOW}{display}:{C.END} {total} записей, {len(rooms)} комнат")
+            except Exception as e:
+                print(f"{C.RED}❌ Ошибка: {e}{C.END}")
+            print()
+            continue
+
+        # 📊 Граф
+        if cmd == "/graph":
+            print(f"{C.CYAN}📊 Загружаю статистику графа...{C.END}")
+            try:
+                mcp = get_mcp()
+                await mcp.start()
+                raw = await mcp.call_tool("mempalace_graph_stats")
+                import json as _json
+                parsed = _json.loads(raw)
+                print(f"  {C.GREEN}Комнат всего:{C.END} {parsed.get('total_rooms', 0)}")
+                print(f"  {C.GREEN}Комнат с туннелями:{C.END} {parsed.get('tunnel_rooms', 0)}")
+                print(f"  {C.GREEN}Связей:{C.END} {parsed.get('total_edges', 0)}")
+            except Exception as e:
+                print(f"{C.RED}❌ Ошибка: {e}{C.END}")
+            print()
+            continue
+
+        # 🔀 Траверс
+        if cmd.startswith("/traverse"):
+            parts = cmd.split(maxsplit=2)
+            if len(parts) < 2:
+                print(f"{C.RED}❌ Укажите комнату: /traverse <комната> [шаги]{C.END}")
+                continue
+            room = parts[1]
+            hops = int(parts[2]) if len(parts) > 2 else 2
+            print(f"{C.CYAN}🔀 Траверс из комнаты «{room}» ({hops} шагов)...{C.END}")
+            try:
+                mcp = get_mcp()
+                await mcp.start()
+                raw = await mcp.call_tool("mempalace_traverse", {"start_room": room, "max_hops": hops})
+                print(f"{C.GREEN}{format_for_terminal(raw)}{C.END}")
+            except Exception as e:
+                print(f"{C.RED}❌ Ошибка: {e}{C.END}")
+            print()
+            continue
+
+        # 🔄 Туннели
+        if cmd.startswith("/tunnels"):
+            parts = cmd.split(maxsplit=2)
+            wing_a = parts[1] if len(parts) > 1 else None
+            wing_b = parts[2] if len(parts) > 2 else None
+            print(f"{C.CYAN}🔄 Ищу туннели...{C.END}")
+            try:
+                mcp = get_mcp()
+                await mcp.start()
+                args = {}
+                if wing_a: args["wing_a"] = wing_a
+                if wing_b: args["wing_b"] = wing_b
+                raw = await mcp.call_tool("mempalace_find_tunnels", args)
+                print(f"{C.GREEN}{format_for_terminal(raw)}{C.END}")
+            except Exception as e:
+                print(f"{C.RED}❌ Ошибка: {e}{C.END}")
+            print()
+            continue
+
+        # ➡️ Follow tunnels
+        if cmd.startswith("/follow"):
+            parts = cmd.split(maxsplit=2)
+            if len(parts) < 3:
+                print(f"{C.RED}❌ Укажите крыло и комнату: /follow <крыло> <комната>{C.END}")
+                continue
+            wing, room = parts[1], parts[2]
+            print(f"{C.CYAN}➡️ Следую туннелям из {wing}/{room}...{C.END}")
+            try:
+                mcp = get_mcp()
+                await mcp.start()
+                raw = await mcp.call_tool("mempalace_follow_tunnels", {"wing": wing, "room": room})
+                print(f"{C.GREEN}{format_for_terminal(raw)}{C.END}")
+            except Exception as e:
+                print(f"{C.RED}❌ Ошибка: {e}{C.END}")
+            print()
+            continue
+
+        # 🧠 Знания
+        if cmd.startswith("/kg ") and not cmd.startswith("/kgstats"):
+            from handlers.palace import _normalize_query
+            entity = _normalize_query(cmd.split(maxsplit=1)[1])
+            print(f"{C.CYAN}🧠 Ищу «{entity}» в графе знаний...{C.END}")
+            try:
+                mcp = get_mcp()
+                await mcp.start()
+                raw = await mcp.call_tool("mempalace_kg_query", {"entity": entity})
+                import json as _json
+                parsed = _json.loads(raw)
+                facts = parsed if isinstance(parsed, list) else parsed.get("facts", [])
+                if not facts:
+                    print(f"{C.YELLOW}Нет фактов о «{entity}» в графе знаний.{C.END}")
+                else:
+                    for f in facts:
+                        if isinstance(f, dict):
+                            line = f"  • {f.get('subject', '?')} → {f.get('predicate', '?')} → {f.get('object', '?')}"
+                            if f.get("valid_from"):
+                                line += f" (с {f['valid_from']})"
+                            print(f"{C.GREEN}{line}{C.END}")
+                        else:
+                            print(f"  • {f}")
+            except Exception as e:
+                print(f"{C.RED}❌ Ошибка: {e}{C.END}")
+            print()
+            continue
+
+        # 📚 Enrichment: добавить связи в KG из заметок
+        if cmd == "/enrich":
+            notes_count = sum(1 for r, d, fs in os.walk(NOTES_DIR) for f in fs if f.endswith(('.txt', '.md')))
+            print(f"{C.YELLOW}⚡ Запускаю enrichment заметок в Knowledge Graph...{C.END}")
+            print(f"{C.YELLOW}⚠️ Найдено {notes_count} файлов. Продолжить? (y/n):{C.END}")
+            try:
+                confirm = input().strip().lower()
+                if confirm != "y":
+                    print(f"{C.RED}Отменено.{C.END}")
+                    continue
+            except:
+                continue
+            from services.kg_enricher import enrich_all_notes
+            print(f"{C.CYAN}📚 Обогащаю заметки...{C.END}")
+            async def _progress(curr, total, stats):
+                print(f"{C.CYAN}  [{curr}/{total}] {stats['processed']} обработано, {stats['kg_added']} фактов добавлено{C.END}")
+            try:
+                result = await enrich_all_notes(_progress)
+                if "error" in result:
+                    print(f"{C.RED}❌ {result['error']}{C.END}")
+                else:
+                    print(f"\n{C.GREEN}✅ Enrichment завершён:{C.END}")
+                    print(f"  • Обработано файлов: {result['processed']}")
+                    print(f"  • Не удалось: {result['failed']}")
+                    print(f"  • Фактов добавлено в KG: {result['kg_added']}")
+                    print(f"  • Найдено авторов: {len(result.get('authors', []))}")
+                    print(f"  • Найдено книг: {len(result.get('books', []))}")
+                    for a in result.get('authors', [])[:5]:
+                        print(f"    - {a}")
+                    if len(result.get('authors', [])) > 5:
+                        print(f"    ... и ещё {len(result['authors'])-5}")
+            except Exception as e:
+                print(f"{C.RED}❌ Ошибка: {e}{C.END}")
+            continue
+
+        if cmd == "/kgstats":
+            print(f"{C.CYAN}📊 Загружаю статистику графа знаний...{C.END}")
+            try:
+                mcp = get_mcp()
+                await mcp.start()
+                raw = await mcp.call_tool("mempalace_kg_stats")
+                import json as _json
+                parsed = _json.loads(raw)
+                print(f"  {C.GREEN}Сущностей:{C.END} {parsed.get('entities', 0)}")
+                print(f"  {C.GREEN}Связей:{C.END} {parsed.get('triples', 0)}")
+                print(f"  {C.GREEN}Актуальных фактов:{C.END} {parsed.get('current_facts', 0)}")
+                print(f"  {C.GREEN}Устаревших фактов:{C.END} {parsed.get('expired_facts', 0)}")
+            except Exception as e:
+                print(f"{C.RED}❌ Ошибка: {e}{C.END}")
             print()
             continue
 
@@ -640,9 +842,9 @@ async def chat_loop(chat_path: str):
                 target_wing = auto_wing
                 print(f"{C.CYAN}🔍 Авто-крыло: {target_wing}{C.END}")
         
-        palace_context = await search_palace_context(clean_q, limit=3, wing=target_wing)
+        palace_context = await search_with_kg(clean_q, limit=3, wing=target_wing)
         latest_summary = data.get("summaries", [])[-1] if data.get("summaries") else ""
-
+        
         # 2. 🔍 АВТО-ДЕТЕКЦИЯ РЕЖИМА КОДИНГА
         is_code = is_coding_context(clean_q, messages)
         if is_code and not data.get("is_coding_mode"):
@@ -793,6 +995,10 @@ async def main_menu():
             
         if choice in ["q", "й", "quit", "exit", "выход"]:
             print(f"{C.RED}👋 Завершение работы...{C.END}")
+            try:
+                await get_mcp().stop()
+            except:
+                pass
             break
             
         if choice in ["h", "help", "/help", "-h"]:
@@ -845,3 +1051,8 @@ if __name__ == "__main__":
         asyncio.run(main_menu())
     except KeyboardInterrupt:
         print(f"\n{C.RED}👋 Остановлено.{C.END}")
+        try:
+            import asyncio as _aio
+            _aio.run(get_mcp().stop())
+        except:
+            pass

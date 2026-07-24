@@ -6,6 +6,7 @@ chat.py
 import os
 import json
 import re
+import tempfile
 from datetime import datetime
 from services.prompts import get_summary_prompt
 from aiogram import F, Router, types
@@ -15,6 +16,7 @@ from config import CHATS_DIR, allowed_only, allowed_callback
 from services.ai_engine import get_ai_response_async, get_current_ai
 from services.text_formatter import safe_html_format, split_message
 from services.palace_bridge import search_palace_context, export_chat_verbatim, sync_to_palace
+from services.ai_cache import cache_ai_response
 
 import secrets
 router = Router()
@@ -37,10 +39,11 @@ def load_chat(filepath: str) -> dict:
     return data
 
 def save_chat(filepath: str, data: dict):
-    """Безопасное сохранение чата с атомарной записью."""
     try:
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(filepath), delete=False, encoding='utf-8') as tmp:
+            json.dump(data, tmp, ensure_ascii=False, indent=2)
+            tmp_path = tmp.name
+        os.replace(tmp_path, filepath)
     except Exception as e:
         print(f"❌ Ошибка сохранения чата {filepath}: {e}")
 
@@ -268,8 +271,10 @@ async def cmd_context(message: types.Message):
         kb.row(types.InlineKeyboardButton(text="📖 Развернуть полностью", callback_data=f"show_summary:{sid_s}"))
     sid_r = _short_id(fname)
     kb.row(types.InlineKeyboardButton(text="🔄 Обновить саммари", callback_data=f"refresh_summary:{sid_r}"))
-    
-    await message.answer(f"🧠 <b>Контекст чата:</b>\n{safe_html_format(preview)}", reply_markup=kb.as_markup(), parse_mode="HTML")
+    kb.row(types.InlineKeyboardButton(text="📥 В заметки", callback_data="p_sv"))
+
+    sent = await message.answer(f"🧠 <b>Контекст чата:</b>\n{safe_html_format(preview)}", reply_markup=kb.as_markup(), parse_mode="HTML")
+    cache_ai_response(sent.chat.id, sent.message_id, final_summary)
 
 @router.callback_query(F.data.startswith("show_summary:"))
 @allowed_callback
@@ -292,11 +297,23 @@ async def cb_show_summary(callback: types.CallbackQuery):
         return await callback.answer("Саммари пусто", show_alert=True)
 
     parts = split_message(safe_html_format(text))
+    first_msg = None
+    last_msg = None
     for i, p in enumerate(parts):
         try:
-            await callback.message.answer(p, parse_mode="HTML")
+            msg = await callback.message.answer(p, parse_mode="HTML")
+            if i == 0:
+                first_msg = msg
+            last_msg = msg
         except:
             pass
+    target = last_msg or first_msg
+    if target:
+        cache_ai_response(target.chat.id, target.message_id, text)
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.row(types.InlineKeyboardButton(text="📥 В заметки", callback_data="p_sv"))
+        await target.edit_reply_markup(reply_markup=kb.as_markup())
     await callback.answer()
 
 @router.callback_query(F.data.startswith("show_full:"))
@@ -358,9 +375,11 @@ async def cb_refresh_summary(callback: types.CallbackQuery):
     if len(new_summary) > 500:
         sid_s = _short_id(fname)
         kb.row(types.InlineKeyboardButton(text="📖 Развернуть полностью", callback_data=f"show_summary:{sid_s}"))
-        
+    kb.row(types.InlineKeyboardButton(text="📥 В заметки", callback_data="p_sv"))
+
     header = f"✅ Активен: <code>{fname}</code>\n\n📝 <b>Обновленное саммари:</b>\n{safe_html_format(preview)}"
     await callback.message.edit_text(header, parse_mode="HTML", reply_markup=kb.as_markup())
+    cache_ai_response(callback.message.chat.id, callback.message.message_id, new_summary)
 
 @router.message(Command("sync"))
 @allowed_only

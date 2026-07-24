@@ -11,8 +11,9 @@ import json
 import sys
 import hashlib
 import re
-from typing import Dict  # если ещё не импортировано
+from typing import Dict
 from datetime import datetime
+from cachetools import TTLCache
 from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -26,13 +27,17 @@ from config import (
 from services.ai_engine import get_current_ai, get_ai_response_async
 from services.text_formatter import safe_html_format, split_message
 from services.tts_processor import get_voice_settings, generate_voice_async, prepare_tts_text, split_tts_text
-from services.palace_bridge import search_palace_context, export_chat_verbatim, sync_to_palace
+from services.palace_bridge import search_palace_context, search_with_kg, export_chat_verbatim, sync_to_palace
 from services.code_mode import is_coding_context, load_coding_prompt, ensure_project_dir, read_project_files
 from services.multimodal import list_photos, encode_image_to_base64, check_capability, save_bot_photo, delete_photo
 from handlers.chat import load_chat, save_chat, user_sessions, waiting_for_name
 from services.auto_sync import auto_sync_chat
 from services.memory import get_memory_context, extract_and_store_facts
 from services.youtube import download_video, download_audio, transcribe_audio
+from handlers.palace import process_mcp_text_input, suggest_tunnel_hint
+from handlers.personal_note import _waiting_for_note, process_note_input
+from services.palace_mcp import get_mcp
+from services.ai_cache import _ai_msg_cache, cache_ai_response
 import secrets
 
 # 🔍 Sanity check: все ли пути импортированы?
@@ -52,30 +57,18 @@ logging.basicConfig(
         logging.FileHandler(os.path.join(DATA_DIR, "bot_debug.log"), encoding='utf-8')
     ]
 )
+
 logger = logging.getLogger("MainHandler")
 from aiogram.types import MessageReactionUpdated, ReactionTypeEmoji
 
-# 🧠 Кэш последних ответов ИИ для реакций {chat_id: {message_id: text}}
-_ai_msg_cache: dict[int, dict[int, str]] = {}
-
-def cache_ai_response(chat_id: int, message_id: int, text: str):
-    """Сохраняет текст ответа ИИ для последующей обработки реакций."""
-    if chat_id not in _ai_msg_cache:
-        _ai_msg_cache[chat_id] = {}
-    _ai_msg_cache[chat_id][message_id] = text
-    # Ограничиваем кэш 50 сообщениями на чат, чтобы не тратить память
-    if len(_ai_msg_cache[chat_id]) > 50:
-        oldest_id = min(_ai_msg_cache[chat_id].keys())
-        del _ai_msg_cache[chat_id][oldest_id]
-
 # 🗑️ Кэш для маппинга коротких ID -> полные имена файлов (для кнопок удаления)
-_photo_delete_cache: Dict[str, str] = {}
-_pending_wing_search: Dict[int, str] = {}
-_sync_counter: Dict[int, int] = {}
-_sync_in_progress: Dict[int, bool] = {}
-_yt_waiting_url: Dict[int, str] = {}   # uid -> "video"/"audio"
-_yt_quality_url: Dict[int, str] = {}   # uid -> URL (ожидание выбора качества)
-_yt_audio_cache: Dict[str, str] = {}   # sid -> путь к mp3 (для транскрибации)
+_photo_delete_cache: TTLCache[str, str] = TTLCache(maxsize=500, ttl=300)
+_pending_wing_search: TTLCache[int, str] = TTLCache(maxsize=100, ttl=60)
+_sync_counter: TTLCache[int, int] = TTLCache(maxsize=100, ttl=3600)
+_sync_in_progress: TTLCache[int, bool] = TTLCache(maxsize=100, ttl=60)
+_yt_waiting_url: TTLCache[int, str] = TTLCache(maxsize=50, ttl=60)
+_yt_quality_url: TTLCache[int, str] = TTLCache(maxsize=50, ttl=120)
+_yt_audio_cache: TTLCache[str, dict] = TTLCache(maxsize=50, ttl=3600)
 
 # 4. ИНИЦИАЛИЗАЦИЯ (СТРОГО ОДИН РАЗ)
 bot = Bot(token=API_TOKEN)
@@ -97,13 +90,21 @@ dp.message.middleware(security_middleware)
 dp.callback_query.middleware(security_middleware)
 
 # 6. ПОДКЛЮЧЕНИЕ РОУТЕРОВ
-from handlers import chat, settings, notes, pdf, voice, palace
-dp.include_router(chat.router)
-dp.include_router(settings.router)
-dp.include_router(notes.router)
-dp.include_router(pdf.router)
-dp.include_router(voice.router)
-dp.include_router(palace.router)
+from handlers import chat, settings, notes, pdf, voice, palace, personal_note
+
+def _safe_include(router):
+    try:
+        dp.include_router(router)
+    except RuntimeError:
+        pass
+
+_safe_include(chat.router)
+_safe_include(settings.router)
+_safe_include(notes.router)
+_safe_include(pdf.router)
+_safe_include(voice.router)
+_safe_include(palace.router)
+_safe_include(personal_note.router)
 
 fallback_router = Router()
 dp.include_router(fallback_router)
@@ -113,6 +114,7 @@ dp.include_router(fallback_router)
 @allowed_only
 async def cmd_start(message: types.Message):
     kb = types.ReplyKeyboardMarkup(keyboard=[
+        [types.KeyboardButton(text="📝 Личная заметка"), types.KeyboardButton(text="📖 Личные мысли")],
         [types.KeyboardButton(text="🆕 Новый диалог")],
         [types.KeyboardButton(text="📂 Список чатов"), types.KeyboardButton(text="⚙️ Настройки")],
         [types.KeyboardButton(text="🔍 Поиск по крылу"), types.KeyboardButton(text="🔄 Синхронизация")],
@@ -349,7 +351,7 @@ async def cb_del_photo(cb: types.CallbackQuery):
         return await cb.answer("❌ Сессия истекла. Откройте /photos заново", show_alert=True)
     
     # Удаляем из кэша после использования (защита от повторного нажатия)
-    del _photo_delete_cache[cache_key]
+    _photo_delete_cache.pop(cache_key, None)
     
     # Проверяем, что файл ещё существует в папке
     photos = list_photos()
@@ -662,7 +664,21 @@ async def process_user_message(message: types.Message):
                 await st.edit_text(f"❌ Ошибка: {str(e)[:200]}")
         return
 
-    # 0. Ожидание текста для поиска по крылу
+    # 0a. Ожидание текстового ввода для MCP-инструментов
+    handled = await process_mcp_text_input(uid, text, lambda t: message.answer(t))
+    if handled:
+        return
+
+    # 0b. Ожидание цитаты из личной заметки
+    from handlers.personal_note import _quote_waiting, _save_quote_to_palace
+    if uid in _quote_waiting:
+        return await _save_quote_to_palace(uid, text, lambda t: message.answer(t))
+
+    # 0c. Ожидание личной заметки (текст)
+    if uid in _waiting_for_note:
+        return await process_note_input(uid, text, lambda t: message.answer(t))
+
+    # 0d. Ожидание текста для поиска по крылу
     if uid in _pending_wing_search:
         wing = _pending_wing_search.pop(uid)
         wing_info = f" (крыло: {wing})" if wing else ""
@@ -851,7 +867,7 @@ async def process_user_message(message: types.Message):
                 pass
 
         # 2. Ищем контекст в MemPalace
-        palace_context = await search_palace_context(clean_q, limit=5, wing=target_wing)
+        palace_context = await search_with_kg(clean_q, limit=5, wing=target_wing)
         
         # 3. Получаем саммари текущего чата
         summaries_list = data.get("summaries", [])
@@ -977,6 +993,21 @@ async def process_user_message(message: types.Message):
         if sent_msg and hasattr(sent_msg, "message_id"):
             cache_ai_response(message.chat.id, sent_msg.message_id, answer)
 
+        # Кнопка сохранения в MemPalace
+        if sent_msg and hasattr(sent_msg, "edit_reply_markup"):
+            try:
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                from aiogram.utils.keyboard import InlineKeyboardBuilder
+                save_kb = InlineKeyboardBuilder()
+                save_kb.row(InlineKeyboardButton(text="📥 В заметки", callback_data="p_sv"))
+                await sent_msg.edit_reply_markup(reply_markup=save_kb.as_markup())
+            except Exception:
+                pass
+
+        # Подсказка туннелей
+        if clean_q:
+            asyncio.create_task(suggest_tunnel_hint(message, clean_q))
+
     except Exception as e:
         logger.error(f"❌ Ошибка процесса ИИ: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {str(e)[:100]}", parse_mode="HTML")
@@ -1000,6 +1031,12 @@ print(f"🔍 Отладка: Текущие ALLOWED_IDS: {ALLOWED_IDS}")
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
+    try:
+        mcp = get_mcp()
+        await mcp.start()
+        logger.info("MCP client started.")
+    except Exception as e:
+        logger.warning(f"MCP client failed to start: {e}")
     logger.info("Bot polling started.")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query", "message_reaction"])
     #await dp.start_polling(bot, allowed_updates=["message", "callback_query"])

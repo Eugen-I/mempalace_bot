@@ -22,6 +22,30 @@ def safe_html_format(text: str) -> str:
     text = re.sub(r'^#{1,3}\s+(.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
     return text.strip()
 
+_TAG_RE = re.compile(r'<[^>]+>')
+
+def _adjust_split_to_safe_point(text: str, split_idx: int) -> int:
+    """Отступаем назад, чтобы не разрезать HTML-тег."""
+    if split_idx <= 0:
+        return split_idx
+    before = text[max(0, split_idx - 20):split_idx + 5]
+    inside_tag = False
+    depth = 0
+    for ch in before:
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth -= 1
+    if depth > 0:
+        cur = split_idx
+        while cur > 0 and text[cur:cur + 5].strip():
+            if text[cur:cur + 1] == "<":
+                break
+            cur -= 1
+        if cur > 0:
+            return cur
+    return split_idx
+
 def split_message(text: str, limit: int = 4000) -> list:
     if not text:
         return []
@@ -30,13 +54,14 @@ def split_message(text: str, limit: int = 4000) -> list:
     
     parts = []
     remaining = text
+    TAG_PATTERN = re.compile(r'</?(\w+)[^>]*>')
+    BALANCE_TAGS = {"b", "i", "code", "pre", "u", "s"}
     
     while remaining:
         if len(remaining) <= limit:
             parts.append(remaining)
             break
         
-        # Ищем разрыв по абзацам или предложениям
         split_idx = remaining.rfind('\n\n', 0, limit)
         if split_idx == -1:
             split_idx = remaining.rfind('. ', 0, limit)
@@ -44,12 +69,32 @@ def split_message(text: str, limit: int = 4000) -> list:
             split_idx = remaining.rfind('! ', 0, limit)
         if split_idx == -1:
             split_idx = remaining.rfind('? ', 0, limit)
-        
-        # Если не нашли естественный разрыв, режем жестко
         if split_idx == -1:
             split_idx = limit
-            
-        parts.append(remaining[:split_idx].strip())
+        
+        split_idx = _adjust_split_to_safe_point(remaining, split_idx)
+        if split_idx <= 0:
+            split_idx = limit
+        
+        chunk = remaining[:split_idx].strip()
         remaining = remaining[split_idx:].strip()
+        
+        open_tags = []
+        for m in TAG_PATTERN.finditer(chunk):
+            t = m.group(1)
+            if t not in BALANCE_TAGS:
+                continue
+            if m.group(0).startswith("</"):
+                if open_tags and open_tags[-1] == t:
+                    open_tags.pop()
+            else:
+                open_tags.append(t)
+        
+        if open_tags:
+            chunk += "".join(f"</{t}>" for t in reversed(open_tags))
+            reopen = "".join(f"<{t}>" for t in open_tags)
+            remaining = reopen + remaining
+        
+        parts.append(chunk)
         
     return parts

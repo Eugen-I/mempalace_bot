@@ -28,7 +28,8 @@ def build_settings_kb(user_id: int):
     kb.row(types.InlineKeyboardButton(text="🐢 -10", callback_data="spd:-10"),
            types.InlineKeyboardButton(text=f"⚙️ {vs['speed']} wpm", callback_data="ignore"),
            types.InlineKeyboardButton(text="🐇 +10", callback_data="spd:+10"))
-    kb.row(types.InlineKeyboardButton(text="❓ Справка", callback_data="show_help"))
+    kb.row(types.InlineKeyboardButton(text="🔌 MCP", callback_data="palace_mcp"),
+           types.InlineKeyboardButton(text="❓ Справка", callback_data="show_help"))
     return kb.as_markup(), curr
 
 @router.callback_query(F.data == "show_help")
@@ -36,56 +37,70 @@ def build_settings_kb(user_id: int):
 async def cb_show_help(callback: types.CallbackQuery):
     help_text = (
         "<b>🦾 MemPalace Bot | Справка</b>\n\n"
-        
+
         "<b>🔊 Управление озвучкой:</b>\n"
         "Звук — Вкл/Выкл озвучку\n"
         "Звук-150 — Скорость (100-300)\n\n"
 
         "🎭 <b>РЕАКЦИИ НА ОТВЕТЫ ИИ:</b>\n"
-        "• 👍 — Быстрая заметка (аналог <code>!текст</code>) → папка <code>my_notes/</code>\n"
-        "• ❤️ — Сохранить инсайт (аналог <code>!!</code>) → папка <code>insights/</code>\n"
-        "• 🤷‍♂️ / 🤷 — Сохранить исследование (аналог <code>?</code>) → папка <code>research/</code>\n"
+        "• 👍 — Быстрая заметка (аналог <code>!текст</code>) → <code>my_notes/</code>\n"
+        "• ❤️ — Сохранить инсайт (аналог <code>!!</code>) → <code>insights/</code>\n"
+        "• 🤷‍♂️ / 🤷 — Сохранить исследование (аналог <code>?</code>) → <code>research/</code>\n"
         "<i>ℹ️ Работает только на сообщениях бота с ответом ИИ (кэш хранит последние 50 ответов).</i>\n\n"
-        
+
         "<b>📝 Заметки:</b>\n"
         "! текст — Быстрая заметка\n"
         "!! — Сохранить в Insights\n"
         "??? — Сохранить в Research\n\n"
-        
+
         "<b>💬 Чаты:</b>\n"
         "/history — История чата\n"
         "/export — Экспорт в .md\n"
         "~ или #ctx — Контекст чата\n\n"
-        
+
         "<b>🔍 Поиск:</b>\n"
-        "/search запрос — Поиск по базе\n"
-        "sync — Синхронизация\n\n"
-        
+        "/search запрос — Поиск по базе\n\n"
+
         "<b>📸 Фотографии:</b>\n"
         "/photos — Список фото\n"
         "/analyze_photo — Анализ фото\n\n"
-        
+
         "<b>⚙️ Системные:</b>\n"
-        "/settings — Настройки\n"
-        "уснуть, заблокировать — отправляет в сон, выходит из аккаунта\n"
+        "/settings — Настройки\n\n"
+
+        "<b>🏰 Дворец (/palace):</b>\n\n"
+
+        "<b>Статус</b> — состояние базы знаний\n\n"
+
+        "<b>Навигация:</b>\n"
+        "  🕸️ Крылья — разделы (проекты/люди)\n"
+        "  🪪 Комнаты — темы внутри крыла\n"
+        "  🏛️ Таксономия — дерево крыло→комната\n"
+        "  📊 Граф связей — статистика пересечений\n\n"
+
+        "<b>Туннели</b> — сквозные темы между проектами\n"
+        "  🔀 Траверс — обход графа от комнаты\n\n"
+
+        "<b>Знания (KG):</b>\n"
+        "  📊 Статистика — сущности и факты\n"
+        "  🔍 Поиск сущности — все факты о сущности\n\n"
+
+        "<b>Обслуживание:</b>\n"
+        "  🔁 Перестроить индекс — реиндексация\n"
+        "  🗜️ Сжать БД — очистка сегментов ChromaDB\n"
+        "  📦 Сжать текст — удаление дубликатов\n"
+        "  🌙 Загрузить в контекст — подгрузка крыла\n\n"
+
+        "📖 Инструкции — правила работы\n"
+        "🔌 MCP — внешний доступ к базе\n\n"
+
+        "💤 уснуть, заблокировать — отправляет в сон, выходит из аккаунта\n"
     )
     
     # ✅ Создаем inline keyboard с кликабельными командами
     kb = InlineKeyboardBuilder()
     
-    # Кнопки для фото-команд
-    #kb.row(types.InlineKeyboardButton(text="📸 Список фото", callback_data="cmd:photos"))
-    #kb.row(types.InlineKeyboardButton(text="🔍 Анализ фото", callback_data="cmd:analyze_photo"))
-    
-    # Кнопки для чатов
-    #kb.row(types.InlineKeyboardButton(text="📜 История", callback_data="cmd:history"))
-    #kb.row(types.InlineKeyboardButton(text="📤 Экспорт", callback_data="cmd:export"))
-    
-    # Кнопки для заметок
-    #kb.row(types.InlineKeyboardButton(text="!! Insights", callback_data="cmd:insights"))
-    #kb.row(types.InlineKeyboardButton(text="??? Research", callback_data="cmd:research"))
-    
-    # Кнопка назад
+    kb.row(types.InlineKeyboardButton(text="🔄 Синхронизация", callback_data="cmd:sync"))
     kb.row(types.InlineKeyboardButton(text="⬅️ Назад к настройкам", callback_data="back_settings"))
     
     await callback.message.edit_text(help_text, reply_markup=kb.as_markup(), parse_mode="HTML")
@@ -139,7 +154,7 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
                 
                 # ✅ Безопасная отправка: экранируем ответ и разбиваем на части
                 safe_answer = safe_html_format(answer)
-                full_text = f"📸 **Анализ:**\n\n{safe_answer}"
+                full_text = f"📸 <b>Анализ:</b>\n\n{safe_answer}"
                 parts = split_message(full_text)
 
                 for part in parts:
@@ -168,6 +183,22 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
         target = "research" if command == "research" else "insights"
         await callback.message.answer(f"📌 Показываю последние записи из {target}/...")
         # Здесь можно показать последние файлы из папки
+
+    elif command == "sync":
+        await callback.message.answer("🔄 Синхронизирую с MemPalace...")
+        from services.palace_bridge import export_chat_verbatim, sync_to_palace
+        from handlers.chat import user_sessions
+        import os
+        from config import CHATS_DIR
+        fname = user_sessions.get(callback.from_user.id)
+        if not fname:
+            return await callback.message.answer("⚠️ Нет активного чата для синхронизации.")
+        fpath = os.path.join(CHATS_DIR, fname)
+        exported = export_chat_verbatim(fpath, fname)
+        if not exported:
+            return await callback.message.answer("ℹ️ Чат пуст или не найден.")
+        result = await sync_to_palace(exported)
+        await callback.message.answer(result)
 
 
 async def render_ollama_list(cb: types.CallbackQuery):

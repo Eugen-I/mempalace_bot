@@ -2,6 +2,7 @@ import os
 import json
 import re
 import logging
+import tempfile
 from datetime import datetime
 from typing import List, Dict
 
@@ -33,8 +34,11 @@ def _load_memories(user_id: int) -> List[Dict]:
 def _save_memories(user_id: int, memories: List[Dict]):
     path = _memory_path(user_id)
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(memories, f, ensure_ascii=False, indent=2)
+        dirpath = os.path.dirname(path)
+        with tempfile.NamedTemporaryFile('w', dir=dirpath, delete=False, encoding='utf-8') as tmp:
+            json.dump(memories, tmp, ensure_ascii=False, indent=2)
+            tmp_path = tmp.name
+        os.replace(tmp_path, path)
     except Exception as e:
         logger.error(f"[MEMORY] Save error: {e}")
 
