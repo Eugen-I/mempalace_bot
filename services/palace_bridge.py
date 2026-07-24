@@ -13,6 +13,7 @@ import re
 import shutil
 from datetime import datetime
 from config import DATA_DIR, CHATS_DIR, NOTES_DIR
+from services.circuit_breaker import get_palace_circuit_breaker, get_mcp_circuit_breaker, CircuitBreakerOpenError
 
 logger = logging.getLogger("PalaceBridge")
 PALACE_SYNC_DIR = os.path.join(DATA_DIR, "palace_sync")
@@ -28,15 +29,44 @@ def _get_palace_env() -> dict:
 
 async def search_palace_context(query: str, limit: int = 5, wing: str = "", room: str = "") -> str:
     """Поиск по базе MemPalace. Возвращает блок для контекста ИИ."""
-    if not query.strip():
+    cb = get_palace_circuit_breaker()
+    try:
+        result = await cb.call(_search_palace_context_impl, query, limit, wing, room)
+    except CircuitBreakerOpenError as e:
+        logger.warning(f"[PALACE] Circuit breaker OPEN: {e}")
         return ""
+    except Exception as e:
+        logger.error(f"Error searching MemPalace: {e}", exc_info=True)
+        return ""
+
+    text = result.get("text", "")
+    sources = result.get("sources", [])
+    
+    if not text:
+        return ""
+    
+    # Добавляем сноски с источниками
+    if sources:
+        source_lines = ["\n--- ИСТОЧНИКИ ---"]
+        for s in sources:
+            loc = f"{s['wing']}/{s['room']}" if s['wing'] or s['room'] else s['file']
+            source_lines.append(f"[{s['id']}] {loc} (score: {s['score']:.3f})")
+        source_lines.append("--- КОНЕЦ ИСТОЧНИКОВ ---\n")
+        text += "\n" + "\n".join(source_lines)
+    
+    return f"\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n{text}\n--- КОНЕЦ ЛИЧНЫХ ЗАПИСЕЙ ---\n"
+
+async def _search_palace_context_impl(query: str, limit: int = 5, wing: str = "", room: str = "") -> dict:
+    """Внутренняя реализация поиска по базе MemPalace. Возвращает dict с text и sources."""
+    if not query.strip():
+        return {"text": "", "sources": []}
     
     safe_query = query.strip().replace('"', "'")[:200]
     if not safe_query:
-        return ""
+        return {"text": "", "sources": []}
 
-    async def _run(use_wing: str) -> str:
-        cmd = [sys.executable, "-m", "mempalace", "search", safe_query, "--results", str(limit)]
+    async def _run(use_wing: str) -> dict:
+        cmd = [sys.executable, "-m", "mempalace", "search", safe_query, "--results", str(limit), "--format", "json"]
         if use_wing:
             cmd.extend(["--wing", use_wing])
         if room:
@@ -52,28 +82,48 @@ async def search_palace_context(query: str, limit: int = 5, wing: str = "", room
         if proc.returncode != 0:
             err = stderr.decode().strip()
             logger.warning(f"MemPalace search error: {err}")
-            return ""
+            return {"text": "", "sources": []}
 
         result = stdout.decode("utf-8").strip()
         if not result or "No results found" in result or "Ничего не найдено" in result:
-            return ""
-        return result
+            return {"text": "", "sources": []}
+        
+        # Parse JSON output from mempalace
+        import json
+        try:
+            data = json.loads(result)
+            entries = data.get("entries", [])
+            sources = []
+            text_parts = []
+            for i, e in enumerate(entries, 1):
+                text_parts.append(f"[{i}] {e.get('content', '')}")
+                sources.append({
+                    "id": i,
+                    "file": e.get("file", ""),
+                    "wing": e.get("wing", ""),
+                    "room": e.get("room", ""),
+                    "score": e.get("score", 0)
+                })
+            return {"text": "\n\n".join(text_parts), "sources": sources}
+        except json.JSONDecodeError:
+            # Fallback for old format
+            return {"text": result, "sources": []}
 
     try:
         result = await _run(wing)
 
         # Fallback: если с крылом пусто — ищем глобально
-        if not result and wing:
+        if not result["text"] and wing:
             logger.info(f"[PALACE_SEARCH] ⚠️ В крыле {wing} ничего нет, повторяю глобальный поиск")
             result = await _run("")
 
-        if not result:
-            return ""
+        if not result["text"]:
+            return {"text": "", "sources": []}
 
-        return f"\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n{result}\n--- КОНЕЦ ЛИЧНЫХ ЗАПИСЕЙ ---\n"
+        return result
     except Exception as e:
         logger.error(f"Error searching MemPalace: {e}", exc_info=True)
-        return ""
+        return {"text": "", "sources": []}
 
 async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
     """Комбинированный поиск: текст + Knowledge Graph."""
@@ -82,10 +132,14 @@ async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
     kg_block = ""
     try:
         from services.palace_mcp import get_mcp
+        mcp_cb = get_mcp_circuit_breaker()
         mcp = get_mcp()
         await mcp.start()
 
-        kg_raw = await mcp.call_tool("mempalace_kg_query", {"entity": query.strip(), "direction": "both"})
+        async def _kg_query():
+            return await mcp.call_tool("mempalace_kg_query", {"entity": query.strip(), "direction": "both"})
+
+        kg_raw = await mcp_cb.call(_kg_query)
         kg_data = json.loads(kg_raw)
         kg_facts = kg_data.get("facts", [])
         if kg_facts:
@@ -97,6 +151,8 @@ async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
                 label = {"wrote": "написал", "contains_idea": "→ идея", "contains_quote": "→ цитата", "topic": "тема"}.get(p, p)
                 lines.append(f"  • {s} {label}: {o}")
             kg_block = "\n".join(lines) + "\n--- КОНЕЦ KG ---\n"
+    except CircuitBreakerOpenError:
+        logger.warning("[PALACE_KG] Circuit breaker OPEN, skipping KG search")
     except Exception:
         pass
 
@@ -131,6 +187,16 @@ def export_note_verbatim(note_path: str) -> str | None:
     return dest
 
 async def _run_mempalace(args: list[str]) -> str:
+    cb = get_palace_circuit_breaker()
+    try:
+        return await cb.call(_run_mempalace_impl, args)
+    except CircuitBreakerOpenError as e:
+        logger.warning(f"[PALACE] Circuit breaker OPEN: {e}")
+        return f"❌ Сервис дворца временно недоступен. Попробуйте позже."
+    except Exception as e:
+        return f"❌ Ошибка: {e}"
+
+async def _run_mempalace_impl(args: list[str]) -> str:
     cmd = [sys.executable, "-m", "mempalace"] + args
     logger.info(f"[MEMPalace] {' '.join(cmd)}")
     proc = await asyncio.create_subprocess_exec(
@@ -201,6 +267,16 @@ async def palace_instructions() -> str:
     )
 
 async def sync_to_palace(target_path: str = None) -> str:
+    cb = get_palace_circuit_breaker()
+    try:
+        return await cb.call(_sync_to_palace_impl, target_path)
+    except CircuitBreakerOpenError as e:
+        logger.warning(f"[PALACE] Circuit breaker OPEN during sync: {e}")
+        return f"❌ Синхронизация временно недоступна."
+    except Exception as e:
+        return f"❌ Ошибка синхронизации: {e}"
+
+async def _sync_to_palace_impl(target_path: str = None) -> str:
     mine_target = target_path or PALACE_SYNC_DIR
     if not os.path.exists(mine_target) or (os.path.isdir(mine_target) and not os.listdir(mine_target)):
         return "ℹ️ Нет данных для синхронизации."

@@ -11,6 +11,7 @@ import json
 import sys
 import hashlib
 import re
+import time
 from typing import Dict
 from datetime import datetime
 from cachetools import TTLCache
@@ -38,6 +39,7 @@ from handlers.palace import process_mcp_text_input, suggest_tunnel_hint
 from handlers.personal_note import _waiting_for_note, process_note_input
 from services.palace_mcp import get_mcp
 from services.ai_cache import _ai_msg_cache, cache_ai_response
+from services.event_bus import Event, get_bus
 import secrets
 
 # 🔍 Sanity check: все ли пути импортированы?
@@ -48,14 +50,38 @@ if API_TOKEN == "your_telegram_bot_token" or ADMIN_ID == 0:
     print("📄 Скопируйте .env.example → .env и отредактируйте")
     sys.exit(1)
 
-# 3. ЛОГИРОВАНИЕ
+# 3. СТРУКТУРИРОВАННОЕ ЛОГИРОВАНИЕ
+import logging.handlers
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        import json as json_mod
+        log_entry = {
+            "t": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "lvl": record.levelname,
+            "mod": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info and record.exc_info[0]:
+            log_entry["exc"] = self.formatException(record.exc_info)
+        return json_mod.dumps(log_entry, ensure_ascii=False)
+
+_console_handler = logging.StreamHandler(sys.stdout)
+_console_handler.setFormatter(logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+))
+
+_file_handler = logging.handlers.RotatingFileHandler(
+    os.path.join(DATA_DIR, "bot_debug.log"),
+    encoding='utf-8',
+    maxBytes=10_485_760,
+    backupCount=3
+)
+_file_handler.setFormatter(JSONFormatter())
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(os.path.join(DATA_DIR, "bot_debug.log"), encoding='utf-8')
-    ]
+    handlers=[_console_handler, _file_handler]
 )
 
 logger = logging.getLogger("MainHandler")
@@ -109,7 +135,54 @@ _safe_include(personal_note.router)
 fallback_router = Router()
 dp.include_router(fallback_router)
 
-# 7. ХЕНДЛЕРЫ
+# 7. ШИНА СОБЫТИЙ (Event Bus)
+# Децентрализованная реакция на события без прямой связанности
+bus = get_bus()
+
+async def _on_ai_complete(**kwargs):
+    answer = kwargs.get("answer", "")
+    clean_q = kwargs.get("clean_q", "")
+    uid = kwargs.get("uid", 0)
+    if clean_q and answer:
+        asyncio.create_task(extract_and_store_facts(uid, clean_q, answer))
+
+async def _on_ai_sent(**kwargs):
+    sent_msg = kwargs.get("sent_msg")
+    answer = kwargs.get("answer", "")
+    chat_id = kwargs.get("chat_id", 0)
+    uid = kwargs.get("uid", 0)
+    fname = kwargs.get("fname", "")
+    fpath = kwargs.get("fpath", "")
+    message = kwargs.get("message")
+    clean_q = kwargs.get("clean_q", "")
+
+    if answer.startswith("❌"):
+        return
+
+    if sent_msg and hasattr(sent_msg, "message_id"):
+        cache_ai_response(chat_id, sent_msg.message_id, answer)
+
+    if sent_msg and hasattr(sent_msg, "edit_reply_markup"):
+        try:
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="📥 В заметки", callback_data="p_sv"))
+            await sent_msg.edit_reply_markup(reply_markup=kb.as_markup())
+        except Exception:
+            pass
+
+    _sync_counter[uid] = _sync_counter.get(uid, 0) + 1
+    if _sync_counter[uid] % 5 == 0 and not _sync_in_progress.get(uid):
+        _sync_in_progress[uid] = True
+        asyncio.create_task(_auto_sync_wrapper(uid, fname, fpath))
+
+    if clean_q:
+        asyncio.create_task(suggest_tunnel_hint(message, clean_q))
+
+bus.subscribe(Event.AI_RESPONSE_COMPLETE, _on_ai_complete)
+bus.subscribe(Event.AI_RESPONSE_SENT, _on_ai_sent)
+
+# 8. ХЕНДЛЕРЫ
 @dp.message(Command("start"))
 @allowed_only
 async def cmd_start(message: types.Message):
@@ -821,42 +894,35 @@ async def process_user_message(message: types.Message):
             await st.edit_text(f"❌ Ошибка: {str(e)[:100]}")
             return
 
-    # === 🧠 ЯДРО ИИ ===
+    # === 🧠 ЯДРО ИИ (со стримингом) ===
     status = await message.answer(f"⏳ <code>{get_current_ai()[1]}</code> думает...", parse_mode="HTML")
-    
+
     try:
-        # Определяем крыло (Wing) для поиска
         target_wing = ""
-        # 1. Проверяем, не указано ли крыло явно в запросе (например, "/search dreams: ...")
         explicit_wing_match = re.match(r'^/(\w+):\s*(.+)', clean_q)
         if explicit_wing_match:
             possible_wing = explicit_wing_match.group(1).lower()
             if possible_wing in ["dreams", "projects", "philosophy", "creative"]:
                 target_wing = possible_wing
-                clean_q = explicit_wing_match.group(2)  # Убираем префикс из запроса
+                clean_q = explicit_wing_match.group(2)
                 logger.info(f"[WING] Явно указано крыло: {target_wing}")
-        
-        # используем автоклассификатор
+
         if not target_wing:
             from services.wing_classifier import classify_wing
             auto_wing = classify_wing(clean_q)
             if auto_wing:
                 target_wing = auto_wing
-        
-        # Логирование итогового выбора
+
         if target_wing:
             logger.info(f"[PALACE_SEARCH] 🔍 Поиск в крыле: {target_wing}")
         else:
             logger.info(f"[PALACE_SEARCH] 🔍 Глобальный поиск (крыло не определено)")
-        
-        # ✅ УВЕДОМЛЕНИЕ ПОЛЬЗОВАТЕЛЯ О ВЫБРАННОМ КРЫЛЕ
+
         wing_info = ""
         if target_wing:
             wing_names = {
-                "dreams": "🌙 Сны",
-                "projects": "💻 Проекты", 
-                "philosophy": "🏛 Философия",
-                "creative": "🎨 Творчество",
+                "dreams": "🌙 Сны", "projects": "💻 Проекты",
+                "philosophy": "🏛 Философия", "creative": "🎨 Творчество",
                 "psychology": "🧠 Психология"
             }
             wing_display = wing_names.get(target_wing, target_wing)
@@ -866,14 +932,22 @@ async def process_user_message(message: types.Message):
             except Exception:
                 pass
 
-        # 2. Ищем контекст в MemPalace
-        palace_context = await search_with_kg(clean_q, limit=5, wing=target_wing)
-        
-        # 3. Получаем саммари текущего чата
+        palace_context = ""
+        from services.graceful_degradation import get_degradation_manager
+        deg = get_degradation_manager()
+
+        if deg.should_use_palace():
+            palace_context = await search_with_kg(clean_q, limit=5, wing=target_wing)
+            if not palace_context:
+                report_failure("palace_search")
+            else:
+                report_success("palace_search")
+        else:
+            logger.info("[DEGRADE] Palace search skipped")
+
         summaries_list = data.get("summaries", [])
         active_summary = summaries_list[-1] if summaries_list else data.get("summary", "").strip()
 
-        # 4. Проверяем режим кодинга
         is_code = is_coding_context(clean_q, msgs)
         if is_code and not data.get("is_coding_mode"):
             data["is_coding_mode"] = True
@@ -881,83 +955,126 @@ async def process_user_message(message: types.Message):
             save_chat(fpath, data)
 
         _engine, _model = get_current_ai()
-        
-        
-        # 5. Подготовка изображений (ТОЛЬКО ПРИ ЯВНОМ ЗАПРОСЕ)
+
         images_b64 = []
         has_images_in_query = False
-    
-        # Ключевые слова, указывающие на желание анализировать фото
         photo_keywords = [
             "фото", "фотку", "картинк", "изображен", "снимок", "визуал",
             "проанализируй фото", "что на фото", "опиши фото", "разбор фото",
             "photo", "image", "picture", "analyze photo"
         ]
-    
-        # Проверяем, хочет ли пользователь работать с фото
         wants_photo_analysis = any(kw in clean_q.lower() for kw in photo_keywords)
-    
         if wants_photo_analysis and check_capability(_model, "multimodal"):
             recent_photos = list_photos()[:2]
             for p in recent_photos:
                 b64 = encode_image_to_base64(os.path.join(PHOTOS_DIR, p))
-                if b64: 
+                if b64:
                     images_b64.append(b64)
             has_images_in_query = len(images_b64) > 0
             if has_images_in_query:
                 logger.info(f"[MULTIMODAL] 📷 Прикреплено {len(images_b64)} фото по запросу пользователя")
-        else:
-            logger.debug("[MULTIMODAL] ℹ️ Фото не прикреплены (нет явного запроса)")
 
-        # 6. Генерация УМНОГО ПРОМПТА (Единая точка сборки)
         from services.prompts import get_smart_prompt
-        
         system_instruction = get_smart_prompt(
-            context=palace_context, 
-            query=clean_q, 
-            has_images=has_images_in_query
+            context=palace_context, query=clean_q, has_images=has_images_in_query
         )
         
-        # Добавляем саммари диалога, если есть
+        # 📎 Инструкция по цитированию источников
+        if palace_context and "[1]" in palace_context:
+            system_instruction += (
+                "\n📎 ПРАВИЛА ЦИТИРОВАНИЯ: "
+                "В контексте выше есть блок '--- ИСТОЧНИКИ ---' с номерами источников в квадратных скобках. "
+                "При ответе ОБЯЗАТЕЛЬНО ссылайся на источники в формате [1], [2] и т.д. "
+                "Не выдумывай факты — опирайся только на предоставленные источники."
+            )
+        
         if active_summary:
             system_instruction += f"\n📜 Контекст текущего диалога:\n{active_summary}"
 
-        # 📌 Долговременная память (релевантные факты из прошлых диалогов)
-        try:
-            memory_ctx = get_memory_context(clean_q, uid)
-            if memory_ctx:
-                system_instruction += "\n" + memory_ctx
-        except Exception:
-            pass
+        if deg.should_use_memory():
+            try:
+                memory_ctx = get_memory_context(clean_q, uid)
+                if memory_ctx:
+                    system_instruction += "\n" + memory_ctx
+            except Exception:
+                pass
+        else:
+            logger.info("[DEGRADE] Memory context skipped")
 
-        # Добавляем специфику кодинга, если активен режим
         if data.get("is_coding_mode"):
             system_instruction += f"\n👨‍💻 СПЕЦИАЛИЗАЦИЯ: РАЗРАБОТКА\n{load_coding_prompt()}"
             proj_files = read_project_files(data.get("project_dir"))
-            if proj_files: 
+            if proj_files:
                 system_instruction += f"\n📂 Файлы проекта:\n{proj_files}"
 
-        # 7. Формирование сообщений для ИИ
         context_msgs = [{"role": "system", "content": system_instruction}]
-        # Берем последние 10 сообщений истории
         context_msgs.extend(msgs[-10:] if len(msgs) > 10 else msgs)
         context_msgs.append({"role": "user", "content": clean_q})
 
-        # 8. Вызов ИИ
-        # Передаем clean_q как user_query и флаг has_images_in_query
-        answer = await asyncio.to_thread(
-            lambda: get_ai_response_sync_wrapper(
-                _engine, 
-                _model, 
-                context_msgs, 
-                context=palace_context,       # Контекст из MemPalace
-                user_query=clean_q,           # Исходный текст пользователя
-                has_images=has_images_in_query, # Есть ли фото
-                images=images_b64             # Сами фото в base64
-            )
-        )
+        await bus.publish(Event.AI_RESPONSE_START, uid=uid, query=clean_q, engine=_engine, model=_model)
 
-        # 9. Сохранение истории
+        # 💾 СЕМАНТИЧЕСКИЙ КЭШ: проверяем, не отвечали ли на похожий вопрос
+        from services.semantic_cache import get_cache
+        _sem_cache = get_cache()
+        cached_answer = _sem_cache.get(clean_q)
+
+        answer = ""
+        stream_buffer = ""
+        last_update = time.time()
+        stream_msg = None
+
+        if cached_answer is not None:
+            answer = cached_answer
+            status_text = f"💾 <code>{get_current_ai()[1]}</code> (из кэша)"
+            try:
+                await status.edit_text(status_text, parse_mode="HTML")
+            except Exception:
+                pass
+        else:
+            # ⚡ СТРИМИНГ: собираем чанки и показываем прогресс
+            from services.ai_engine import stream_ai_response_async
+
+            async for chunk in stream_ai_response_async(
+                _engine, _model, context_msgs,
+                context=palace_context,
+                user_query=clean_q,
+                has_images=has_images_in_query,
+                images=images_b64
+            ):
+                answer += chunk
+                stream_buffer += chunk
+
+                MIN_STREAM_INTERVAL = 1.0
+                MIN_CHARS_FOR_UPDATE = 30
+
+                if (len(stream_buffer) >= MIN_CHARS_FOR_UPDATE
+                        and time.time() - last_update >= MIN_STREAM_INTERVAL):
+                    preview = answer[:3000]
+                    try:
+                        if stream_msg is None:
+                            stream_msg = await message.answer(preview)
+                        else:
+                            await stream_msg.edit_text(preview)
+                        last_update = time.time()
+                        stream_buffer = ""
+                    except Exception:
+                        pass
+
+            # Сохраняем в кэш
+            if answer and not answer.startswith("❌"):
+                _sem_cache.set(clean_q, answer)
+
+        # Если стриминг был — удаляем промежуточное сообщение
+        if stream_msg is not None:
+            try:
+                await bot.delete_message(message.chat.id, stream_msg.message_id)
+            except Exception:
+                pass
+
+        if not answer or answer.startswith("❌"):
+            answer = answer or "❌ Пустой ответ от ИИ."
+
+        # Сохранение истории
         msgs.append({"role": "user", "content": clean_q})
         msgs.append({"role": "assistant", "content": answer})
         data["messages"] = msgs[-50:]
@@ -966,55 +1083,39 @@ async def process_user_message(message: types.Message):
         except Exception as e:
             logger.warning(f"Не удалось сохранить чат: {e}")
 
-        # Авто-синхронизация с MemPalace (каждые 5 сообщений)
-        _sync_counter[uid] = _sync_counter.get(uid, 0) + 1
-        if _sync_counter[uid] % 5 == 0 and not _sync_in_progress.get(uid):
-            _sync_in_progress[uid] = True
-            asyncio.create_task(_auto_sync_wrapper(uid, fname, fpath))
+        # Публикация события AI_RESPONSE_COMPLETE (факты и т.д.)
+        await bus.publish(Event.AI_RESPONSE_COMPLETE,
+                          answer=answer, clean_q=clean_q, uid=uid,
+                          fname=fname, fpath=fpath, data=data)
 
-        # 📌 Фоновое извлечение фактов в долговременную память
-        if clean_q and answer:
-            asyncio.create_task(extract_and_store_facts(uid, clean_q, answer))
-
-        # 10. Отправка ответа пользователю
+        # Отправка ответа пользователю
         vs = get_voice_settings(uid)
         sent_msg = None
-        
+
         try:
-            if not answer or not answer.strip() or answer.startswith("❌"):
-                sent_msg = await message.answer(safe_html_format(f"❌ ИИ вернул ошибку: {answer[:200]}"), parse_mode="HTML")
+            if answer.startswith("❌"):
+                sent_msg = await message.answer(
+                    safe_html_format(f"❌ ИИ вернул ошибку: {answer[:200]}"), parse_mode="HTML")
             else:
                 sent_msg = await send_response_with_mode(message, answer, vs["mode"])
         except Exception as e:
             logger.error(f"Ошибка отправки ответа: {e}", exc_info=True)
             sent_msg = await message.answer("❌ Не удалось доставить ответ ИИ.")
-        
-        # Кэширование для реакций
-        if sent_msg and hasattr(sent_msg, "message_id"):
-            cache_ai_response(message.chat.id, sent_msg.message_id, answer)
 
-        # Кнопка сохранения в MemPalace
-        if sent_msg and hasattr(sent_msg, "edit_reply_markup"):
-            try:
-                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-                from aiogram.utils.keyboard import InlineKeyboardBuilder
-                save_kb = InlineKeyboardBuilder()
-                save_kb.row(InlineKeyboardButton(text="📥 В заметки", callback_data="p_sv"))
-                await sent_msg.edit_reply_markup(reply_markup=save_kb.as_markup())
-            except Exception:
-                pass
-
-        # Подсказка туннелей
-        if clean_q:
-            asyncio.create_task(suggest_tunnel_hint(message, clean_q))
+        # Публикация события AI_RESPONSE_SENT (кэш, кнопки, автосинх, туннели)
+        await bus.publish(Event.AI_RESPONSE_SENT,
+                          sent_msg=sent_msg, answer=answer,
+                          chat_id=message.chat.id, uid=uid,
+                          fname=fname, fpath=fpath,
+                          message=message, clean_q=clean_q)
 
     except Exception as e:
         logger.error(f"❌ Ошибка процесса ИИ: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {str(e)[:100]}", parse_mode="HTML")
     finally:
-        try: 
+        try:
             await bot.delete_message(message.chat.id, status.message_id)
-        except: 
+        except Exception:
             pass
 
 #ВСПОМОГАТЕЛЬНАЯ ОБЁРТКА
@@ -1037,6 +1138,15 @@ async def main():
         logger.info("MCP client started.")
     except Exception as e:
         logger.warning(f"MCP client failed to start: {e}")
+
+    # Предзагрузка Whisper
+    try:
+        from services.whisper_service import prewarm
+        prewarm()
+        logger.info("Whisper model pre-warmed.")
+    except Exception as e:
+        logger.warning(f"Whisper pre-warm failed: {e}")
+
     logger.info("Bot polling started.")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query", "message_reaction"])
     #await dp.start_polling(bot, allowed_updates=["message", "callback_query"])

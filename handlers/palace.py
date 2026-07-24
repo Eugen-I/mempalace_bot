@@ -471,8 +471,39 @@ async def cb_kg_menu(cb: types.CallbackQuery):
     kb.row(types.InlineKeyboardButton(text="📊 Статистика KG", callback_data="p_kgst"))
     kb.row(types.InlineKeyboardButton(text="🔍 Поиск сущности", callback_data="p_kgq"))
     kb.row(types.InlineKeyboardButton(text="➕ Добавить факт", callback_data="p_kga"))
+    kb.row(types.InlineKeyboardButton(text="📖 Помощь", callback_data="p_kg_help"))
     kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="palace_back"))
     await cb.message.edit_text("🧠 **Граф знаний (Knowledge Graph)**\nВыбери действие:", reply_markup=kb.as_markup(), parse_mode="Markdown")
+
+@router.callback_query(F.data == "p_kg_help")
+@allowed_callback
+async def cb_kg_help(cb: types.CallbackQuery):
+    await cb.answer()
+    help_text = (
+        "<b>📖 Граф знаний (Knowledge Graph) — справка</b>\n\n"
+        "<b>Что это такое?</b>\n"
+        "KG — это база структурированных фактов в формате <i>субъект → предикат → объект</i>.\n"
+        "Пример: <code>Max → wrote → MemPalace</code>.\n\n"
+        "<b>Типы предикатов (связей):</b>\n"
+        "• <b>topic</b> 📌 — тема, к которой относится сущность\n"
+        "• <b>related_to</b> 🔗 — общая связь/ассоциация\n"
+        "• <b>wrote</b> ✍️ — авторство (книга, статья, код)\n"
+        "• <b>contains_idea</b> 💡 — сущность содержит идею/мысль\n"
+        "• <b>contains_quote</b> 💬 — сущность содержит цитату\n"
+        "• <b>author</b> 👤 — авторство (кто создал)\n"
+        "• <b>influenced_by</b> 🎯 — на что/кого повлияло\n\n"
+        "<b>Как пользоваться:</b>\n"
+        "1. <b>📊 Статистика</b> — обзор размера графа\n"
+        "2. <b>🔍 Поиск сущности</b> — введи имя (Max, MyProject, Alice) — получишь все факты с пагинацией и кнопкой «🔍 Поискать в заметках»\n"
+        "3. <b>➕ Добавить факт</b> — 3 шага: субъект → выбор предиката → объект\n\n"
+        "<b>Источники фактов:</b>\n"
+        "• Автоматически из заметок через <code>/enrich</code> (CLI) или кнопку «🧠 В граф» в личных заметках\n"
+        "• Ручная вставка через меню\n\n"
+        "<b>Совет:</b> после добавления фактов запусти <code>mempalace repair</code> для переиндексации."
+    )
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_kg"))
+    await cb.message.edit_text(help_text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
 @router.callback_query(F.data == "p_kgst")
 @allowed_callback

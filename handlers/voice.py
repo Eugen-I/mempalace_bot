@@ -9,27 +9,19 @@ import asyncio
 import logging
 from aiogram import F, Router, types
 from aiogram.enums import ContentType
-from faster_whisper import WhisperModel
 import pydub
 from config import TEMP_DIR, allowed_only
 from services.text_formatter import safe_html_format
 from services.tts_processor import get_voice_settings, generate_voice_async, prepare_tts_text, split_tts_text
+from services.whisper_service import get_whisper
 
 router = Router()
 logger = logging.getLogger("VoiceHandler")
-_whisper = None
-
-def get_whisper():
-    global _whisper
-    if not _whisper:
-        # Для Apple Silicon (M1/M2/M3) стабильнее всего device="cpu" + compute_type="int8"
-        _whisper = WhisperModel("base", device="cpu", compute_type="int8")
-    return _whisper
 
 def _process_audio_sync(ogg_path: str, wav_path: str) -> str:
     """Синхронная обработка аудио для запуска в отдельном потоке."""
     pydub.AudioSegment.from_ogg(ogg_path).export(wav_path, format="wav")
-    segs, _ = get_whisper().transcribe(wav_path, language="ru", beam_size=5)
+    segs, _ = get_whisper("base").transcribe(wav_path, language="ru", beam_size=5)
     return " ".join(s.text for s in segs).strip()
 
 @router.message(F.voice)

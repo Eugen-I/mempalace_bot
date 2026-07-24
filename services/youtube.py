@@ -84,17 +84,14 @@ async def download_audio(url: str) -> tuple[str, str]:
 
 
 async def transcribe_audio(audio_path: str, title: str = "") -> str:
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError:
-        raise ImportError("faster-whisper not installed")
+    from services.whisper_service import get_whisper
 
     my = datetime.now().strftime('%Y_%m')
     safe_title = _sanitize_filename(title) if title else os.path.splitext(os.path.basename(audio_path))[0]
     txt_path = os.path.join(_tr_path(), f'{safe_title}_{my}.txt')
 
     def _run():
-        model = WhisperModel("small", device="cpu", compute_type="int8")
+        model = get_whisper("small")
         segments, _ = model.transcribe(audio_path, language="ru")
         text = " ".join(seg.text for seg in segments)
         return text

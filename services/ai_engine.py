@@ -8,7 +8,8 @@ import json
 import asyncio
 import logging
 import time
-from typing import List, Dict, Tuple
+import re
+from typing import List, Dict, Tuple, AsyncIterator, Optional
 from functools import lru_cache
 
 # Настройка логгера для этого модуля
@@ -278,3 +279,140 @@ async def get_ai_response_async(
         except Exception as e:
             logger.error(f"[ASYNC_CALL] Executor failed: {e}", exc_info=True)
             return f"❌ Системная ошибка выполнения запроса: {str(e)}"
+
+async def stream_ai_response_async(
+    engine: str,
+    model: str,
+    messages: List[Dict],
+    context: str = "",
+    user_query: str = "",
+    has_images: bool = False,
+    **kwargs
+) -> AsyncIterator[str]:
+    """
+    Асинхронный генератор стриминга ответа ИИ.
+    Отдаёт чанки текста по мере генерации.
+    """
+    engine = engine.lower().strip()
+    if engine == "ollama":
+        engine = "qwen"
+
+    loop = asyncio.get_event_loop()
+    queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    try:
+        from services.prompts import get_smart_prompt
+        system_prompt = get_smart_prompt(
+            context=context,
+            query=user_query,
+            has_images=has_images
+        )
+    except ImportError:
+        system_prompt = "Ты — полезный ассистент."
+
+    full_messages = [{"role": "system", "content": system_prompt}]
+    images_base64 = kwargs.get("images", [])
+
+    for m in messages:
+        if m["role"] == "user" and images_base64:
+            content_parts = [{"type": "text", "text": m.get("content", "")}]
+            for img_b64 in images_base64:
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
+                })
+            full_messages.append({"role": "user", "content": content_parts})
+        else:
+            full_messages.append(m)
+
+    def _clean_chunk(text: str) -> str:
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+        text = re.sub(r'<｜begin▁of▁sentence｜>.*?<｜end▁of▁sentence｜>', '', text, flags=re.DOTALL)
+        return text
+
+    def _run_stream():
+        try:
+            if engine == "qwen":
+                if not OpenAI:
+                    raise ImportError("Библиотека openai не установлена.")
+                client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+                stream = client.chat.completions.create(
+                    model=model,
+                    messages=full_messages,
+                    temperature=0.6,
+                    max_tokens=8192,
+                    timeout=200.0,
+                    stream=True,
+                    stop=["<|im_start|>", "<|im_end|>", "<|endoftext|>", "\nuser:", "\nUser:"]
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if delta and delta.content:
+                        cleaned = _clean_chunk(delta.content)
+                        if cleaned:
+                            loop.call_soon_threadsafe(queue.put_nowait, cleaned)
+
+            elif engine == "openai":
+                if not OpenAI:
+                    raise ImportError("Библиотека openai не установлена.")
+                api_key = os.getenv("OPENAI_API_KEY")
+                if not api_key:
+                    raise ValueError("OPENAI_API_KEY not set.")
+                client = OpenAI(api_key=api_key)
+                stream = client.chat.completions.create(
+                    model=model,
+                    messages=full_messages,
+                    temperature=0.7,
+                    max_tokens=8192,
+                    timeout=200.0,
+                    stream=True,
+                    stop=["<|im_start|>", "<|im_end|>", "<|endoftext|>", "\nuser:", "\nUser:"]
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if delta and delta.content:
+                        loop.call_soon_threadsafe(queue.put_nowait, delta.content)
+
+            elif engine == "gemini":
+                if not genai:
+                    raise ImportError("Библиотека google-genai не установлена.")
+                api_key = os.getenv("GEMINI_API_KEY")
+                if not api_key:
+                    raise ValueError("GEMINI_API_KEY not set.")
+                client = genai.Client(api_key=api_key)
+                hist = []
+                for m in messages:
+                    role = "user" if m["role"] == "user" else "model"
+                    hist.append(genai_types.Content(
+                        role=role,
+                        parts=[genai_types.Part(text=m["content"])]
+                    ))
+                stream = client.models.generate_content_stream(
+                    model=model,
+                    contents=hist,
+                    config=genai_types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=0.7,
+                        max_output_tokens=2048
+                    )
+                )
+                for chunk in stream:
+                    if chunk.text:
+                        loop.call_soon_threadsafe(queue.put_nowait, chunk.text)
+
+        except Exception as e:
+            error_msg = f"\n❌ Ошибка стриминга: {str(e)}"
+            logger.error(f"[STREAM_ERROR] {error_msg}", exc_info=True)
+            loop.call_soon_threadsafe(queue.put_nowait, error_msg)
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    task = asyncio.create_task(asyncio.to_thread(_run_stream))
+
+    while True:
+        chunk = await queue.get()
+        if chunk is None:
+            break
+        yield chunk
+
+    await task
