@@ -325,58 +325,108 @@ def export_chat_to_md(chat_path: str) -> str:
     # 📖 Справка (Обновленная)
 
 
-HELP_TEXT = f"""{C.CYAN}==========================================================
-    🦾 MemPalace CLI | Справка
-    =========================================================={C.END}
-    {C.YELLOW}🔊 БЫСТРОЕ УПРАВЛЕНИЕ ЗВУКОМ:{C.END}
-    Звук           → Вкл/Выкл озвучку (неблокирующая)
-    Звук-150       → Установить скорость (100-300)
-    {C.YELLOW}📝 ЗАПИСЬ И БИБЛИОТЕКА:{C.END}
-    ! текст          → Быстрая заметка в my_notes
-    !!               → Сохранить последний ответ ИИ в Insights
-    ???              → Сохранить в Research
-    {C.YELLOW}💬 УПРАВЛЕНИЕ ЧАТАМИ:{C.END}
-    /history         → Показать историю текущего чата
-    /export          → Экспорт чата в .md (папка chats/exports/)
-    ~ или #ctx       → Показать последнее саммари чата
-    {C.YELLOW}🔍 ПОИСК И СИНХРОНИЗАЦИЯ:{C.END}
-    /search <запрос> → Поиск по всей базе MemPalace
-    /search --wing dreams <запрос> → Поиск по крылу
-    sync             → Синхронизировать текущий чат с MemPalace (verbatim)
-    /photos          → Список фото в папке
-    /analyze_photo   → Анализ фото ИИ
-    /pdfs [N]        → Список/просмотр PDF в архиве
-    /yt <url> [кач]  → Скачать видео с YouTube
-    /ytaudio <url>   → Скачать аудио + транскрипция
-    /remind <текст>  → Создать напоминание
-    {C.YELLOW}🏰 УПРАВЛЕНИЕ ДВОРЦОМ:{C.END}
-    /palace           → Список команд дворца
-    /status           → Статус MemPalace
-    /wings            → Список всех крыльев
-    /rooms [крыло]    → Список комнат
-    /taxonomy         → Полная таксономия
-    /graph            → Статистика графа
-    /traverse <комната> [шаги] → Обход графа
-    /tunnels list     → Список туннелей
-    /tunnels create wa ra wb rb [label] → Создать туннель
-    /tunnels delete <id> → Удалить туннель
-    /follow <крыло> <комната> → Пройти туннели из комнаты
-    /kg <сущность>    → Поиск в графе знаний
-    /kgstats          → Статистика KG
-    /kgadd суб пред об → Добавить факт в KG
-    /mcp              → Инструкция MCP
-    /wakeup           → Загрузить дворец в контекст
-    /repair           → Перестроить индекс
-    /compact          → Сжать БД (ChromaDB)
-    /compress         → Сжать текст
-    {C.YELLOW}⚙️ СИСТЕМНЫЕ:{C.END}
-    /settings        → Сменить модель ИИ
-    q, й, Ctrl+C     → Выход с сохранением
-    {C.CYAN}=========================================================={C.END}"""
+HELP_SECTIONS = {
+    "1": {
+        "title": "📝 Запись и библиотека",
+        "items": [
+            ("! текст", "Быстрая заметка в my_notes"),
+            ("!!", "Сохранить последний ответ ИИ в Insights"),
+            ("???", "Сохранить в Research"),
+            ("/transkript", "Список транскриптов YouTube"),
+            ("/transkript N", "Прочитать транскрипт по номеру"),
+        ],
+    },
+    "2": {
+        "title": "💬 Управление чатами",
+        "items": [
+            ("/history", "Показать историю текущего чата"),
+            ("/export", "Экспорт чата в .md"),
+            ("~ / #ctx", "Показать последнее саммари"),
+            ("/new", "Новый чат"),
+            ("/del", "Удалить текущий чат"),
+            ("/chats", "Вернуться в меню чатов"),
+        ],
+    },
+    "3": {
+        "title": "🔍 Поиск и синхронизация",
+        "items": [
+            ("/search <запрос>", "Поиск по всей базе MemPalace"),
+            ("/search --wing dreams ...", "Поиск по конкретному крылу"),
+            ("sync", "Синхронизировать чат с MemPalace"),
+            ("/photos", "Список фото"),
+            ("/analyze_photo", "Анализ фото ИИ"),
+        ],
+    },
+    "4": {
+        "title": "🎬 Медиа (YouTube, PDF, напоминания)",
+        "items": [
+            ("/yt <url> [кач]", "Скачать видео с YouTube"),
+            ("/ytaudio <url>", "Скачать аудио + транскрипция"),
+            ("/pdfs [N]", "Список/просмотр PDF"),
+            ("/remind <текст>", "Создать напоминание"),
+        ],
+    },
+    "5": {
+        "title": "🏰 Дворец знаний",
+        "items": [
+            ("/palace", "Список команд дворца"),
+            ("/status", "Статистика MemPalace"),
+            ("/wings", "Список крыльев"),
+            ("/rooms [крыло]", "Комнаты крыла"),
+            ("/taxonomy", "Полная таксономия"),
+            ("/graph", "Статистика графа"),
+            ("/traverse <комната> [шаги]", "Обход графа"),
+            ("/tunnels", "Туннели между крыльями"),
+            ("/follow <крыло> <комната>", "Пройти туннели из комнаты"),
+            ("/kg <сущность>", "Поиск в графе знаний"),
+            ("/kgadd суб пред об", "Добавить факт"),
+            ("/kgstats", "Статистика KG"),
+            ("/enrich", "Enrichment заметок → KG"),
+            ("/mcp", "Инструкция MCP"),
+            ("/wakeup", "Загрузить дворец в контекст"),
+            ("/repair", "Перестроить индекс"),
+            ("/compact", "Сжать БД"),
+            ("/compress", "Сжать текст"),
+        ],
+    },
+    "6": {
+        "title": "⚙️ Системные",
+        "items": [
+            ("/settings", "Сменить модель ИИ"),
+            ("Звук", "Вкл/Выкл озвучку"),
+            ("Звук-150", "Скорость голоса (100-300)"),
+            ("q / й / Ctrl+C", "Выход с сохранением"),
+        ],
+    },
+}
 
 
 def show_help():
-    print(HELP_TEXT)
+    print(f"{C.CYAN}==========================================================")
+    print(f"    🦾 MemPalace CLI | Справка")
+    print(f"=========================================================={C.END}")
+    for key, sec in HELP_SECTIONS.items():
+        print(f"  {C.YELLOW}{key}. {sec['title']}{C.END}")
+    print(f"\n  {C.PURPLE}0) {C.END}Вся справка разом")
+    print(f"  {C.YELLOW}h) {C.END}Это меню")
+    print(f"  {C.CYAN}=========================================================={C.END}")
+    print(f"  Введите номер раздела для подробностей.")
+
+
+def show_section(key: str):
+    sec = HELP_SECTIONS.get(key)
+    if not sec:
+        return
+    print(f"\n{C.YELLOW}--- {sec['title']} ---{C.END}")
+    for cmd, desc in sec["items"]:
+        print(f"  {C.GREEN}{cmd}{C.END}")
+        print(f"    {desc}")
+
+
+def show_all_help():
+    for key in sorted(HELP_SECTIONS):
+        show_section(key)
+    print()
 
 
 # 🧠 Ядро диалога
@@ -526,6 +576,16 @@ from services.prompts import get_smart_prompt
         # 📖 Справка
         if cmd in ["/help", "/h", "-h", "h", "help"]:
             show_help()
+            continue
+
+        if cmd.startswith("h ") or cmd.startswith("help "):
+            key = user_input.split(maxsplit=1)[1]
+            if key in HELP_SECTIONS:
+                show_section(key)
+            elif key == "0":
+                show_all_help()
+            else:
+                print(f"{C.RED}Неизвестный раздел. Введите h для списка.{C.END}")
             continue
 
         # 📜 История
@@ -927,6 +987,15 @@ from services.prompts import get_smart_prompt
             from cli_extras import cli_pdfs
             args = user_input[5:].strip()
             result = await cli_pdfs(args)
+            if result:
+                print(f"{C.CYAN}{result}{C.END}")
+            continue
+
+        # 📜 Транскрипты
+        if cmd == "/transkript":
+            from cli_extras import cli_transkript
+            args = user_input[12:].strip()
+            result = await cli_transkript(args)
             if result:
                 print(f"{C.CYAN}{result}{C.END}")
             continue

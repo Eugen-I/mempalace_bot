@@ -174,6 +174,49 @@ async def cli_kgadd(args: str):
     return f"✅ Факт: {subject} → {predicate} → {obj}" if result else "❌ Ошибка."
 
 
+# ── Transkript ───────────────────────────────────────────────────────────────
+async def cli_transkript(args: str = ""):
+    from config import TRANSKRIPT_DIR
+
+    if not os.path.isdir(TRANSKRIPT_DIR):
+        return "📂 Папка transkript не найдена."
+
+    files = sorted(
+        [f for f in os.listdir(TRANSKRIPT_DIR) if f.endswith(".txt")],
+        key=lambda x: os.path.getmtime(os.path.join(TRANSKRIPT_DIR, x)),
+        reverse=True,
+    )
+    if not files:
+        return "📂 Папка transkript пуста."
+
+    parts = args.strip().split()
+    if not parts or parts[0] == "":
+        lines = [f"📜 Транскрипты ({len(files)}):"]
+        for i, f in enumerate(files, 1):
+            path = os.path.join(TRANSKRIPT_DIR, f)
+            size = os.path.getsize(path)
+            lines.append(f"  {i}) {f[:60]} — {size // 1024} KB")
+        lines.append("\n  /transkript <N> — прочитать транскрипт")
+        return "\n".join(lines)
+
+    if parts[0].isdigit():
+        idx = int(parts[0])
+        if idx < 1 or idx > len(files):
+            return f"❌ Номер от 1 до {len(files)}."
+        fname = files[idx - 1]
+        path = os.path.join(TRANSKRIPT_DIR, fname)
+        try:
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+        except Exception as e:
+            return f"❌ Ошибка чтения: {e}"
+
+        lines = [f"📜 {fname} ({len(content)} символов)\n{content}"]
+        return "\n".join(lines)
+
+    return None
+
+
 # ── Palace status helpers ────────────────────────────────────────────────────
 async def cli_palace_cmd(cmd: str):
     if cmd == "status":
