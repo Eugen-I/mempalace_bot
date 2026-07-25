@@ -1,4 +1,4 @@
-import os, json, secrets, asyncio, sys, sqlite3, time
+import os, json, secrets, asyncio, sys, sqlite3, time, logging
 from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -14,6 +14,7 @@ from services.palace_mcp import get_mcp
 from services.ai_cache import _ai_msg_cache
 
 router = Router()
+logger = logging.getLogger("Palace")
 
 class TtlDict(dict):
     __slots__ = ('_ttl', '_expires')
@@ -69,6 +70,10 @@ _wing_cache: TtlDict[int, list] = TtlDict()
 _room_cache: TtlDict[int, list] = TtlDict()
 _tunnel_state: TtlDict[int, dict] = TtlDict()
 _create_tunnel_state: TtlDict[int, dict] = TtlDict()
+_drawer_state: TtlDict[int, dict] = TtlDict()
+_read_state: TtlDict[int, dict] = TtlDict()
+_room_session: TtlDict[int, dict] = TtlDict()
+_tunnels_cache: TtlDict[int, list] = TtlDict()
 
 # Соответствие русских названий английским/немецким именам в базе
 _LOCALE_ALIASES = {
@@ -375,15 +380,422 @@ async def cb_rooms_select(cb: types.CallbackQuery):
         parsed = json.loads(raw)
         rooms = parsed.get("rooms", {})
         wing_name = parsed.get("wing", wing or "все")
+        sorted_rooms = sorted(rooms.items())
+        _room_session[uid] = {"wing": wing_name, "rooms": sorted_rooms}
         lines = [f"<b>🪪 Комнаты крыла «{safe_html_format(wing_name)}»:</b>\n"]
-        for room_idx, (room, count) in enumerate(sorted(rooms.items()), 1):
+        for room_idx, (room, count) in enumerate(sorted_rooms, 1):
             lines.append(f"  {room_idx}. <b>{safe_html_format(room)}</b> — {count}")
         kb = InlineKeyboardBuilder()
+        for room_idx, (room, count) in enumerate(sorted_rooms):
+            display = safe_html_format(room[:25] + ("\u2026" if len(room) > 25 else ""))
+            kb.row(types.InlineKeyboardButton(
+                text=f"📂 {display} ({count})",
+                callback_data=f"p_rdr:{room_idx}"
+            ))
         kb.row(types.InlineKeyboardButton(text="\u25c0\ufe0f К списку крыльев", callback_data="p_room"))
         kb.row(types.InlineKeyboardButton(text="🏰 Главное меню", callback_data="palace_back"))
         await msg.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup())
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка: {e}")
+
+@router.callback_query(F.data.startswith("p_rdr:"))
+@allowed_callback
+async def cb_room_drawers(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    idx = int(cb.data.split(":", 1)[1])
+    cache = _room_session.get(uid)
+    if not cache:
+        return await cb.message.edit_text("❌ Сессия истекла. Начните заново.")
+    rooms = cache.get("rooms", [])
+    if idx >= len(rooms):
+        return await cb.message.edit_text("❌ Комната не найдена.")
+    room_name = rooms[idx][0]
+    wing = cache["wing"]
+    await _show_drawers_page(cb.message.edit_text, uid, wing, room_name, 0)
+
+DRAWER_PAGE_SIZE = 5
+
+async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: int):
+    try:
+        mcp = get_mcp()
+        raw = await mcp.call_tool("mempalace_list_drawers", {
+            "wing": wing, "room": room, "limit": DRAWER_PAGE_SIZE, "offset": offset
+        })
+        parsed = json.loads(raw)
+        drawers = parsed.get("drawers", [])
+        total = parsed.get("count", 0)
+
+        _drawer_state[uid] = {
+            "wing": wing, "room": room, "offset": offset, "total": total, "drawers": drawers
+        }
+
+        if not drawers:
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="\u25c0\ufe0f К комнатам", callback_data="p_room"))
+            return await edit_func("📭 В этой комнате пока нет записей.", parse_mode="HTML", reply_markup=kb.as_markup())
+
+        lines = [f"<b>📄 Записи в «{safe_html_format(wing)} / {safe_html_format(room)}»</b>  ({total})\n"]
+        for i, d in enumerate(drawers):
+            preview = d.get("content_preview", "") or d.get("content", "")[:80]
+            safe_p = safe_html_format(preview[:80])
+            lines.append(f"{offset + i + 1}. <code>{safe_p}</code>")
+
+        kb = InlineKeyboardBuilder()
+        for i, d in enumerate(drawers):
+            kb.row(types.InlineKeyboardButton(
+                text=f"📄 Получить запись {offset + i + 1}",
+                callback_data=f"p_gd:{i}"
+            ))
+        nav_row = []
+        if offset > 0:
+            nav_row.append(types.InlineKeyboardButton(
+                text="\u25c0\ufe0f Назад", callback_data=f"p_rdp:{max(0, offset - DRAWER_PAGE_SIZE)}"
+            ))
+        if offset + DRAWER_PAGE_SIZE < total:
+            nav_row.append(types.InlineKeyboardButton(
+                text="\u25b6\ufe0f Вперед", callback_data=f"p_rdp:{offset + DRAWER_PAGE_SIZE}"
+            ))
+        if nav_row:
+            kb.row(*nav_row)
+        kb.row(types.InlineKeyboardButton(text="📡 Читать с туннелями", callback_data=f"p_crr:{offset}"))
+        kb.row(types.InlineKeyboardButton(text="\u25c0\ufe0f К комнатам", callback_data="p_room"))
+        kb.row(types.InlineKeyboardButton(text="🏰 Главное меню", callback_data="palace_back"))
+        await edit_func("\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup())
+
+    except Exception as e:
+        logger.error(f"Room drawers error: {e}", exc_info=True)
+        await edit_func(f"❌ Ошибка: {str(e)[:200]}")
+
+@router.callback_query(F.data.startswith("p_rdp:"))
+@allowed_callback
+async def cb_drawers_page(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    offset = int(cb.data.split(":", 1)[1])
+    state = _drawer_state.get(uid)
+    if not state:
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    await _show_drawers_page(cb.message.edit_text, uid, state["wing"], state["room"], offset)
+
+@router.callback_query(F.data.startswith("p_gd:"))
+@allowed_callback
+async def cb_get_drawer(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    idx = int(cb.data.split(":", 1)[1])
+    state = _drawer_state.get(uid)
+    if not state or idx >= len(state.get("drawers", [])):
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    drawer_id = state["drawers"][idx]["drawer_id"]
+    try:
+        mcp = get_mcp()
+        raw = await mcp.call_tool("mempalace_get_drawer", {"drawer_id": drawer_id})
+        parsed = json.loads(raw)
+        content = parsed.get("content", "") or parsed.get("text", "")
+        d_wing = parsed.get("wing", state["wing"])
+        d_room = parsed.get("room", state["room"])
+        _read_state[uid] = {"content": content, "page": 0, "wing": d_wing, "room": d_room, "idx": idx}
+        CHUNK = 3500
+        if len(content) <= CHUNK:
+            text = (
+                f"<b>📄 Запись</b>\n"
+                f"<code>{safe_html_format(d_wing)}/{safe_html_format(d_room)}</code>\n\n"
+                f"{safe_html_format(content)}"
+            )
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="🔗 Связано", callback_data=f"p_ct:{idx}"))
+            kb.row(types.InlineKeyboardButton(text="\u25c0\ufe0f К списку", callback_data="p_bd"))
+            await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+        else:
+            chunk = content[:CHUNK]
+            text = (
+                f"<b>📄 Запись</b>\n"
+                f"<code>{safe_html_format(d_wing)}/{safe_html_format(d_room)}</code>\n\n"
+                f"{safe_html_format(chunk)}"
+            )
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="📖 Продолжить чтение", callback_data="p_cr:1"))
+            kb.row(types.InlineKeyboardButton(text="🔗 Связано", callback_data=f"p_ct:{idx}"))
+            kb.row(types.InlineKeyboardButton(text="\u25c0\ufe0f К списку", callback_data="p_bd"))
+            await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+    except Exception as e:
+        logger.error(f"Get drawer error: {e}", exc_info=True)
+        await cb.message.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+
+@router.callback_query(F.data.startswith("p_cr:"))
+@allowed_callback
+async def cb_read_more(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    page = int(cb.data.split(":", 1)[1])
+    data = _read_state.get(uid)
+    if not data:
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    content = data["content"]
+    CHUNK = 3500
+    total_pages = max(1, (len(content) + CHUNK - 1) // CHUNK)
+    if page >= total_pages:
+        return await cb.answer("Это конец записи.", show_alert=False)
+    start = page * CHUNK
+    chunk = content[start:start + CHUNK]
+    _read_state[uid] = {"content": content, "page": page}
+    text = f"{safe_html_format(chunk)}"
+    kb = InlineKeyboardBuilder()
+    nav_row = []
+    if page > 0:
+        nav_row.append(types.InlineKeyboardButton(text="\u25c0\ufe0f Назад", callback_data=f"p_cr:{page - 1}"))
+    if page + 1 < total_pages:
+        nav_row.append(types.InlineKeyboardButton(text="\u25b6\ufe0f Вперед", callback_data=f"p_cr:{page + 1}"))
+    if nav_row:
+        kb.row(*nav_row)
+    kb.row(types.InlineKeyboardButton(text="\u25c0\ufe0f К списку", callback_data="p_bd"))
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+
+@router.callback_query(F.data == "p_bd")
+@allowed_callback
+async def cb_back_to_drawers(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    _read_state.pop(uid, None)
+    state = _drawer_state.get(uid)
+    if state:
+        await _show_drawers_page(cb.message.edit_text, uid, state["wing"], state["room"], state["offset"])
+    else:
+        await cb.message.edit_text("❌ Сессия истекла.")
+
+@router.callback_query(F.data.startswith("p_crr:"))
+@allowed_callback
+async def cb_cross_room_read(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    state = _drawer_state.get(uid)
+    if not state:
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    wing, room = state["wing"], state["room"]
+    try:
+        mcp = get_mcp()
+        raw = await mcp.call_tool("mempalace_follow_tunnels", {"wing": wing, "room": room})
+        tunnels = json.loads(raw) if raw else []
+        rooms = [(wing, room)]
+        for t in tunnels:
+            cw = t.get("connected_wing", "")
+            cr = t.get("connected_room", "")
+            if cw and cr:
+                rooms.append((cw, cr))
+        _drawer_state[uid] = {"tunnel_rooms": rooms}
+        await _show_cross_rooms(cb.message.edit_text, uid, rooms, 0, back_cb="p_bd")
+    except Exception as e:
+        logger.error(f"Cross-room read error: {e}", exc_info=True)
+        await cb.message.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+
+@router.callback_query(F.data.startswith("p_crp:"))
+@allowed_callback
+async def cb_cross_room_page(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    offset = int(cb.data.split(":", 1)[1])
+    state = _drawer_state.get(uid)
+    if not state or "tunnel_rooms" not in state:
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    back_cb = state.get("tunnel_back", "p_tl")
+    await _show_cross_rooms(cb.message.edit_text, uid, state["tunnel_rooms"], offset, back_cb)
+
+@router.callback_query(F.data.startswith("p_crg:"))
+@allowed_callback
+async def cb_cross_get_drawer(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    idx = int(cb.data.split(":", 1)[1])
+    state = _drawer_state.get(uid)
+    if not state or "tunnel_drawers" not in state or idx >= len(state["tunnel_drawers"]):
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    d = state["tunnel_drawers"][idx]
+    drawer_id = d.get("drawer_id") or d.get("id", "")
+    if not drawer_id:
+        return await cb.message.edit_text("❌ Нет ID записи.")
+    try:
+        mcp = get_mcp()
+        raw = await mcp.call_tool("mempalace_get_drawer", {"drawer_id": drawer_id})
+        parsed = json.loads(raw)
+        content = parsed.get("content", "") or parsed.get("text", "")
+        d_wing = parsed.get("wing", d.get("_wing", "?"))
+        d_room = parsed.get("room", d.get("_room", "?"))
+        _read_state[uid] = {"content": content, "page": 0, "wing": d_wing, "room": d_room}
+        CHUNK = 3500
+        if len(content) <= CHUNK:
+            text = (
+                f"<b>📄 Запись</b>\n"
+                f"<code>{safe_html_format(d_wing)}/{safe_html_format(d_room)}</code>\n\n"
+                f"{safe_html_format(content)}"
+            )
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="◀️ К списку", callback_data="p_crp:" + str(state.get("tunnel_offset", 0))))
+            await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+        else:
+            chunk = content[:CHUNK]
+            text = (
+                f"<b>📄 Запись</b>\n"
+                f"<code>{safe_html_format(d_wing)}/{safe_html_format(d_room)}</code>\n\n"
+                f"{safe_html_format(chunk)}"
+            )
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="📖 Продолжить чтение", callback_data="p_cr:1"))
+            kb.row(types.InlineKeyboardButton(text="◀️ К списку", callback_data="p_crp:" + str(state.get("tunnel_offset", 0))))
+            await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+    except Exception as e:
+        logger.error(f"Cross get drawer error: {e}", exc_info=True)
+        await cb.message.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+
+@router.callback_query(F.data == "p_crai")
+@allowed_callback
+async def cb_cross_ai_article(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    msg = await cb.message.answer("🤖 Составляю статью из записей...")
+    state = _drawer_state.get(uid)
+    if not state or "tunnel_drawers" not in state:
+        return await msg.edit_text("❌ Сессия истекла.")
+    drawers = state["tunnel_drawers"]
+    try:
+        all_contents = []
+        for d in drawers:
+            drawer_id = d.get("drawer_id") or d.get("id", "")
+            if not drawer_id:
+                continue
+            mcp = get_mcp()
+            raw = await mcp.call_tool("mempalace_get_drawer", {"drawer_id": drawer_id})
+            parsed = json.loads(raw)
+            content = parsed.get("content", "") or parsed.get("text", "")
+            wing = parsed.get("wing", d.get("_wing", "?"))
+            room = parsed.get("room", d.get("_room", "?"))
+            if content:
+                all_contents.append(f"--- {wing}/{room} ---\n{content}")
+
+        if not all_contents:
+            return await msg.edit_text("❌ Не удалось получить содержимое записей.")
+
+        joined = "\n\n".join(all_contents)
+        from services.ai_engine import get_current_ai, get_ai_response_async
+        engine, model = get_current_ai()
+        ai_msgs = [
+            {"role": "system", "content": "Ты — редактор. Составь связную статью на основе предоставленных фрагментов записей. Сохрани все ключевые идеи, даты, имена, термины. Не добавляй отсебятину. Верни ТОЛЬКО статью, без вступлений."},
+            {"role": "user", "content": f"Вот фрагменты из моих заметок. Составь из них единую статью:\n\n{joined}"},
+        ]
+        response = await get_ai_response_async(engine, model, ai_msgs)
+
+        _article_cache[uid] = response
+        from services.text_formatter import split_message
+        parts = split_message(f"<b>📝 Статья</b>\n\n{safe_html_format(response)}")
+        for part in parts[:-1]:
+            await cb.message.answer(part, parse_mode="HTML")
+        kb = InlineKeyboardBuilder()
+        kb.row(types.InlineKeyboardButton(text="💾 Сохранить", callback_data="p_cras"))
+        kb.row(types.InlineKeyboardButton(text="◀️ К списку", callback_data="p_crp:" + str(state.get("tunnel_offset", 0))))
+        await msg.edit_text(parts[-1], parse_mode="HTML", reply_markup=kb.as_markup())
+
+    except Exception as e:
+        logger.error(f"AI article error: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+
+_article_cache: TtlDict[int, str] = TtlDict()
+
+@router.callback_query(F.data == "p_cras")
+@allowed_callback
+async def cb_save_article(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    text = _article_cache.get(uid)
+    if not text:
+        return await cb.message.edit_text("❌ Сессия истекла. Статья не найдена.")
+    wing = "my_notes"
+    room = "ai_articles"
+    try:
+        mcp = get_mcp()
+        raw = await mcp.call_tool("mempalace_add_drawer", {
+            "wing": wing, "room": room, "content": text,
+            "added_by": "telegram_bot"
+        })
+        result = json.loads(raw)
+        drawer_id = result.get("drawer_id", "") or result.get("id", "")
+        _article_cache.pop(uid, None)
+        await cb.message.edit_text(
+            f"✅ <b>Статья сохранена!</b>\n\n"
+            f"🏛 <code>{wing}/{room}</code>\n"
+            + (f"🆔 {drawer_id}\n" if drawer_id else ""),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await cb.message.edit_text(f"❌ Ошибка сохранения: {e}")
+
+_connections_cache: TtlDict[int, dict] = TtlDict()
+
+@router.callback_query(F.data.startswith("p_ct:"))
+@allowed_callback
+async def cb_record_connections(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    data = _read_state.get(uid)
+    if not data:
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    d_wing = data.get("wing", "")
+    d_room = data.get("room", "")
+    if not d_wing or not d_room:
+        return await cb.message.edit_text("❌ Нет данных о расположении записи.")
+    try:
+        mcp = get_mcp()
+        raw = await mcp.call_tool("mempalace_follow_tunnels", {"wing": d_wing, "room": d_room})
+        tunnels = json.loads(raw) if raw else []
+        if not tunnels:
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="◀️ К записи", callback_data="p_bd"))
+            return await cb.message.edit_text(
+                f"🔗 Нет связей у <code>{safe_html_format(d_wing)}/{safe_html_format(d_room)}</code>.",
+                parse_mode="HTML", reply_markup=kb.as_markup())
+
+        _connections_cache[uid] = {"tunnels": tunnels, "wing": d_wing, "room": d_room}
+        lines = [f"<b>🔗 Связано с «{safe_html_format(d_wing)}/{safe_html_format(d_room)}»:</b>\n"]
+        for i, t in enumerate(tunnels):
+            cw = t.get("connected_wing", "?")
+            cr = t.get("connected_room", "?")
+            label = t.get("label", "")
+            line = f"  {i+1}. 📖 {cw}/{cr}"
+            if label:
+                line += f"\n     🏷️ {safe_html_format(label)}"
+            lines.append(line)
+
+        kb = InlineKeyboardBuilder()
+        for i, t in enumerate(tunnels):
+            cw = t.get("connected_wing", "?")
+            cr = t.get("connected_room", "?")
+            kb.row(types.InlineKeyboardButton(
+                text=f"📖 {cw}/{safe_html_format(cr[:15])}",
+                callback_data=f"p_ctr:{uid}:{i}"
+            ))
+        kb.row(types.InlineKeyboardButton(text="◀️ К записи", callback_data="p_bd"))
+        await cb.message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup())
+    except Exception as e:
+        logger.error(f"Record connections error: {e}", exc_info=True)
+        await cb.message.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+
+@router.callback_query(F.data.startswith("p_ctr:"))
+@allowed_callback
+async def cb_connection_room(cb: types.CallbackQuery):
+    await cb.answer()
+    parts = cb.data.split(":")
+    conn_uid = int(parts[1])
+    idx = int(parts[2])
+    data = _connections_cache.get(conn_uid)
+    if not data or idx >= len(data["tunnels"]):
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    t = data["tunnels"][idx]
+    cw = t.get("connected_wing", "")
+    cr = t.get("connected_room", "")
+    if not cw or not cr:
+        return await cb.message.edit_text("❌ Ошибка данных туннеля.")
+    room_data = [(cr, 0)]
+    _room_session[conn_uid] = {"wing": cw, "rooms": room_data}
+    await _show_drawers_page(cb.message.edit_text, conn_uid, cw, cr, 0)
 
 @router.callback_query(F.data == "p_tax")
 @allowed_callback
@@ -1059,6 +1471,7 @@ async def cb_tunnel_menu(cb: types.CallbackQuery):
     await cb.answer()
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="📋 Список туннелей", callback_data="p_tl"))
+    kb.row(types.InlineKeyboardButton(text="🤖 Анализ туннелей", callback_data="p_tun_ai"))
     kb.row(types.InlineKeyboardButton(text="🔍 Между крыльями", callback_data="p_tf"))
     kb.row(types.InlineKeyboardButton(text="➡️ Пройти туннель", callback_data="p_to"))
     kb.row(types.InlineKeyboardButton(text="➕ Создать туннель", callback_data="p_tc"))
@@ -1069,6 +1482,7 @@ async def cb_tunnel_menu(cb: types.CallbackQuery):
 @allowed_callback
 async def cb_list_tunnels(cb: types.CallbackQuery):
     await cb.answer()
+    uid = cb.from_user.id
     msg = await cb.message.answer("📋 Загружаю список туннелей...")
     try:
         mcp = get_mcp()
@@ -1076,28 +1490,254 @@ async def cb_list_tunnels(cb: types.CallbackQuery):
         parsed = json.loads(raw)
         tunnels = parsed if isinstance(parsed, list) else parsed.get("tunnels", [])
         if not tunnels:
-            await msg.edit_text("📋 Нет явных туннелей между комнатами.")
-            return
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="➕ Создать туннель", callback_data="p_tc"))
+            kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
+            return await msg.edit_text("📋 Нет явных туннелей между комнатами.", reply_markup=kb.as_markup())
 
+        _tunnels_cache[uid] = tunnels
         lines = ["<b>🔄 Явные туннели:</b>\n"]
-        for t in tunnels:
+        for i, t in enumerate(tunnels, 1):
             src = t.get("source", {})
             tgt = t.get("target", {})
             sw = src.get("wing", "?")
             sr = src.get("room", "?")
             tw = tgt.get("wing", "?")
             tr = tgt.get("room", "?")
-            line = f"  • {sw}/{sr} ⟷ {tw}/{tr}"
-            if t.get("label"):
-                line += f" — {t['label']}"
-            lines.append(line)
-        await msg.edit_text("\n".join(lines), parse_mode="HTML")
+            label = t.get("label", "")
+            lines.append(f"{i}. {sw}/{sr} ⟷ {tw}/{tr}")
+            if label:
+                lines.append(f"   🏷️ {safe_html_format(label)}")
+
+        kb = InlineKeyboardBuilder()
+        for i, t in enumerate(tunnels):
+            src = t.get("source", {})
+            tgt = t.get("target", {})
+            sw = src.get("wing", "?")
+            sr = src.get("room", "?")
+            tw = tgt.get("wing", "?")
+            tr = tgt.get("room", "?")
+            short = f"{sw}/{sr[:8]}… ⟷ {tw}/{tr[:8]}…"
+            kb.row(types.InlineKeyboardButton(
+                text=f"🔗 {short}", callback_data=f"p_td:{i}"
+            ))
+        kb.row(types.InlineKeyboardButton(text="🤖 Анализ туннелей", callback_data="p_tun_ai"))
+        kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
+        await msg.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup())
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка: {e}")
 
-@router.callback_query(F.data == "p_tf")
+@router.callback_query(F.data.startswith("p_td:"))
 @allowed_callback
-async def cb_find_tunnels_wing_a(cb: types.CallbackQuery):
+async def cb_tunnel_detail(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    idx = int(cb.data.split(":", 1)[1])
+    tunnels = _tunnels_cache.get(uid)
+    if not tunnels or idx >= len(tunnels):
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    t = tunnels[idx]
+    src, tgt = t.get("source", {}), t.get("target", {})
+    sw, sr = src.get("wing", "?"), src.get("room", "?")
+    tw, tr = tgt.get("wing", "?"), tgt.get("room", "?")
+    label = t.get("label", "")
+    created = t.get("created_at", "")[:10]
+    lines = [
+        f"<b>🔗 {safe_html_format(label) if label else 'Туннель'}</b>\n",
+        f"{safe_html_format(sw)}/{safe_html_format(sr)}",
+        f"  ⟷",
+        f"{safe_html_format(tw)}/{safe_html_format(tr)}",
+    ]
+    if created:
+        lines.append(f"\n🕐 {created}")
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(
+        text=f"📖 {sw}/{safe_html_format(sr[:15])}", callback_data=f"p_tdr:{idx}:s"
+    ))
+    kb.row(types.InlineKeyboardButton(
+        text=f"📖 {tw}/{safe_html_format(tr[:15])}", callback_data=f"p_tdr:{idx}:t"
+    ))
+    kb.row(types.InlineKeyboardButton(text="📡 Читать из обеих", callback_data=f"p_tdrb:{idx}"))
+    kb.row(types.InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"p_tdd:{idx}"))
+    kb.row(types.InlineKeyboardButton(text="◀️ К списку", callback_data="p_tl"))
+    await cb.message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup())
+
+@router.callback_query(F.data.startswith("p_tdr:"))
+@allowed_callback
+async def cb_tunnel_read_side(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    parts = cb.data.split(":")
+    idx = int(parts[1])
+    side = parts[2]
+    tunnels = _tunnels_cache.get(uid)
+    if not tunnels or idx >= len(tunnels):
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    t = tunnels[idx]
+    if side == "s":
+        wing = t["source"]["wing"]
+        room = t["source"]["room"]
+    else:
+        wing = t["target"]["wing"]
+        room = t["target"]["room"]
+    room_data = [(room, 0)]
+    _room_session[uid] = {"wing": wing, "rooms": room_data}
+    await _show_drawers_page(cb.message.edit_text, uid, wing, room, 0)
+
+@router.callback_query(F.data.startswith("p_tdrb:"))
+@allowed_callback
+async def cb_tunnel_read_both(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    idx = int(cb.data.split(":", 1)[1])
+    tunnels = _tunnels_cache.get(uid)
+    if not tunnels or idx >= len(tunnels):
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    t = tunnels[idx]
+    rooms = [
+        (t["source"]["wing"], t["source"]["room"]),
+        (t["target"]["wing"], t["target"]["room"]),
+    ]
+    _drawer_state[uid] = {"tunnel_rooms": rooms}
+    await _show_cross_rooms(cb.message.edit_text, uid, rooms, 0, back_cb="p_tl")
+
+@router.callback_query(F.data.startswith("p_tdd:"))
+@allowed_callback
+async def cb_tunnel_delete(cb: types.CallbackQuery):
+    await cb.answer()
+    idx = int(cb.data.split(":", 1)[1])
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"p_tddc:{idx}"))
+    kb.row(types.InlineKeyboardButton(text="❌ Нет", callback_data="p_tl"))
+    await cb.message.edit_text("🗑️ Удалить этот туннель?", reply_markup=kb.as_markup())
+
+@router.callback_query(F.data.startswith("p_tddc:"))
+@allowed_callback
+async def cb_tunnel_delete_confirm(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    idx = int(cb.data.split(":", 1)[1])
+    tunnels = _tunnels_cache.get(uid)
+    if not tunnels or idx >= len(tunnels):
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    tunnel_id = tunnels[idx].get("id", "")
+    try:
+        mcp = get_mcp()
+        await mcp.call_tool("mempalace_delete_tunnel", {"tunnel_id": tunnel_id})
+        _tunnels_cache.pop(uid, None)
+        await cb.message.edit_text("✅ Туннель удалён.")
+        await asyncio.sleep(0.5)
+        await cb_list_tunnels(cb)
+    except Exception as e:
+        await cb.message.edit_text(f"❌ Ошибка удаления: {e}")
+
+async def _show_cross_rooms(edit_func, uid: int, rooms: list, offset: int, back_cb: str = "p_tl"):
+    """Show entries from multiple (wing, room) pairs, paginated, with Получить запись buttons and AI article."""
+    try:
+        mcp = get_mcp()
+        all_drawers = []
+        per_room = 10
+        for wing, room in rooms:
+            raw = await mcp.call_tool("mempalace_list_drawers", {
+                "wing": wing, "room": room, "limit": per_room, "offset": 0
+            })
+            parsed = json.loads(raw)
+            for d in parsed.get("drawers", []):
+                d["_wing"] = wing
+                d["_room"] = room
+            all_drawers.extend(parsed.get("drawers", []))
+
+        if not all_drawers:
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb))
+            return await edit_func("📭 Нет записей в этих комнатах.", reply_markup=kb.as_markup())
+
+        _drawer_state[uid] = {
+            "tunnel_rooms": rooms,
+            "tunnel_drawers": all_drawers,
+            "tunnel_offset": offset,
+            "tunnel_back": back_cb,
+        }
+
+        CHUNK = 5
+        total = len(all_drawers)
+        page_drawers = all_drawers[offset:offset + CHUNK]
+        room_labels = ", ".join(f"{w}/{r}" for w, r in rooms)
+        lines = [f"<b>📡 Читаем:</b> {safe_html_format(room_labels)}\n"]
+        for i, d in enumerate(page_drawers):
+            preview = d.get("content_preview", "") or d.get("content", "")[:80]
+            safe_p = safe_html_format(preview[:80])
+            tag = f"📌 {d['_wing']}/{d['_room']}"
+            lines.append(f"{offset + i + 1}. {tag}")
+            lines.append(f"   <code>{safe_p}</code>")
+
+        kb = InlineKeyboardBuilder()
+        for i, d in enumerate(page_drawers):
+            kb.row(types.InlineKeyboardButton(
+                text=f"📄 Получить запись {offset + i + 1}",
+                callback_data=f"p_crg:{offset + i}"
+            ))
+        nav_row = []
+        if offset > 0:
+            nav_row.append(types.InlineKeyboardButton(text="◀️", callback_data=f"p_crp:{max(0, offset - CHUNK)}"))
+        if offset + CHUNK < total:
+            nav_row.append(types.InlineKeyboardButton(text="▶️", callback_data=f"p_crp:{offset + CHUNK}"))
+        if nav_row:
+            kb.row(*nav_row)
+        kb.row(types.InlineKeyboardButton(text="🤖 Статья на основе этих записей", callback_data="p_crai"))
+        kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb))
+        await edit_func("\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup())
+    except Exception as e:
+        logger.error(f"Cross-room read error: {e}", exc_info=True)
+        await edit_func(f"❌ Ошибка: {str(e)[:200]}")
+
+@router.callback_query(F.data == "p_tun_ai")
+@allowed_callback
+async def cb_tunnel_analysis(cb: types.CallbackQuery):
+    await cb.answer()
+    msg = await cb.message.answer("🤖 Анализирую туннели...")
+    try:
+        mcp = get_mcp()
+        raw_stats = await mcp.call_tool("mempalace_graph_stats")
+        stats = json.loads(raw_stats)
+        raw_tunnels = await mcp.call_tool("mempalace_list_tunnels")
+        tunnels = json.loads(raw_tunnels)
+        if isinstance(tunnels, dict):
+            tunnels = tunnels.get("tunnels", [])
+
+        tunnel_lines = []
+        for t in tunnels:
+            src = t.get("source", {})
+            tgt = t.get("target", {})
+            label = t.get("label", "")
+            line = f"{src.get('wing','')}/{src.get('room','')} ⟷ {tgt.get('wing','')}/{tgt.get('room','')}"
+            if label:
+                line += f" ({label})"
+            tunnel_lines.append(line)
+
+        prompt = (
+            f"Проанализируй эти туннели между комнатами моих заметок.\n\n"
+            f"Статистика графа: всего комнат {stats.get('total_rooms', '?')}, "
+            f"комнат с туннелями {stats.get('tunnel_rooms', '?')}, "
+            f"связей {stats.get('total_edges', '?')}.\n\n"
+            f"Туннели:\n" + "\n".join(tunnel_lines) + "\n\n"
+            f"Напиши анализ 3-5 предложений: какие темы пересекаются, "
+            f"какие связи самые сильные, какие неожиданные. "
+            f"Если упоминаешь комнату — пиши как wing/room."
+        )
+
+        from services.ai_engine import get_current_ai, get_ai_response_async
+        engine, model = get_current_ai()
+        ai_msgs = [
+            {"role": "system", "content": "Ты — аналитик знаний. Отвечай кратко и содержательно."},
+            {"role": "user", "content": prompt},
+        ]
+        response = await get_ai_response_async(engine, model, ai_msgs)
+        await msg.edit_text(f"🧠 <b>Анализ туннелей</b>\n\n{safe_html_format(response)}",
+                            parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Tunnel analysis error: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Ошибка анализа: {str(e)[:200]}")
     await cb.answer()
     uid = cb.from_user.id
     try:

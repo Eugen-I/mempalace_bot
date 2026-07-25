@@ -125,9 +125,62 @@ async def _search_palace_context_impl(query: str, limit: int = 5, wing: str = ""
         logger.error(f"Error searching MemPalace: {e}", exc_info=True)
         return {"text": "", "sources": []}
 
+async def _search_connected_rooms(query: str, sources: list[dict], limit: int = 2) -> str:
+    """Follow tunnels from result sources and search in connected rooms."""
+    blocks = []
+    seen = set()
+    try:
+        from services.palace_mcp import get_mcp
+        mcp = get_mcp()
+        await mcp.start()
+
+        for s in sources[:3]:
+            sw = s.get("wing", "")
+            sr = s.get("room", "")
+            key = f"{sw}/{sr}"
+            if not sw or not sr or key in seen:
+                continue
+            seen.add(key)
+            try:
+                raw = await mcp.call_tool("mempalace_follow_tunnels", {"wing": sw, "room": sr})
+                tunnels = json.loads(raw) if raw else []
+                for t in tunnels:
+                    cw = t.get("connected_wing", "")
+                    cr = t.get("connected_room", "")
+                    label = t.get("label", "")
+                    ckey = f"{cw}/{cr}"
+                    if cw and cr and ckey not in seen:
+                        seen.add(ckey)
+                        conn = await _search_palace_context_impl(query, limit=limit, wing=cw, room=cr)
+                        if conn.get("text"):
+                            tag = f"  [связь: {sw}/{sr} → {cw}/{cr}]"
+                            if label:
+                                tag += f" ({label})"
+                            blocks.append(f"{tag}\n{conn['text']}")
+            except Exception:
+                continue
+    except Exception:
+        pass
+    if blocks:
+        return "\n\n--- СВЯЗИ ПО ТУННЕЛЯМ ---\n" + "\n\n".join(blocks) + "\n--- КОНЕЦ СВЯЗЕЙ ---\n"
+    return ""
+
+
 async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
-    """Комбинированный поиск: текст + Knowledge Graph."""
-    text_result = await search_palace_context(query, limit, wing)
+    """Комбинированный поиск: текст + Knowledge Graph + туннели."""
+    result = await _search_palace_context_impl(query, limit, wing)
+    text = result.get("text", "")
+    sources = result.get("sources", [])
+
+    if not text:
+        return ""
+
+    source_lines = ["\n--- ИСТОЧНИКИ ---"]
+    for s in sources:
+        loc = f"{s['wing']}/{s['room']}" if s['wing'] or s['room'] else s['file']
+        source_lines.append(f"[{s['id']}] {loc} (score: {s['score']:.3f})")
+    source_lines.append("--- КОНЕЦ ИСТОЧНИКОВ ---\n")
+    text_block = f"\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n{text}\n" + "\n".join(source_lines)
 
     kg_block = ""
     try:
@@ -156,11 +209,13 @@ async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
     except Exception:
         pass
 
-    combined = text_result
-    if kg_block and text_result:
-        combined = text_result + "\n" + kg_block
-    elif kg_block:
-        combined = kg_block
+    tunnel_block = await _search_connected_rooms(query, sources)
+
+    combined = text_block
+    if kg_block:
+        combined += "\n" + kg_block
+    if tunnel_block:
+        combined += "\n" + tunnel_block
 
     return combined
 
@@ -245,15 +300,36 @@ async def palace_instructions() -> str:
         "  Пример: в крыле «my_notes»: «философия», «архетипы», «daily».\n\n"
         "<b>🏛️ Структура:</b>\n"
         "  Крыло → Комната → Записи (каждая запись — фрагмент текста)\n\n"
+        "<b>Навигация по комнатам:</b>\n"
+        "  Дворец → Все комнаты → выбери крыло → кликни на комнату →\n"
+        "  увидишь список записей. У каждой записи кнопка «Получить запись».\n"
+        "  Длинные записи (>3500 символов) разбиты на части.\n\n"
+        "<b>🔗 Связанные записи:</b>\n"
+        "  Когда читаешь запись — нажми «🔗 Связано».\n"
+        "  Бот покажет комнаты, связанные через туннели с этой записью.\n\n"
+        "<b>📡 Чтение с туннелями:</b>\n"
+        "  В списке записей комнаты — кнопка «📡 Читать с туннелями».\n"
+        "  Собирает записи из текущей и всех связанных комнат в один поток.\n"
+        "  Внизу — кнопка «🤖 Статья»: ИИ составит связный текст.\n\n"
         "<b>🔄 Туннели</b> — связи между комнатами РАЗНЫХ крыльев.\n"
         "  Если тема «интегралы» есть и в «math», и в «physics» — "
         "возникает туннель.\n"
-        "  Поиск: введите два крыла → покажет их общие темы.\n"
-        "  Если крыло одно — туннелей нет, пользуйтесь 🔀 Траверс.\n\n"
+        "  В меню туннелей:\n"
+        "  • «📋 Список» — все туннели, кликабельные для детального просмотра\n"
+        "  • «🤖 Анализ туннелей» — ИИ находит пересекающиеся темы\n"
+        "  • «🔍 Между крыльями» — общие темы двух крыльев\n"
+        "  • «➡️ Пройти» — обход от комнаты\n"
+        "  • «➕ Создать» — 4-шаговый мастер\n"
+        "  В детальном просмотре туннеля можно читать записи из обеих комнат.\n\n"
         "<b>🧠 Граф знаний (KG)</b> — база фактов.\n"
         "  Связи: «Сущность → отношение → значение».\n"
         "  Пример: «Max → работает_над → MemPalace».\n"
         "  Поиск по сущности покажет все связанные факты.\n\n"
+        "<b>⏰ Напоминания</b>\n"
+        "  Напиши «напомни завтра в 15:00 позвонить маме» —\n"
+        "  бот разберёт время и текст через ИИ, покажет подтверждение\n"
+        "  и отправит напоминание в заданное время.\n"
+        "  Если данных не хватает — бот сам спросит.\n\n"
         "<b>🔧 Обслуживание:</b>\n"
         "  • Перестроить индекс — после ручного добавления файлов\n"
         "  • Сжать БД — очистить старые сегменты ChromaDB (compact)\n"

@@ -3,7 +3,14 @@ import os
 import re
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
+
+
+class C:
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    END = "\033[0m"
 
 # Пути
 BASE_DIR = os.path.expanduser("~/Documents/mempalace")

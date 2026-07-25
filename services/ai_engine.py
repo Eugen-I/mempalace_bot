@@ -107,7 +107,13 @@ def _sync_ai_call(
         system_prompt = "Ты — полезный ассистент."
 
     # 2. Формирование сообщений
-    full_messages = [{"role": "system", "content": system_prompt}]
+    # Если в messages уже есть system prompt (например, FORMAT_PROMPT) — используем его
+    # Иначе используем умный промпт с контекстом
+    system_from_messages = [m for m in messages if m["role"] == "system"]
+    if system_from_messages:
+        full_messages = [system_from_messages[0]]
+    else:
+        full_messages = [{"role": "system", "content": system_prompt}]
     
     images_base64 = kwargs.get("images", [])
     images_added = False
@@ -119,6 +125,8 @@ def _sync_ai_call(
         logger.debug("[🖼️ MULTIMODAL] No images attached.")
 
     for m in messages:
+        if m["role"] == "system":
+            continue
         if m["role"] == "user" and images_base64 and not images_added:
             # Формируем контент с картинками для OpenAI-compatible API
             content_parts = [{"type": "text", "text": m.get("content", "")}]

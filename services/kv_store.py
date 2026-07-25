@@ -36,11 +36,12 @@ class KVStore:
         conn = self._get_conn()
         conn.execute("""
             CREATE TABLE IF NOT EXISTS kv_store (
-                key TEXT PRIMARY KEY,
+                key TEXT NOT NULL,
                 value TEXT NOT NULL,
                 namespace TEXT NOT NULL DEFAULT 'default',
                 expires_at REAL,
-                created_at REAL NOT NULL DEFAULT (julianday('now'))
+                created_at REAL NOT NULL DEFAULT (julianday('now')),
+                PRIMARY KEY (key, namespace)
             )
         """)
         conn.execute("""
@@ -60,7 +61,7 @@ class KVStore:
     def set(self, key: str, value: Any, namespace: str = "default", ttl: Optional[float] = None):
         self._evict_expired()
         conn = self._get_conn()
-        expires_at = (time.time() + ttl) if ttl else None
+        expires_at = (time.time() + ttl) if ttl is not None else None
         serialized = json.dumps(value, ensure_ascii=False)
         conn.execute(
             """INSERT OR REPLACE INTO kv_store (key, value, namespace, expires_at)
@@ -121,7 +122,7 @@ class KVStore:
         conn.commit()
 
     @property
-    def stats(self) -> Dict:
+    def stats(self) -> dict:
         self._evict_expired()
         conn = self._get_conn()
         row = conn.execute("SELECT COUNT(*) FROM kv_store").fetchone()

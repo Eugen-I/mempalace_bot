@@ -116,7 +116,7 @@ dp.message.middleware(security_middleware)
 dp.callback_query.middleware(security_middleware)
 
 # 6. ПОДКЛЮЧЕНИЕ РОУТЕРОВ
-from handlers import chat, settings, notes, pdf, voice, palace, personal_note
+from handlers import chat, settings, notes, pdf, voice, palace, personal_note, reminder
 
 def _safe_include(router):
     try:
@@ -131,6 +131,7 @@ _safe_include(pdf.router)
 _safe_include(voice.router)
 _safe_include(palace.router)
 _safe_include(personal_note.router)
+_safe_include(reminder.router)
 
 fallback_router = Router()
 dp.include_router(fallback_router)
@@ -742,6 +743,11 @@ async def process_user_message(message: types.Message):
     if handled:
         return
 
+    # 0ab. Ожидание ответа на wizard напоминания
+    from handlers.reminder import handle_reminder_text
+    if await handle_reminder_text(uid, text, message.answer):
+        return
+
     # 0b. Ожидание цитаты из личной заметки
     from handlers.personal_note import _quote_waiting, _save_quote_to_palace
     if uid in _quote_waiting:
@@ -933,7 +939,7 @@ async def process_user_message(message: types.Message):
                 pass
 
         palace_context = ""
-        from services.graceful_degradation import get_degradation_manager
+        from services.graceful_degradation import get_degradation_manager, report_failure, report_success
         deg = get_degradation_manager()
 
         if deg.should_use_palace():
@@ -1148,6 +1154,11 @@ async def main():
         logger.warning(f"Whisper pre-warm failed: {e}")
 
     logger.info("Bot polling started.")
+
+    # Запуск планировщика напоминаний
+    from services.reminder_scheduler import start_scheduler
+    start_scheduler(bot)
+
     await dp.start_polling(bot, allowed_updates=["message", "callback_query", "message_reaction"])
     #await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
