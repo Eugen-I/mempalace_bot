@@ -3,12 +3,16 @@ from datetime import datetime
 
 from aiogram import F, Router, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from cachetools import TTLCache
 
 from config import TRANSKRIPT_DIR, allowed_callback, allowed_only
 from services.text_formatter import safe_html_format, split_message
 
 router = Router()
 PAGE_SIZE = 5
+CONTENT_PAGE_SIZE = 2500
+
+_tr_content_cache: TTLCache[int, dict] = TTLCache(maxsize=50, ttl=600)
 
 
 def _list_files() -> list:
@@ -27,12 +31,11 @@ async def cmd_transkript(message: types.Message):
     files = _list_files()
     if not files:
         return await message.answer("📂 Папка transkript пуста.")
-    await _show_page(message, message.from_user.id, files, offset=0)
+    await _show_page(message, files, offset=0)
 
 
 async def _show_page(
     target: types.Message | types.CallbackQuery,
-    uid: int,
     files: list,
     offset: int,
 ):
@@ -87,7 +90,7 @@ async def cb_tr_page(callback: types.CallbackQuery):
     files = _list_files()
     if not files:
         return await callback.answer("Папка пуста.")
-    await _show_page(callback, callback.from_user.id, files, offset)
+    await _show_page(callback, files, offset)
     await callback.answer()
 
 
@@ -108,12 +111,58 @@ async def cb_tr_read(callback: types.CallbackQuery):
     except Exception as e:
         return await callback.message.answer(f"❌ Ошибка чтения: {e}")
 
-    header = f"📜 <code>{fname}</code>\n📅 {dt}\n\n"
     formatted = safe_html_format(content)
-    parts = split_message(formatted)
+    pages = split_message(formatted, limit=CONTENT_PAGE_SIZE)
 
-    for i, part in enumerate(parts):
-        msg = f"{header}{part}" if i == 0 else part
-        await callback.message.answer(msg, parse_mode="HTML")
+    uid = callback.from_user.id
+    _tr_content_cache[uid] = {
+        "pages": pages,
+        "total": len(pages),
+        "idx": 0,
+        "fname": fname,
+        "dt": dt,
+    }
 
+    await _show_content_page(callback, uid, 0)
+    await callback.answer()
+
+
+async def _show_content_page(target: types.Message | types.CallbackQuery, uid: int, idx: int):
+    data = _tr_content_cache.get(uid)
+    if not data:
+        if isinstance(target, types.CallbackQuery):
+            await target.message.answer("⏳ Сессия истекла. Откройте файл заново.")
+        return
+
+    pages = data["pages"]
+    total = data["total"]
+    idx = max(0, min(idx, total - 1))
+    data["idx"] = idx
+
+    header = f"📜 <code>{data['fname']}</code>\n📅 {data['dt']}\n\n"
+    body = f"{header}{pages[idx]}"
+
+    kb = InlineKeyboardBuilder()
+    nav = []
+    if idx > 0:
+        nav.append(types.InlineKeyboardButton(text="◀️", callback_data=f"tr_cp:{idx - 1}"))
+    nav.append(types.InlineKeyboardButton(text=f"{idx + 1}/{total}", callback_data="tr_cp:noop"))
+    if idx < total - 1:
+        nav.append(types.InlineKeyboardButton(text="▶️", callback_data=f"tr_cp:{idx + 1}"))
+    kb.row(*nav)
+
+    if isinstance(target, types.CallbackQuery):
+        await target.message.edit_text(body, reply_markup=kb.as_markup(), parse_mode="HTML")
+    else:
+        await target.answer(body, reply_markup=kb.as_markup(), parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("tr_cp:"))
+@allowed_callback
+async def cb_tr_content_page(callback: types.CallbackQuery):
+    idx_str = callback.data.split(":", 1)[1]
+    if idx_str == "noop":
+        return await callback.answer()
+    idx = int(idx_str)
+    await _show_content_page(callback, callback.from_user.id, idx)
     await callback.answer()
