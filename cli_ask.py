@@ -341,27 +341,34 @@ HELP_TEXT = f"""{C.CYAN}========================================================
     ~ или #ctx       → Показать последнее саммари чата
     {C.YELLOW}🔍 ПОИСК И СИНХРОНИЗАЦИЯ:{C.END}
     /search <запрос> → Поиск по всей базе MemPalace
-    /search --wing dreams <запрос> → Поиск по крылу (dreams, projects, philosophy, creative, psychology)
+    /search --wing dreams <запрос> → Поиск по крылу
     sync             → Синхронизировать текущий чат с MemPalace (verbatim)
-    /photos          - Список фото в папке
-    /analyze_photo   - Анализ фото ИИ
+    /photos          → Список фото в папке
+    /analyze_photo   → Анализ фото ИИ
+    /pdfs [N]        → Список/просмотр PDF в архиве
+    /yt <url> [кач]  → Скачать видео с YouTube
+    /ytaudio <url>   → Скачать аудио + транскрипция
+    /remind <текст>  → Создать напоминание
     {C.YELLOW}🏰 УПРАВЛЕНИЕ ДВОРЦОМ:{C.END}
     /palace           → Список команд дворца
-    /status           → Статус MemPalace (крылья, комнаты, записи)
+    /status           → Статус MemPalace
     /wings            → Список всех крыльев
-    /rooms [крыло]    → Список комнат (крыло опционально)
-    /taxonomy         → Полная таксономия: крыло→комната→записи
-    /graph            → Статистика графа дворца
-    /traverse <комната> [шаги] → Пройти по графу из комнаты
-    /tunnels [a] [b]  → Туннели между крыльями
+    /rooms [крыло]    → Список комнат
+    /taxonomy         → Полная таксономия
+    /graph            → Статистика графа
+    /traverse <комната> [шаги] → Обход графа
+    /tunnels list     → Список туннелей
+    /tunnels create wa ra wb rb [label] → Создать туннель
+    /tunnels delete <id> → Удалить туннель
     /follow <крыло> <комната> → Пройти туннели из комнаты
     /kg <сущность>    → Поиск в графе знаний
-    /kgstats          → Статистика графа знаний
-    /mcp              → Инструкция по настройке MCP
+    /kgstats          → Статистика KG
+    /kgadd суб пред об → Добавить факт в KG
+    /mcp              → Инструкция MCP
     /wakeup           → Загрузить дворец в контекст
-    /repair           → Перестроить векторный индекс
-    /compact          → Сжать БД (очистить сегменты ChromaDB)
-    /compress         → Сжать текст (AAAK Dialect)
+    /repair           → Перестроить индекс
+    /compact          → Сжать БД (ChromaDB)
+    /compress         → Сжать текст
     {C.YELLOW}⚙️ СИСТЕМНЫЕ:{C.END}
     /settings        → Сменить модель ИИ
     q, й, Ctrl+C     → Выход с сохранением
@@ -460,7 +467,7 @@ async def chat_loop(chat_path: str):
                 "фото сон сюрреализм пиктореализм психология идеи образы", limit=7,
             )
 
-            from services.prompts import get_smart_prompt
+from services.prompts import get_smart_prompt
 
             photo_sys = get_smart_prompt(
                 context=palace_context,
@@ -906,6 +913,53 @@ async def chat_loop(chat_path: str):
             print(f"{C.CYAN}⛏️ Запускаю mempalace mine...{C.END}")
             result = await sync_to_palace(exported)
             print(f"{C.GREEN}{format_for_terminal(result)}{C.END}")
+            continue
+
+        # 📝 Напоминания
+        if cmd == "/remind":
+            from cli_extras import cli_remind
+            result = await cli_remind(user_input, 0)
+            print(f"{C.GREEN}{result}{C.END}")
+            continue
+
+        # 📄 PDF
+        if cmd == "/pdfs":
+            from cli_extras import cli_pdfs
+            args = user_input[5:].strip()
+            result = await cli_pdfs(args)
+            if result:
+                print(f"{C.CYAN}{result}{C.END}")
+            continue
+
+        # 📹 YouTube
+        if cmd == "/yt":
+            from cli_extras import cli_yt
+            url = user_input[3:].strip()
+            result = await cli_yt(url, "video")
+            print(f"{C.CYAN}{result}{C.END}")
+            continue
+
+        if cmd == "/ytaudio":
+            from cli_extras import cli_yt
+            url = user_input[8:].strip()
+            result = await cli_yt(url, "audio")
+            print(f"{C.CYAN}{result}{C.END}")
+            continue
+
+        # 🔗 Туннели
+        if cmd.startswith("/tunnels "):
+            from cli_extras import cli_tunnels
+            sub = user_input[9:].strip()
+            result = await cli_tunnels(sub)
+            print(f"{C.CYAN}{result}{C.END}")
+            continue
+
+        # 🧠 Добавить факт в KG
+        if cmd.startswith("/kgadd "):
+            from cli_extras import cli_kgadd
+            args = user_input[7:].strip()
+            result = await cli_kgadd(args)
+            print(f"{C.CYAN}{result}{C.END}")
             continue
 
         # ⚙️ Настройки модели
