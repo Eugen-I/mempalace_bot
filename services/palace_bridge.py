@@ -85,8 +85,6 @@ async def _search_palace_context_impl(
             safe_query,
             "--results",
             str(limit),
-            "--format",
-            "json",
         ]
         if use_wing:
             cmd.extend(["--wing", use_wing])
@@ -112,29 +110,7 @@ async def _search_palace_context_impl(
         if not result or "No results found" in result or "Ничего не найдено" in result:
             return {"text": "", "sources": []}
 
-        # Parse JSON output from mempalace
-        import json
-
-        try:
-            data = json.loads(result)
-            entries = data.get("entries", [])
-            sources = []
-            text_parts = []
-            for i, e in enumerate(entries, 1):
-                text_parts.append(f"[{i}] {e.get('content', '')}")
-                sources.append(
-                    {
-                        "id": i,
-                        "file": e.get("file", ""),
-                        "wing": e.get("wing", ""),
-                        "room": e.get("room", ""),
-                        "score": e.get("score", 0),
-                    },
-                )
-            return {"text": "\n\n".join(text_parts), "sources": sources}
-        except json.JSONDecodeError:
-            # Fallback for old format
-            return {"text": result, "sources": []}
+        return {"text": result, "sources": []}
 
     try:
         result = await _run(wing)

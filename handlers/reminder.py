@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 
 from aiogram import F, Router, types
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import allowed_callback
@@ -33,6 +34,15 @@ def _is_reminder(text: str) -> bool:
     return any(k in t for k in REMINDER_KEYWORDS)
 
 
+def _parse_time_description(hour: int, minute: int, day_offset: int) -> float:
+    now_local = datetime.now()
+    target = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if day_offset > 0:
+        from datetime import timedelta
+        target += timedelta(days=day_offset)
+    return target.timestamp()
+
+
 async def _parse_reminder(text: str) -> dict:
     from services.ai_engine import get_ai_response_async, get_current_ai
 
@@ -44,12 +54,13 @@ async def _parse_reminder(text: str) -> dict:
         f"Сейчас: {now.strftime('%H:%M')}\n\n"
         f"Извлеки из сообщения пользователя текст напоминания и желаемое время.\n"
         f"Правила:\n"
-        f"- unix_timestamp — число секунд с 1970-01-01 (если время указано)\n"
-        f"- Если время не указано — unix_timestamp = null\n"
+        f"- hour — часы (0-23), minute — минуты (0-59)\n"
+        f"- day_offset — 0 = сегодня, 1 = завтра, 2 = послезавтра и т.д.\n"
+        f"- Если время не указано — hour=null, minute=null, day_offset=0\n"
         f"- Если текст не указан — reminder_text = null\n"
         f"- time_description — человекочитаемое описание времени (для подтверждения)\n\n"
         f"Сообщение: {text}\n\n"
-        f'Верни ТОЛЬКО JSON: {{"reminder_text": "...", "unix_timestamp": 1234567890, "time_description": "..."}}'  # noqa: E501
+        f'Верни ТОЛЬКО JSON: {{"reminder_text": "...", "hour": null, "minute": null, "day_offset": 0, "time_description": "..."}}'  # noqa: E501
     )
     engine, model = get_current_ai()
     resp = await get_ai_response_async(
@@ -63,7 +74,15 @@ async def _parse_reminder(text: str) -> dict:
             {"role": "user", "content": prompt},
         ],
     )
-    return _clean_json(resp)
+    parsed = _clean_json(resp)
+    if parsed and parsed.get("hour") is not None and parsed.get("minute") is not None:
+        unix_ts = _parse_time_description(
+            hour=int(parsed["hour"]),
+            minute=int(parsed["minute"]),
+            day_offset=int(parsed.get("day_offset", 0)),
+        )
+        parsed["unix_timestamp"] = unix_ts
+    return parsed
 
 
 async def _show_reminder_confirm(reply_func, text: str, ts: float, time_desc: str = ""):
@@ -84,7 +103,7 @@ async def _show_reminder_confirm(reply_func, text: str, ts: float, time_desc: st
 @router.message(F.text)
 async def detect_reminder(msg: types.Message):
     if not _is_reminder(msg.text):
-        return
+        raise SkipHandler
     uid = msg.from_user.id
     text = msg.text.strip()
     try:
@@ -218,7 +237,8 @@ async def handle_reminder_text(uid: int, text: str, reply_func) -> bool:
             f"Сегодня: {now.strftime('%Y-%m-%d')} ({weekday_ru})\n"
             f"Сейчас: {now.strftime('%H:%M')}\n\n"
             f"Определи время из сообщения. Верни JSON:\n"
-            f'{{"unix_timestamp": 1234567890, "time_description": "..."}}\n'
+            f'{{"hour": 16, "minute": 0, "day_offset": 0, "time_description": "..."}}\n'
+            f"hour=0-23, minute=0-59, day_offset: 0=сегодня, 1=завтра, 2=послезавтра\n"
             f"Сообщение: {text}"
         )
         try:
@@ -235,8 +255,12 @@ async def handle_reminder_text(uid: int, text: str, reply_func) -> bool:
                 ],
             )
             parsed = _clean_json(resp)
-            ts = parsed.get("unix_timestamp")
-            if ts:
+            if parsed and parsed.get("hour") is not None and parsed.get("minute") is not None:
+                ts = _parse_time_description(
+                    hour=int(parsed["hour"]),
+                    minute=int(parsed["minute"]),
+                    day_offset=int(parsed.get("day_offset", 0)),
+                )
                 _remind_pending[uid] = {
                     "text": data.get("text"),
                     "ts": ts,
