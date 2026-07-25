@@ -7,6 +7,8 @@ from datetime import datetime
 import yt_dlp
 
 logger = logging.getLogger("YouTubeService")
+yt_logger = logging.getLogger("yt_dlp")
+yt_logger.setLevel(logging.ERROR)
 
 
 def _sanitize_filename(title: str) -> str:
@@ -43,6 +45,7 @@ async def download_video(url: str, quality: str = "720") -> str:
             "merge_output_format": "mp4",
             "quiet": True,
             "no_warnings": True,
+            "logger": yt_logger,
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
@@ -79,6 +82,7 @@ async def download_audio(url: str) -> tuple[str, str]:
             ],
             "quiet": True,
             "no_warnings": True,
+            "logger": yt_logger,
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])

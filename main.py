@@ -71,6 +71,8 @@ from services.tts_processor import (
 )
 from services.youtube import download_audio, download_video, transcribe_audio
 
+FILE_LIMIT = 50 * 1024 * 1024  # 50 MB — Telegram limit for documents/video/audio
+
 # 🔍 Sanity check: все ли пути импортированы?
 assert "PHOTOS_DIR" in dir(), "❌ PHOTOS_DIR не импортирован из config!"
 
@@ -770,6 +772,13 @@ async def cb_yt_quality(callback: types.CallbackQuery):
     await callback.answer()
     try:
         path = await download_video(url, quality)
+        size = os.path.getsize(path)
+        if size > FILE_LIMIT:
+            os.remove(path)
+            return await callback.message.answer(
+                f"❌ Видео слишком большое ({size // 1024 // 1024} MB). "
+                f"Лимит Telegram — 50 MB. Попробуйте 480p."
+            )
         await callback.message.answer_video(types.FSInputFile(path))
         os.remove(path)
     except Exception as e:
@@ -843,6 +852,13 @@ async def process_user_message(message: types.Message):
         st = await message.answer("⏬ Скачиваю аудио...")
         try:
             path, raw_title = await download_audio(text)
+            size = os.path.getsize(path)
+            if size > FILE_LIMIT:
+                os.remove(path)
+                return await st.edit_text(
+                    f"❌ Аудио слишком большое ({size // 1024 // 1024} MB). "
+                    f"Лимит Telegram — 50 MB."
+                )
             await st.edit_text("✅ Аудио готово. Отправляю...")
             await message.answer_audio(types.FSInputFile(path))
             sid = secrets.token_hex(4)
