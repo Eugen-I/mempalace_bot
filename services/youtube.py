@@ -92,6 +92,30 @@ async def download_audio(url: str) -> tuple[str, str]:
     return await asyncio.to_thread(_run)
 
 
+def _format_transcription(segments) -> str:
+    paragraphs = []
+    current = []
+    prev_end = 0.0
+    GAP_THRESHOLD = 2.0
+
+    for seg in segments:
+        gap = seg.start - prev_end
+        if gap > GAP_THRESHOLD and current:
+            paragraphs.append(" ".join(current))
+            current = []
+        text = seg.text.strip()
+        if text:
+            if not text.endswith((".", "!", "?")):
+                text += "."
+            current.append(text)
+        prev_end = seg.end
+
+    if current:
+        paragraphs.append(" ".join(current))
+
+    return "\n\n".join(paragraphs)
+
+
 async def transcribe_audio(audio_path: str, title: str = "") -> str:
     from services.whisper_service import get_whisper
 
@@ -106,10 +130,10 @@ async def transcribe_audio(audio_path: str, title: str = "") -> str:
     def _run():
         model = get_whisper("small")
         segments, _ = model.transcribe(audio_path, language="ru")
-        text = " ".join(seg.text for seg in segments)
-        return text
+        return list(segments)
 
-    text = await asyncio.to_thread(_run)
+    seg_list = await asyncio.to_thread(_run)
+    text = _format_transcription(seg_list)
 
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write(text)

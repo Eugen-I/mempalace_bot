@@ -94,7 +94,7 @@ from handlers import (  # noqa: E402
     chat, notes, palace, pdf, personal_note,
     reminder, settings, search,
 )
-from handlers import photos, reactions, voice, youtube_ui  # noqa: E402
+from handlers import photos, reactions, transkript, voice, youtube_ui  # noqa: E402
 
 
 def _safe_include(router):
@@ -116,6 +116,7 @@ _safe_include(reminder.router)
 _safe_include(youtube_ui.router)
 _safe_include(search.router)
 _safe_include(reactions.router)
+_safe_include(transkript.router)
 
 fallback_router = Router()
 dp.include_router(fallback_router)
@@ -197,7 +198,10 @@ async def cmd_start(message: types.Message):
                 types.KeyboardButton(text="📹 Скачать видео"),
                 types.KeyboardButton(text="🎵 Скачать MP3"),
             ],
-            [types.KeyboardButton(text="🏰 Дворец")],
+            [
+                types.KeyboardButton(text="🏰 Дворец"),
+                types.KeyboardButton(text="📜 Транскрипты"),
+            ],
         ],
         resize_keyboard=True,
     )
