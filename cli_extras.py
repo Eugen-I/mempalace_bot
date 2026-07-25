@@ -25,14 +25,14 @@ async def cli_remind(text: str, user_id: int = 0):
     if not _is_reminder(clean):
         return "❌ Не похоже на напоминание. Используйте: /remind через 2 часа <действие>"
 
-    parsed = await _parse_reminder(0, clean)
+    parsed = await _parse_reminder(clean)
     if not parsed:
         return "❌ Не удалось разобрать время/текст напоминания."
 
     kv = get_kv_store()
-    reminders = kv.get("reminders", 0) or []
+    reminders = kv.get("reminders") or []
     reminders.append(parsed)
-    kv.set("reminders", 0, reminders)
+    kv.set("reminders", reminders)
     return f"✅ Напоминание создано: {parsed.get('text', clean)} — в {parsed.get('time_str', '?')}"
 
 
@@ -88,19 +88,25 @@ async def cli_yt(url: str, mode: str = "video"):
             "  /ytaudio <url> — скачать аудио + транскрипция"
         )
 
-    parts = url.split()
-    url = parts[0]
-    quality = parts[1] if len(parts) > 1 and parts[1].isdigit() else "720"
+    url_parts = url.split()
+    clean_url = url_parts[0]
+    quality = url_parts[1] if len(url_parts) > 1 and url_parts[1].isdigit() else "720"
 
     if mode == "audio":
-        path = await download_audio(url)
-        if not path:
+        result = await download_audio(clean_url)
+        if not result:
             return "❌ Не удалось скачать аудио."
-        trans = await transcribe_audio(path, os.path.basename(path))
-        preview = trans[:1000] if trans else "(транскрипция не удалась)"
-        return f"🎵 Аудио: {path}\n📝 Транскрипция ({len(trans or '')} символов):\n{preview}"
+        audio_path, _ = result if isinstance(result, tuple) else (result, "")
+        trans_path = await transcribe_audio(audio_path, os.path.basename(audio_path))
+        trans_text = ""
+        if trans_path and os.path.exists(trans_path):
+            with open(trans_path) as f:
+                trans_text = f.read()
+        preview = trans_text[:1000] if trans_text else "(транскрипция не удалась)"
+        trans_len = len(trans_text or '')
+        return f"🎵 Аудио: {audio_path}\n📝 Транскрипция ({trans_len} символов):\n{preview}"
     else:
-        path = await download_video(url, quality)
+        path = await download_video(clean_url, quality)
         if not path:
             return "❌ Не удалось скачать видео."
         return f"📹 Видео: {path}"

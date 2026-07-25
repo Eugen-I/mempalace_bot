@@ -1,3 +1,5 @@
+from typing import cast
+
 from aiogram import Bot, Dispatcher
 from cachetools import TTLCache
 
@@ -13,7 +15,7 @@ yt_waiting_url: TTLCache[int, str] = TTLCache(maxsize=50, ttl=60)
 yt_quality_url: TTLCache[int, str] = TTLCache(maxsize=50, ttl=120)
 yt_audio_cache: TTLCache[str, dict] = TTLCache(maxsize=50, ttl=3600)
 
-bot = Bot(token=API_TOKEN)
+bot = Bot(token=cast(str, API_TOKEN))
 dp = Dispatcher()
 logger = None  # will be set by init_bot
 

@@ -18,10 +18,14 @@ class JSONFormatter(logging.Formatter):
 
 
 def setup_logging(data_dir: str) -> logging.Logger:
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
     _console_handler = logging.StreamHandler(sys.stdout)
     _console_handler.setFormatter(
         logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"),
     )
+    logging.root.addHandler(_console_handler)
 
     _file_handler = logging.handlers.RotatingFileHandler(
         os.path.join(data_dir, "bot_debug.log"),
@@ -30,6 +34,7 @@ def setup_logging(data_dir: str) -> logging.Logger:
         backupCount=3,
     )
     _file_handler.setFormatter(JSONFormatter())
+    logging.root.addHandler(_file_handler)
 
-    logging.basicConfig(level=logging.INFO, handlers=[_console_handler, _file_handler])
+    logging.root.setLevel(logging.INFO)
     return logging.getLogger("MainHandler")
