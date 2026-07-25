@@ -73,6 +73,27 @@ from services.youtube import download_audio, download_video, transcribe_audio
 
 FILE_LIMIT = 50 * 1024 * 1024  # 50 MB — Telegram limit for documents/video/audio
 
+
+async def _compress_video(path: str) -> str:
+    import subprocess as _sp
+
+    base, ext = os.path.splitext(path)
+    compressed = f"{base}_compressed{ext}"
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", "-i", path,
+        "-c:v", "libx264", "-crf", "28",
+        "-preset", "fast",
+        "-c:a", "aac", "-b:a", "96k",
+        compressed,
+        stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+    )
+    await proc.wait()
+    if os.path.exists(compressed):
+        os.remove(path)
+        return compressed
+    return path
+
+
 # 🔍 Sanity check: все ли пути импортированы?
 assert "PHOTOS_DIR" in dir(), "❌ PHOTOS_DIR не импортирован из config!"
 
@@ -774,11 +795,20 @@ async def cb_yt_quality(callback: types.CallbackQuery):
         path = await download_video(url, quality)
         size = os.path.getsize(path)
         if size > FILE_LIMIT:
-            os.remove(path)
-            return await callback.message.answer(
-                f"❌ Видео слишком большое ({size // 1024 // 1024} MB). "
-                f"Лимит Telegram — 50 MB. Попробуйте 480p."
+            st = await callback.message.answer(
+                f"📦 Видео {size // 1024 // 1024} MB, сжимаю..."
             )
+            compressed = await _compress_video(path)
+            size = os.path.getsize(compressed)
+            if size > FILE_LIMIT:
+                os.remove(compressed)
+                return await st.edit_text(
+                    f"❌ Видео слишком большое даже после сжатия "
+                    f"({size // 1024 // 1024} MB). "
+                    f"Лимит Telegram — 50 MB."
+                )
+            path = compressed
+            await st.delete()
         await callback.message.answer_video(types.FSInputFile(path))
         os.remove(path)
     except Exception as e:
