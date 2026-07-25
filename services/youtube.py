@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import subprocess
 from datetime import datetime
 
 import yt_dlp
@@ -114,3 +115,21 @@ async def transcribe_audio(audio_path: str, title: str = "") -> str:
         f.write(text)
 
     return txt_path
+
+
+async def _compress_video(path: str) -> str:
+    base, ext = os.path.splitext(path)
+    compressed = f"{base}_compressed{ext}"
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", "-i", path,
+        "-c:v", "libx264", "-crf", "28",
+        "-preset", "fast",
+        "-c:a", "aac", "-b:a", "96k",
+        compressed,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    await proc.wait()
+    if os.path.exists(compressed):
+        os.remove(path)
+        return compressed
+    return path

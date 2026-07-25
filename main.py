@@ -5,7 +5,6 @@
 """
 
 import asyncio
-import hashlib
 import os
 import re
 import secrets
@@ -13,15 +12,13 @@ import sys
 import time
 from datetime import datetime
 
-from aiogram import Bot, Dispatcher, F, Router, types
+from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from cachetools import TTLCache
 
 # 1. КОНФИГУРАЦИЯ
 from config import (
     ADMIN_ID,
-    ALLOWED_IDS,
     API_TOKEN,
     CHATS_DIR,
     DATA_DIR,
@@ -29,17 +26,17 @@ from config import (
     NOTES_DIR,
     PHOTOS_DIR,
     RESEARCH_DIR,
-    allowed_callback,
     allowed_only,
 )
 from handlers.chat import load_chat, save_chat, user_sessions, waiting_for_name
 from handlers.palace import process_mcp_text_input, suggest_tunnel_hint
 from handlers.personal_note import _waiting_for_note, process_note_input
-from services.ai_cache import _ai_msg_cache, cache_ai_response
+from services.ai_cache import cache_ai_response
 
 # 2. СЕРВИСЫ
 from services.ai_engine import get_current_ai
 from services.auto_sync import auto_sync_chat
+from services.bot_setup import pending_wing_search as _pending_wing_search
 from services.code_mode import (
     ensure_project_dir,
     is_coding_context,
@@ -50,10 +47,8 @@ from services.event_bus import Event, get_bus
 from services.memory import extract_and_store_facts, get_memory_context
 from services.multimodal import (
     check_capability,
-    delete_photo,
     encode_image_to_base64,
     list_photos,
-    save_bot_photo,
 )
 from services.palace_bridge import (
     export_chat_verbatim,
@@ -62,36 +57,22 @@ from services.palace_bridge import (
     sync_to_palace,
 )
 from services.palace_mcp import get_mcp
-from services.text_formatter import safe_html_format, split_message
-from services.tts_processor import (
-    generate_voice_async,
-    get_voice_settings,
-    prepare_tts_text,
-    split_tts_text,
+from services.text_formatter import safe_html_format
+from services.tts_processor import get_voice_settings
+from services.bot_setup import (
+    bot,
+    dp,
+    init_bot,
+    sync_counter as _sync_counter,
+    sync_in_progress as _sync_in_progress,
+    yt_audio_cache as _yt_audio_cache,
+    yt_quality_url as _yt_quality_url,
+    yt_waiting_url as _yt_waiting_url,
 )
-from services.youtube import download_audio, download_video, transcribe_audio
+from services.sender import send_response_with_mode
+from services.youtube import download_audio
 
 FILE_LIMIT = 50 * 1024 * 1024  # 50 MB — Telegram limit for documents/video/audio
-
-
-async def _compress_video(path: str) -> str:
-    import subprocess as _sp
-
-    base, ext = os.path.splitext(path)
-    compressed = f"{base}_compressed{ext}"
-    proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-y", "-i", path,
-        "-c:v", "libx264", "-crf", "28",
-        "-preset", "fast",
-        "-c:a", "aac", "-b:a", "96k",
-        compressed,
-        stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
-    )
-    await proc.wait()
-    if os.path.exists(compressed):
-        os.remove(path)
-        return compressed
-    return path
 
 
 # 🔍 Sanity check: все ли пути импортированы?
@@ -106,48 +87,14 @@ if API_TOKEN == "your_telegram_bot_token" or ADMIN_ID == 0:
 from services.logging_setup import setup_logging  # noqa: E402
 
 logger = setup_logging(DATA_DIR)
-from aiogram.types import MessageReactionUpdated, ReactionTypeEmoji  # noqa: E402
-
-# 🗑️ Кэш для маппинга коротких ID -> полные имена файлов (для кнопок удаления)
-_photo_delete_cache: TTLCache[str, str] = TTLCache(maxsize=500, ttl=300)
-_pending_wing_search: TTLCache[int, str] = TTLCache(maxsize=100, ttl=60)
-_sync_counter: TTLCache[int, int] = TTLCache(maxsize=100, ttl=3600)
-_sync_in_progress: TTLCache[int, bool] = TTLCache(maxsize=100, ttl=60)
-_yt_waiting_url: TTLCache[int, str] = TTLCache(maxsize=50, ttl=60)
-_yt_quality_url: TTLCache[int, str] = TTLCache(maxsize=50, ttl=120)
-_yt_audio_cache: TTLCache[str, dict] = TTLCache(maxsize=50, ttl=3600)
-
-# 4. ИНИЦИАЛИЗАЦИЯ (СТРОГО ОДИН РАЗ)
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
-
-
-# 5. MIDDLEWARE БЕЗОПАСНОСТИ (aiogram 3.x)
-async def security_middleware(handler, event, data):
-    uid = None
-    if hasattr(event, "from_user") and event.from_user:
-        uid = event.from_user.id
-    elif hasattr(event, "message") and event.message and event.message.from_user:
-        uid = event.message.from_user.id
-    elif (
-        hasattr(event, "callback_query")
-        and event.callback_query
-        and event.callback_query.from_user
-    ):
-        uid = event.callback_query.from_user.id
-
-    if uid and uid not in ALLOWED_IDS:
-        logger.warning(f"[🔒 SECURITY] Blocked user: {uid}")
-        return None  # Блокируем, не передаём дальше
-    return await handler(event, data)  # Передаём управление
-
-
-dp.message.middleware(security_middleware)
-dp.callback_query.middleware(security_middleware)
+init_bot(logger)
 
 # 6. ПОДКЛЮЧЕНИЕ РОУТЕРОВ
-from handlers import chat, notes, palace, pdf, personal_note, reminder, settings  # noqa: E402
-from handlers import voice  # noqa: E402
+from handlers import (  # noqa: E402
+    chat, notes, palace, pdf, personal_note,
+    reminder, settings, search,
+)
+from handlers import photos, reactions, voice, youtube_ui  # noqa: E402
 
 
 def _safe_include(router):
@@ -159,12 +106,16 @@ def _safe_include(router):
 
 _safe_include(chat.router)
 _safe_include(settings.router)
+_safe_include(photos.router)
 _safe_include(notes.router)
 _safe_include(pdf.router)
 _safe_include(voice.router)
 _safe_include(palace.router)
 _safe_include(personal_note.router)
 _safe_include(reminder.router)
+_safe_include(youtube_ui.router)
+_safe_include(search.router)
+_safe_include(reactions.router)
 
 fallback_router = Router()
 dp.include_router(fallback_router)
@@ -254,484 +205,6 @@ async def cmd_start(message: types.Message):
     logger.info(f"User {message.from_user.id} started.")
 
 
-# ✅ ИСПРАВЛЕННЫЙ ХЕНДЛЕР ФОТО (TRY/EXCEPT + СОВРЕМЕННОЕ СКАЧИВАНИЕ)
-# @fallback_router.message(F.photo)
-# @allowed_only
-# async def handle_photo(message: types.Message):
-#     try:
-#         photo = message.photo[-1]
-#         tmp_path = f"/tmp/{message.from_user.id}_{photo.file_unique_id}.jpg"
-#         await message.download(destination=tmp_path)  # ✅ Aiogram 3.x способ
-
-#         saved_path = save_bot_photo(tmp_path, message.from_user.id)
-#         if not saved_path:
-#             return await message.answer("❌ Ошибка сохранения фото.")
-
-#         photos = list_photos()
-#         # ✅ Исправлено: InlineKeyboardBuilder() вместо InlineKeyboardBuilder()
-#         kb = InlineKeyboardBuilder()
-#         kb.row(types.InlineKeyboardButton(text="🔍 Анализ последнего", callback_data="photo_analyze_last"))  # noqa: E501
-#         kb.row(types.InlineKeyboardButton(text="🗑 Удалить последнее", callback_data="photo_delete_last"))  # noqa: E501
-#         await message.answer(f"📸 Фото сохранено. В папке {len(photos)} фото.", reply_markup=kb.as_markup())  # noqa: E501
-#     except Exception as e:
-#         logger.error(f"📷 Ошибка обработки фото: {e}", exc_info=True)
-#         await message.answer("❌ Ошибка при обработке фото.")
-
-
-@fallback_router.message(F.photo | F.document)
-@allowed_only  # Если хотите убрать проверку доступа для тестов, закомментируйте эту строку
-async def handle_photo(message: types.Message):
-    logger.info(
-        f"📸 [PHOTO_HANDLER] Сработал хендлер! Тип: {'Photo' if message.photo else 'Document'}",
-    )
-    try:
-        # 1. Определяем объект файла (Фото или Документ)
-        if message.photo:
-            file = message.photo[-1]
-            logger.info(f"📸 [PHOTO] Получено фото. ID: {file.file_id}")
-        elif message.document and message.document.mime_type.startswith("image/"):
-            file = message.document
-            logger.info(f"📄 [PHOTO] Получен документ-картинка. ID: {file.file_id}")
-        else:
-            return  # Игнорируем не-картинки
-
-        # 2. Формируем путь
-        tmp_path = f"/tmp/{message.from_user.id}_{file.file_unique_id}.jpg"
-        logger.info(f"⬇️ [PHOTO] Скачиваю файл в: {tmp_path}")
-
-        # 3. Скачиваем через bot (самый надежный метод в aiogram 3)
-        file_info = await message.bot.get_file(file.file_id)
-        await message.bot.download_file(file_info.file_path, destination=tmp_path)
-
-        if not os.path.exists(tmp_path):
-            raise FileNotFoundError(f"Файл не появился после скачивания: {tmp_path}")
-        logger.info(f"✅ [PHOTO] Файл скачан. Размер: {os.path.getsize(tmp_path)} байт")
-
-        # 4. Сохраняем в общую папку
-        saved_path = save_bot_photo(tmp_path, message.from_user.id)
-        if not saved_path:
-            raise RuntimeError("save_bot_photo вернул пустой путь.")
-        logger.info(f"💾 [PHOTO] Фото сохранено в базу: {saved_path}")
-
-        # 5. Отправляем ответ с кнопками
-        photos = list_photos()
-        kb = InlineKeyboardBuilder()
-        kb.row(
-            types.InlineKeyboardButton(
-                text="🔍 Анализ последнего", callback_data="photo_analyze_last",
-            ),
-        )
-        kb.row(
-            types.InlineKeyboardButton(
-                text="🗑 Удалить последнее", callback_data="photo_delete_last",
-            ),
-        )
-
-        await message.answer(
-            f"📸 Фото сохранено. В папке {len(photos)} фото.",
-            reply_markup=kb.as_markup(),
-        )
-        logger.info("📤 [PHOTO] Ответ отправлен пользователю.")
-
-    except Exception as e:
-        logger.error(f"🚨 [PHOTO] Критическая ошибка: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка обработки: {str(e)[:100]}")
-
-
-# КОЛЛБЭКИ ДЛЯ ФОТО
-@fallback_router.callback_query(F.data == "photo_analyze_last")
-@allowed_callback
-async def cb_analyze_last_photo(cb: types.CallbackQuery):
-    # ✅ 1. СРАЗУ отвечаем на callback (до долгой обработки!)
-    await cb.answer()
-
-    photos = list_photos()
-    if not photos:
-        return await cb.message.answer("❌ Нет фото для анализа")
-
-    last_photo = photos[0]
-    photo_path = os.path.join(PHOTOS_DIR, last_photo)
-
-    engine, model = get_current_ai()
-    if not check_capability(model, "multimodal"):
-        return await cb.message.answer(f"⚠️ {model} не поддерживает фото")
-
-    # ✅ 2. Отправляем НОВОЕ сообщение о статусе
-    status_msg = await cb.message.answer(
-        f"🔍 Анализирую: `{last_photo}`...", parse_mode="Markdown",
-    )
-
-    try:
-        b64 = encode_image_to_base64(photo_path)
-        if not b64:
-            raise ValueError("Base64 пуст")
-        # ✅ 1. Ищем контекст для анализа (сны, идеи, психология)
-        palace_context = await search_palace_context(
-            "фото сон сюрреализм пиктореализм психология арихитипы идеи образы", limit=7,
-        )
-
-        # ✅ 2. Используем умный промпт вместо удаленной константы
-        from services.prompts import get_smart_prompt
-
-        system_instruction = get_smart_prompt(
-            context=palace_context,
-            query="анализ фотографии, символика, связь с заметками",
-            has_images=True,
-        )
-
-        msgs = [
-            {"role": "system", "content": system_instruction},
-            {
-                "role": "user",
-                "content": "Опиши фото, символику, атмосферу. Найди связи с моими личными записями или снами. Придумай метафору или название.",  # noqa: E501
-            },
-        ]
-
-        answer = await asyncio.to_thread(
-            lambda: get_ai_response_sync_wrapper(
-                engine, model, msgs, context="", images=[b64],
-            ),
-        )
-
-        # ✅ 4. БЕЗОПАСНАЯ отправка: экранируем HTML + разбиваем на части
-        safe_answer = safe_html_format(answer)
-        full_text = f"📸 **Анализ `{last_photo}`:**\n\n{safe_answer}"
-        parts = split_message(full_text)
-
-        for part in parts:
-            if part and part.strip():
-                try:
-                    # Пробуем отправить с форматированием
-                    await cb.message.answer(part, parse_mode="HTML")
-                except Exception as e:
-                    logger.error(f"Ошибка отправки с HTML: {e}")
-                    # Fallback: отправляем как простой текст
-                    await cb.message.answer(part, parse_mode=None)
-
-    except Exception as e:
-        logger.error(f"Ошибка анализа фото: {e}", exc_info=True)
-        await cb.message.answer(f"❌ Ошибка: {str(e)[:200]}")
-    finally:
-        # ✅ 5. Удаляем статус-сообщение
-        try:
-            await status_msg.delete()
-        except Exception:
-            pass
-
-
-@fallback_router.callback_query(F.data.startswith("show_links:"))
-@allowed_callback
-async def cb_show_links(cb: types.CallbackQuery):
-    await cb.answer()
-    fn = cb.data.split(":")[1]
-    note_path = os.path.join(NOTES_DIR, fn)
-
-    if not os.path.exists(note_path):
-        return await cb.message.answer("❌ Файл не найден.")
-
-    try:
-        with open(note_path, encoding="utf-8") as f:
-            content = f.read()
-
-        if "## 🔗 Связанные записи" in content:
-            links_section = content.split("## 🔗 Связанные записи")[1].strip()
-            await cb.message.answer(
-                f"🔗 Связанные записи:\n{links_section}", parse_mode=None,
-            )
-        else:
-            await cb.message.answer(
-                "⏳ Связи еще формируются или не найдены. Попробуйте через пару секунд.",
-            )
-
-    except Exception as e:
-        logger.error(f"Ошибка показа связей: {e}")
-        await cb.message.answer("❌ Не удалось загрузить связи.")
-
-
-@fallback_router.callback_query(F.data == "photo_delete_last")
-@allowed_callback
-async def cb_delete_photo(cb: types.CallbackQuery):
-    photos = list_photos()
-    if photos and delete_photo(photos[0]):
-        await cb.answer(f"🗑 Удалено: {photos[0]}", show_alert=True)
-        await cb.message.edit_text(f"📸 Удалено. Осталось: {len(list_photos())}")
-    else:
-        await cb.answer("❌ Не удалось удалить", show_alert=True)
-
-
-# 📸 КОМАНДА /photos - показать список фото
-@fallback_router.message(Command("photos"))
-@allowed_only
-async def cmd_photos(message: types.Message):
-    from services.multimodal import list_photos
-
-    photos = list_photos()
-    if not photos:
-        return await message.answer("📁 Папка photos пуста.")
-
-    text = f"📸 <b>Фото в базе ({len(photos)}):</b>\n\n"
-    for i, p in enumerate(photos, 1):
-        text += f"{i}) {p}\n"
-
-    kb = InlineKeyboardBuilder()
-    uid = str(message.from_user.id)  # ✅ Преобразуем в строку для кэша
-
-    for p in photos:
-        # Генерируем короткий уникальный ID (8 символов) на основе хэша + user_id
-        short_id = hashlib.md5(f"{uid}:{p}".encode()).hexdigest()[:8]
-        _photo_delete_cache[f"{uid}:{short_id}"] = p
-
-        # Обрезаем текст кнопки для красоты
-        btn_text = p[:20] + ("..." if len(p) > 20 else "")
-        kb.row(
-            types.InlineKeyboardButton(
-                text=f"🗑 {btn_text}",
-                callback_data=f"del_photo:{uid}:{short_id}",  # Формат: del_photo:USER_ID:SHORT_ID
-            ),
-        )
-
-    await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
-
-
-@fallback_router.callback_query(F.data.startswith("del_photo:"))
-@allowed_callback
-async def cb_del_photo(cb: types.CallbackQuery):
-    from services.multimodal import delete_photo, list_photos
-
-    # Парсим callback_data: del_photo:USER_ID:SHORT_ID
-    parts = cb.data.split(":")
-    if len(parts) < 3:
-        return await cb.answer("❌ Неверный формат запроса", show_alert=True)
-
-    uid = parts[1]
-    short_id = parts[2]
-    cache_key = f"{uid}:{short_id}"
-
-    # Восстанавливаем полное имя файла из кэша
-    fname = _photo_delete_cache.get(cache_key)
-    if not fname:
-        return await cb.answer(
-            "❌ Сессия истекла. Откройте /photos заново", show_alert=True,
-        )
-
-    # Удаляем из кэша после использования (защита от повторного нажатия)
-    _photo_delete_cache.pop(cache_key, None)
-
-    # Проверяем, что файл ещё существует в папке
-    photos = list_photos()
-    if fname not in photos:
-        return await cb.answer("❌ Файл уже удален", show_alert=True)
-
-    # Выполняем удаление
-    if delete_photo(fname):
-        await cb.answer(f"🗑 Удалено: {fname}", show_alert=True)
-
-        # ✅ Обновляем сообщение со списком фото
-        new_photos = list_photos()
-        if not new_photos:
-            await cb.message.edit_text("📁 Папка photos пуста.", reply_markup=None)
-        else:
-            text = f"📸 <b>Фото в базе ({len(new_photos)}):</b>\n\n"
-            for i, p in enumerate(new_photos, 1):
-                text += f"{i}) {p}\n"
-
-            kb = InlineKeyboardBuilder()
-            for p in new_photos:
-                short_id = hashlib.md5(f"{uid}:{p}".encode()).hexdigest()[:8]
-                _photo_delete_cache[f"{uid}:{short_id}"] = p
-                btn_text = p[:20] + ("..." if len(p) > 20 else "")
-                kb.row(
-                    types.InlineKeyboardButton(
-                        text=f"🗑 {btn_text}",
-                        callback_data=f"del_photo:{uid}:{short_id}",
-                    ),
-                )
-
-            await cb.message.edit_text(
-                text, reply_markup=kb.as_markup(), parse_mode="HTML",
-            )
-    else:
-        await cb.answer(f"❌ Не удалось удалить: {fname}", show_alert=True)
-
-
-# 🎭 Роутер для обработки реакций
-reaction_router = Router()
-dp.include_router(reaction_router)
-
-
-@reaction_router.message_reaction()
-async def handle_ai_reaction(event: MessageReactionUpdated):
-    """Обрабатывает реакции на сообщения бота и сохраняет контент в папки."""
-    if not event.user or event.user.id not in ALLOWED_IDS:
-        return
-    if not event.new_reaction:
-        return
-
-    # 🔍 Нормализация эмодзи (удаляем селекторы вариантов, ZWJ и гендерные модификаторы)
-    def normalize_emoji(e: str) -> str:
-        return (
-            e.replace("\ufe0f", "")
-            .replace("\u200d", "")
-            .replace("\u2642", "")
-            .replace("\u2640", "")
-            .strip()
-        )
-
-    # Маппинг базовых эмодзи на действия
-    action_map = {
-        "👍": "note",
-        "❤": "insight",  # ❤️ без FE0F становится ❤
-        "🤷": "research",  # 🤷‍♂️/🤷‍♀️ нормализуется до 🤷
-    }
-
-    action = None
-    for react in event.new_reaction:
-        if isinstance(react, ReactionTypeEmoji):
-            norm = normalize_emoji(react.emoji)
-            if norm in action_map:
-                action = action_map[norm]
-                logger.info(
-                    f"[REACTION] Detected {react.emoji} -> normalized: {norm} -> action: {action}",
-                )
-                break
-
-    if not action:
-        return  # Не наша реакция
-
-    chat_id = event.chat.id
-    msg_id = event.message_id
-    ai_text = _ai_msg_cache.get(chat_id, {}).get(msg_id)
-
-    if not ai_text:
-        await event.bot.send_message(
-            chat_id, "⚠️ Сообщение не найдено в кэше. Используйте !! или ? вручную.",
-        )
-        return
-
-    try:
-        ts = datetime.now().strftime("%Y%m%d_%H%M")
-        if action == "note":
-            fn = f"nt_react_{ts}.txt"
-            path = os.path.join(NOTES_DIR, fn)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(f"[Реакция 👍]\n{ai_text}")
-            await event.bot.send_message(
-                chat_id, f"💾 Сохранено в `my_notes`: `{fn}`", parse_mode="Markdown",
-            )
-
-        elif action == "insight":
-            fn = f"ext_react_{ts}.txt"
-            path = os.path.join(INSIGHTS_DIR, fn)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(f"!! [Реакция ❤️]\nИсточник: msg_{msg_id}\nИТОГ:\n{ai_text}")
-            await event.bot.send_message(
-                chat_id, f"💡 Сохранено в `Insights`: `{fn}`", parse_mode="Markdown",
-            )
-
-        elif action == "research":
-            fn = f"ext_react_{ts}.txt"
-            path = os.path.join(RESEARCH_DIR, fn)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(f"? [Реакция 🤷‍♂️]\nИсточник: msg_{msg_id}\nИТОГ:\n{ai_text}")
-            await event.bot.send_message(
-                chat_id, f"🔍 Сохранено в `Research`: `{fn}`", parse_mode="Markdown",
-            )
-
-    except Exception as e:
-        logger.error(f"[REACTION_SAVE] Error: {e}", exc_info=True)
-        await event.bot.send_message(chat_id, f"❌ Ошибка сохранения: {str(e)[:100]}")
-
-
-# ФУНКЦИЯ ОТПРАВКИ (ТЕКСТ/ГОЛОС)
-async def send_response_with_mode(message: types.Message, text: str, voice_mode: str):
-    is_voice_enabled = voice_mode in ["voice", "both"]
-    is_text_enabled = voice_mode in ["text", "both"]
-    first_msg = None  # ✅ Запоминаем первое сообщение
-
-    if is_text_enabled:
-        parts = split_message(safe_html_format(text))
-        for i, p in enumerate(parts):
-            if p and p.strip():
-                try:
-                    msg = await message.answer(p, parse_mode="HTML")
-                    if i == 0:
-                        first_msg = msg  # ✅ Сохраняем только первое
-                except Exception:
-                    pass
-
-    if is_voice_enabled:
-        try:
-            tts_text = prepare_tts_text(text)
-            if tts_text:
-                tts_chunks = split_tts_text(tts_text, max_chars=1800)
-                for chunk in tts_chunks:
-                    ogg_files = await generate_voice_async(message.from_user.id, chunk)
-                    for ogg in ogg_files:
-                        try:
-                            await message.answer_voice(types.FSInputFile(ogg))
-                        except Exception:
-                            pass
-                        finally:
-                            try:
-                                os.remove(ogg)
-                            except Exception:
-                                pass
-        except Exception as e:
-            logger.error(f"Ошибка генерации голоса: {e}")
-
-    return first_msg
-
-
-# КНОПКА: Поиск по крылу
-@fallback_router.message(F.text == "🔍 Поиск по крылу")
-@allowed_only
-async def cmd_wing_search_prompt(message: types.Message):
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        types.InlineKeyboardButton(text="🌙 Сны", callback_data="wing_search:dreams"),
-    )
-    kb.row(
-        types.InlineKeyboardButton(
-            text="💻 Проекты", callback_data="wing_search:projects",
-        ),
-    )
-    kb.row(
-        types.InlineKeyboardButton(
-            text="🏛 Философия", callback_data="wing_search:philosophy",
-        ),
-    )
-    kb.row(
-        types.InlineKeyboardButton(
-            text="🎨 Творчество", callback_data="wing_search:creative",
-        ),
-    )
-    kb.row(
-        types.InlineKeyboardButton(
-            text="🧠 Психология", callback_data="wing_search:psychology",
-        ),
-    )
-    await message.answer("🔍 Выберите крыло для поиска:", reply_markup=kb.as_markup())
-
-
-@fallback_router.callback_query(F.data.startswith("wing_search:"))
-@allowed_callback
-async def cb_wing_search_select(callback: types.CallbackQuery):
-    wing = callback.data.split(":", 1)[1]
-    uid = callback.from_user.id
-    _pending_wing_search[uid] = wing
-    wing_names = {
-        "dreams": "🌙 Сны",
-        "projects": "💻 Проекты",
-        "philosophy": "🏛 Философия",
-        "creative": "🎨 Творчество",
-        "psychology": "🧠 Психология",
-    }
-    await callback.message.edit_text(
-        f"✏️ Введите текст для поиска в крыле {wing_names.get(wing, wing)}:",
-    )
-    await callback.answer()
-
-
 # КНОПКА: Дворец
 @fallback_router.message(F.text == "🏰 Дворец")
 @allowed_only
@@ -762,95 +235,6 @@ async def _auto_sync_wrapper(uid: int, fname: str, fpath: str):
         await auto_sync_chat(uid, fname, fpath)
     finally:
         _sync_in_progress[uid] = False
-
-
-# КНОПКА: Скачать видео
-@fallback_router.message(F.text == "📹 Скачать видео")
-@allowed_only
-async def cmd_yt_video(message: types.Message):
-    _yt_waiting_url[message.from_user.id] = "video"
-    await message.answer("📹 Введите ссылку на YouTube видео:")
-
-
-@fallback_router.message(F.text == "🎵 Скачать MP3")
-@allowed_only
-async def cmd_yt_audio(message: types.Message):
-    _yt_waiting_url[message.from_user.id] = "audio"
-    await message.answer("🎵 Введите ссылку на YouTube видео:")
-
-
-@fallback_router.callback_query(F.data.startswith("yt_q:"))
-@allowed_callback
-async def cb_yt_quality(callback: types.CallbackQuery):
-    quality = callback.data.split(":", 1)[1]
-    uid = callback.from_user.id
-    url = _yt_quality_url.pop(uid, "")
-    if not url:
-        return await callback.answer(
-            "❌ Сессия истекла. Начните заново.", show_alert=True,
-        )
-    await callback.message.edit_text(f"⏬ Скачиваю {quality}p...")
-    await callback.answer()
-    try:
-        path = await download_video(url, quality)
-        size = os.path.getsize(path)
-        if size > FILE_LIMIT:
-            st = await callback.message.answer(
-                f"📦 Видео {size // 1024 // 1024} MB, сжимаю..."
-            )
-            compressed = await _compress_video(path)
-            size = os.path.getsize(compressed)
-            if size > FILE_LIMIT:
-                os.remove(compressed)
-                return await st.edit_text(
-                    f"❌ Видео слишком большое даже после сжатия "
-                    f"({size // 1024 // 1024} MB). "
-                    f"Лимит Telegram — 50 MB."
-                )
-            path = compressed
-            await st.delete()
-        await callback.message.answer_video(types.FSInputFile(path))
-        os.remove(path)
-    except Exception as e:
-        await callback.message.answer(f"❌ Ошибка: {str(e)[:200]}")
-
-
-@fallback_router.callback_query(F.data.startswith("yt_tr:"))
-@allowed_callback
-async def cb_yt_transcribe(callback: types.CallbackQuery):
-    parts = callback.data.split(":")
-    if len(parts) < 3:
-        return await callback.answer()
-    sid, answer = parts[1], parts[2]
-    audio_data = _yt_audio_cache.pop(sid, None)
-    if not audio_data or not os.path.exists(audio_data["path"]):
-        return await callback.answer("❌ Файл не найден.", show_alert=True)
-    audio_path = audio_data["path"]
-    audio_title = audio_data.get("title", "")
-    if answer == "no":
-        try:
-            os.remove(audio_path)
-        except Exception:
-            pass
-        await callback.message.edit_text("✅ Транскрипция отменена.")
-        return await callback.answer()
-    await callback.message.edit_text("📝 Транскрибирую аудио...")
-    await callback.answer()
-    try:
-        txt_path = await transcribe_audio(audio_path, audio_title)
-        with open(txt_path, encoding="utf-8") as f:
-            text = f.read()
-        await callback.message.answer(
-            f"✅ Транскрипт сохранён в `{os.path.basename(txt_path)}`:\n\n{text[:3000]}",
-            parse_mode="Markdown",
-        )
-    except Exception as e:
-        await callback.message.answer(f"❌ Ошибка транскрибации: {str(e)[:200]}")
-    finally:
-        try:
-            os.remove(audio_path)
-        except Exception:
-            pass
 
 
 # ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ
@@ -1003,36 +387,6 @@ async def process_user_message(message: types.Message):
                     )
             except Exception as e:
                 return await message.answer(f"❌ Ошибка: {e}")
-
-    # 3. 🔍 Поиск
-    if text.lower().startswith("/search "):
-        query_raw = text[8:].strip()
-        if not query_raw:
-            return await message.answer(
-                "❌ Укажите запрос: /search <текст> или /search --wing dreams <текст>",
-            )
-        wing = ""
-        search_text = query_raw
-        wing_match = re.match(r"^--wing\s+(\w+)\s+(.*)", query_raw)
-        if wing_match:
-            wing = wing_match.group(1).lower()
-            search_text = wing_match.group(2)
-            if wing not in [
-                "dreams",
-                "projects",
-                "philosophy",
-                "creative",
-                "psychology",
-            ]:
-                wing = ""
-        wing_info = f" (крыло: {wing})" if wing else ""
-        st = await message.answer(f"🔍 Ищу в MemPalace{wing_info}...")
-        try:
-            res = await search_palace_context(search_text, limit=5, wing=wing)
-            await st.edit_text(res or "Ничего не найдено.")
-        except Exception as e:
-            await st.edit_text(f"❌ Ошибка поиска: {str(e)[:100]}")
-        return None
 
     # 4. 🆕 Ввод имени чата
     if waiting_for_name.get(uid):
@@ -1427,6 +781,7 @@ def get_ai_response_sync_wrapper(
 from config import DEFAULT_DATA_DIR  # noqa: E402
 
 print(f"🔍 Отладка: Путь к .env должен быть: {os.path.join(DEFAULT_DATA_DIR, '.env')}")
+from config import ALLOWED_IDS  # noqa: E402
 print(f"🔍 Отладка: Текущие ALLOWED_IDS: {ALLOWED_IDS}")
 
 
