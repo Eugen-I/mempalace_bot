@@ -802,7 +802,8 @@ async def cb_yt_transcribe(callback: types.CallbackQuery):
             os.remove(audio_path)
         except Exception:
             pass
-        return await callback.answer("👍 Отменено")
+        await callback.message.edit_text("✅ Транскрипция отменена.")
+        return await callback.answer()
     await callback.message.edit_text("📝 Транскрибирую аудио...")
     await callback.answer()
     try:
