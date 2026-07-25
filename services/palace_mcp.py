@@ -1,7 +1,13 @@
-import os, sys, json, asyncio, logging
+import asyncio
+import json
+import logging
+import os
+import sys
+
 from config import DATA_DIR
 
 logger = logging.getLogger("PalaceMCP")
+
 
 class PalaceMCPClient:
     def __init__(self):
@@ -22,20 +28,25 @@ class PalaceMCPClient:
         env["PYTHONPATH"] = DATA_DIR + os.pathsep + env.get("PYTHONPATH", "")
 
         self._proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "mempalace.mcp_server",
+            sys.executable,
+            "-m",
+            "mempalace.mcp_server",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env
+            env=env,
         )
 
         self._reader_task = asyncio.create_task(self._reader())
 
-        init_resp = await self._rpc("initialize", {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "mempalace-bot", "version": "1.0"}
-        })
+        init_resp = await self._rpc(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "mempalace-bot", "version": "1.0"},
+            },
+        )
         if "result" not in init_resp:
             raise RuntimeError(f"MCP handshake failed: {init_resp}")
 
@@ -75,7 +86,9 @@ class PalaceMCPClient:
                     fut.set_exception(RuntimeError("MCP connection lost"))
             self._pending.clear()
 
-    async def _rpc(self, method: str, params: dict = None, timeout: float = 30.0) -> dict:
+    async def _rpc(
+        self, method: str, params: dict = None, timeout: float = 30.0,
+    ) -> dict:
         async with self._lock:
             self._seq += 1
             seq = self._seq
@@ -102,7 +115,9 @@ class PalaceMCPClient:
 
     async def call_tool(self, name: str, arguments: dict = None) -> str:
         await self._ensure_alive()
-        resp = await self._rpc("tools/call", {"name": name, "arguments": arguments or {}})
+        resp = await self._rpc(
+            "tools/call", {"name": name, "arguments": arguments or {}},
+        )
         if "error" in resp:
             raise RuntimeError(f"MCP error: {resp['error']}")
         content = resp.get("result", {}).get("content", [])
@@ -114,7 +129,7 @@ class PalaceMCPClient:
             try:
                 self._proc.terminate()
                 await self._proc.wait()
-            except:
+            except Exception:
                 pass
             self._proc = None
         if self._reader_task:
@@ -123,14 +138,17 @@ class PalaceMCPClient:
         self._ready.clear()
         logger.info("MCP client stopped")
 
+
 # Singleton
 _mcp_client = None
+
 
 def get_mcp() -> PalaceMCPClient:
     global _mcp_client
     if _mcp_client is None:
         _mcp_client = PalaceMCPClient()
     return _mcp_client
+
 
 def reset_mcp():
     global _mcp_client

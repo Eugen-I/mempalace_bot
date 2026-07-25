@@ -1,16 +1,16 @@
-import os
 import json
-import re
 import logging
+import os
+import re
 import tempfile
 from datetime import datetime
-from typing import List, Dict
 
 logger = logging.getLogger("MemoryService")
 
 
 def _memory_dir() -> str:
     from config import DATA_DIR
+
     d = os.path.join(DATA_DIR, "memory_store")
     os.makedirs(d, exist_ok=True)
     return d
@@ -20,22 +20,24 @@ def _memory_path(user_id: int) -> str:
     return os.path.join(_memory_dir(), f"mem_{user_id}.json")
 
 
-def _load_memories(user_id: int) -> List[Dict]:
+def _load_memories(user_id: int) -> list[dict]:
     path = _memory_path(user_id)
     if not os.path.exists(path):
         return []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except:
+    except Exception:
         return []
 
 
-def _save_memories(user_id: int, memories: List[Dict]):
+def _save_memories(user_id: int, memories: list[dict]):
     path = _memory_path(user_id)
     try:
         dirpath = os.path.dirname(path)
-        with tempfile.NamedTemporaryFile('w', dir=dirpath, delete=False, encoding='utf-8') as tmp:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=dirpath, delete=False, encoding="utf-8",
+        ) as tmp:
             json.dump(memories, tmp, ensure_ascii=False, indent=2)
             tmp_path = tmp.name
         os.replace(tmp_path, path)
@@ -43,12 +45,12 @@ def _save_memories(user_id: int, memories: List[Dict]):
         logger.error(f"[MEMORY] Save error: {e}")
 
 
-def retrieve_facts(query: str, user_id: int, max_results: int = 5) -> List[str]:
+def retrieve_facts(query: str, user_id: int, max_results: int = 5) -> list[str]:
     memories = _load_memories(user_id)
     if not memories or not query:
         return []
 
-    words = set(re.findall(r'(?ui)[\wа-яё]+', query))
+    words = set(re.findall(r"(?ui)[\wа-яё]+", query))
     if not words:
         return []
 
@@ -82,30 +84,32 @@ async def extract_and_store_facts(user_id: int, user_query: str, ai_answer: str)
         if not facts:
             return
         memories = _load_memories(user_id)
-        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         for fact in facts:
-            memories.append({
-                "id": f"mem_{ts}_{hash(fact) % 10000:04d}",
-                "timestamp": datetime.now().isoformat(),
-                "fact": fact,
-                "source_query": user_query[:200],
-                "priority": 0,
-                "access_count": 0,
-            })
+            memories.append(
+                {
+                    "id": f"mem_{ts}_{hash(fact) % 10000:04d}",
+                    "timestamp": datetime.now().isoformat(),
+                    "fact": fact,
+                    "source_query": user_query[:200],
+                    "priority": 0,
+                    "access_count": 0,
+                },
+            )
         _save_memories(user_id, memories[-500:])
         logger.info(f"[MEMORY] Stored {len(facts)} facts for user {user_id}")
     except Exception as e:
         logger.error(f"[MEMORY] extract error: {e}", exc_info=True)
 
 
-async def _extract_facts(user_query: str, ai_answer: str) -> List[str]:
+async def _extract_facts(user_query: str, ai_answer: str) -> list[str]:
     from services.ai_engine import get_ai_response_async, get_current_ai
 
     prompt = (
         "Extract 1-3 key factual statements from this exchange "
         "that are worth remembering long-term. "
         "Be specific and concrete. "
-        "Return ONLY a JSON array of strings, e.g. [\"fact 1\", \"fact 2\"]. "
+        'Return ONLY a JSON array of strings, e.g. ["fact 1", "fact 2"]. '
         "No other text.\n\n"
         f"User: {user_query[:500]}\n"
         f"AI: {ai_answer[:1000]}"
@@ -113,16 +117,17 @@ async def _extract_facts(user_query: str, ai_answer: str) -> List[str]:
 
     engine, model = get_current_ai()
     result = await get_ai_response_async(
-        engine, model,
+        engine,
+        model,
         [{"role": "user", "content": prompt}],
         context="",
         user_query="",
     )
 
-    match = re.search(r'\[.*?\]', result, re.DOTALL)
+    match = re.search(r"\[.*?\]", result, re.DOTALL)
     if match:
         try:
             return json.loads(match.group())
-        except:
+        except Exception:
             pass
     return []

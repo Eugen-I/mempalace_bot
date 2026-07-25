@@ -1,30 +1,36 @@
-import os, base64, json, shutil
+import base64
+import json
+import os
+import shutil
 from datetime import datetime
-from config import PHOTOS_DIR, MODELS_CONFIG_PATH
+
+from config import MODELS_CONFIG_PATH, PHOTOS_DIR
 
 # 🔹 Кэш capabilities
 _model_caps_cache = {}
 
+
 def load_model_capabilities():
-    global _model_caps_cache
-    if _model_caps_cache: 
+    if _model_caps_cache:
         return _model_caps_cache
     try:
-        with open(MODELS_CONFIG_PATH, "r") as f:
+        with open(MODELS_CONFIG_PATH) as f:
             data = json.load(f)
         for eng in ["ollama", "openai", "gemini"]:
             for m in data.get(eng, []):
                 _model_caps_cache[m["tag"]] = {
                     "multimodal": m.get("multimodal", False),
-                    "supports_audio": m.get("supports_audio", False)
+                    "supports_audio": m.get("supports_audio", False),
                 }
-    except Exception: 
+    except Exception:
         pass
     return _model_caps_cache
+
 
 def check_capability(model_tag: str, feature: str) -> bool:
     caps = load_model_capabilities()
     return caps.get(model_tag, {}).get(feature, False)
+
 
 def encode_image_to_base64(img_path: str) -> str:
     """Кодирует JPEG/PNG/HEIC в base64 для Ollama/OpenAI API"""
@@ -34,7 +40,7 @@ def encode_image_to_base64(img_path: str) -> str:
     try:
         with open(img_path, "rb") as f:
             raw = f.read()
-        if not raw: 
+        if not raw:
             return ""
         b64 = base64.b64encode(raw).decode("utf-8")
         # Очистка от переносов строк
@@ -43,13 +49,14 @@ def encode_image_to_base64(img_path: str) -> str:
         print(f"❌ Ошибка кодирования {img_path}: {e}")
         return ""
 
+
 def save_bot_photo(file_path: str, user_id: int) -> str:
     """Сохраняет фото из бота в общую папку (КОПИРОВАНИЕ + УДАЛЕНИЕ)"""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     fname = f"bot_{user_id}_{ts}.jpg"
     os.makedirs(PHOTOS_DIR, exist_ok=True)
     dest = os.path.join(PHOTOS_DIR, fname)
-    
+
     try:
         # ✅ Используем copy вместо move (надёжнее на macOS между томами)
         shutil.copy2(file_path, dest)
@@ -63,19 +70,21 @@ def save_bot_photo(file_path: str, user_id: int) -> str:
         print(f"❌ [SAVE_PHOTO] Error: {e}")
         return ""
 
+
 def list_photos() -> list:
     if not os.path.exists(PHOTOS_DIR):
         print(f"⚠️ Photos directory does not exist: {PHOTOS_DIR}")
         return []
-    valid_ext = ('.jpg', '.jpeg', '.png', '.heic', '.webp')
+    valid_ext = (".jpg", ".jpeg", ".png", ".heic", ".webp")
     try:
         files = [f for f in os.listdir(PHOTOS_DIR) if f.lower().endswith(valid_ext)]
         # Сортировка по дате изменения (новые первыми)
-        #return sorted(files, key=lambda x: os.path.getmtime(os.path.join(PHOTOS_DIR, x)), reverse=True)[:10]
+        # return sorted(files, key=lambda x: os.path.getmtime(os.path.join(PHOTOS_DIR, x)), reverse=True)[:10]  # noqa: E501
         return sorted(files, key=lambda x: x, reverse=True)[:10]
     except Exception as e:
         print(f"❌ Error listing photos: {e}")
         return []
+
 
 def delete_photo(fname: str) -> bool:
     path = os.path.join(PHOTOS_DIR, fname)

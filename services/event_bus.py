@@ -1,15 +1,16 @@
-"""
-event_bus.py
+"""event_bus.py
 Асинхронная шина событий — ядро слабой связности.
 Позволяет подписываться на события и реагировать без прямой зависимости.
 """
+
 import asyncio
 import logging
+from collections.abc import Callable, Coroutine
 from enum import Enum
-from typing import Callable, Coroutine, Any, Dict, List
-from functools import wraps
+from typing import Any
 
 logger = logging.getLogger("EventBus")
+
 
 class Event(Enum):
     USER_MESSAGE_RECEIVED = "user_message_received"
@@ -22,11 +23,13 @@ class Event(Enum):
     CHAT_SYNCED = "chat_synced"
     FACTS_EXTRACTED = "facts_extracted"
 
+
 Handler = Callable[..., Coroutine[Any, Any, None]]
+
 
 class EventBus:
     def __init__(self):
-        self._subscribers: Dict[Event, List[Handler]] = {}
+        self._subscribers: dict[Event, list[Handler]] = {}
 
     def subscribe(self, event: Event, handler: Handler):
         if event not in self._subscribers:
@@ -51,19 +54,22 @@ class EventBus:
             except Exception as e:
                 logger.error(
                     f"Handler {handler.__name__} failed for {event.value}: {e}",
-                    exc_info=True
+                    exc_info=True,
                 )
 
     def publish_background(self, event: Event, **kwargs):
         asyncio.create_task(self.publish(event, **kwargs))
 
+
 _bus: EventBus | None = None
+
 
 def get_bus() -> EventBus:
     global _bus
     if _bus is None:
         _bus = EventBus()
     return _bus
+
 
 def reset_bus():
     global _bus

@@ -1,23 +1,25 @@
-"""
-classify_and_mine.py
+"""classify_and_mine.py
 Одноразовый скрипт: ИИ классифицирует все заметки по крыльям
 и майнит их в MemPalace с соответствующим --wing.
 """
-import os
-import sys
+
 import asyncio
 import logging
-import tempfile
+import os
 import shutil
+import sys
+import tempfile
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger("ClassifyAndMine")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # ищем корень проекта (там лежит config.py)
 BOT_DIR = SCRIPT_DIR
 for _ in range(5):
-    if os.path.isfile(os.path.join(BOT_DIR, 'config.py')):
+    if os.path.isfile(os.path.join(BOT_DIR, "config.py")):
         break
     parent = os.path.dirname(BOT_DIR)
     if parent == BOT_DIR:
@@ -25,8 +27,8 @@ for _ in range(5):
     BOT_DIR = parent
 sys.path.insert(0, BOT_DIR)
 
-from config import NOTES_DIR, INSIGHTS_DIR, RESEARCH_DIR, PDF_ARCHIVE_DIR, DATA_DIR
-from services.ai_engine import get_current_ai, get_ai_response_async
+from config import DATA_DIR, INSIGHTS_DIR, NOTES_DIR, PDF_ARCHIVE_DIR, RESEARCH_DIR
+from services.ai_engine import get_ai_response_async, get_current_ai
 
 WING_NAMES = ["dreams", "projects", "philosophy", "creative", "psychology"]
 
@@ -41,6 +43,7 @@ CLASSIFY_PROMPT = """Ты — классификатор заметок по к�
 
 Прочитай заметку и ответь ОДНИМ СЛОВОМ — названием крыла.
 Не пиши ничего кроме одного слова."""
+
 
 def collect_files() -> list[tuple[str, str]]:
     """Собирает (путь_к_файлу, имя_файла) из всех папок."""
@@ -58,25 +61,31 @@ def collect_files() -> list[tuple[str, str]]:
                 files.append((fpath, fname))
     return files
 
+
 async def classify_file(engine: str, model: str, fpath: str) -> str:
     """Определяет крыло файла через ИИ."""
     try:
-        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+        with open(fpath, encoding="utf-8", errors="ignore") as f:
             content = f.read().strip()
         if not content:
             return "unknown"
         content = content[:1000]
-        msg = [{"role": "system", "content": CLASSIFY_PROMPT},
-               {"role": "user", "content": f"Заметка:\n{content}"}]
+        msg = [
+            {"role": "system", "content": CLASSIFY_PROMPT},
+            {"role": "user", "content": f"Заметка:\n{content}"},
+        ]
         answer = await get_ai_response_async(engine, model, msg, context="")
         answer = answer.strip().lower().rstrip(".!,")
         if answer in WING_NAMES:
             return answer
-        logger.warning(f"  ⚠️ Неожиданный ответ ИИ: '{answer}' для {os.path.basename(fpath)}")
+        logger.warning(
+            f"  ⚠️ Неожиданный ответ ИИ: '{answer}' для {os.path.basename(fpath)}",
+        )
         return "unknown"
     except Exception as e:
         logger.error(f"  ❌ Ошибка классификации {os.path.basename(fpath)}: {e}")
         return "unknown"
+
 
 async def main():
     print("\n🧠 MemPalace — Классификация по крыльям\n")
@@ -101,12 +110,12 @@ async def main():
         print(f"    → {wing}")
 
     # Итоги классификации
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print("📊 Итоги классификации:")
     for w in WING_NAMES:
         print(f"  {w}: {len(wing_files[w])} файлов")
     print(f"  unknown: {len(wing_files['unknown'])} файлов")
-    print(f"{'='*50}\n")
+    print(f"{'=' * 50}\n")
 
     # Майним по крыльям
     for wing in WING_NAMES:
@@ -122,13 +131,19 @@ async def main():
 
             print(f"⛏️ Майню крыло '{wing}' ({len(files_to_mine)} файлов)...")
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "mempalace", "mine", tmpdir,
-                "--wing", wing,
-                "--mode", "projects",
+                sys.executable,
+                "-m",
+                "mempalace",
+                "mine",
+                tmpdir,
+                "--wing",
+                wing,
+                "--mode",
+                "projects",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=DATA_DIR,
-                env=_get_palace_env()
+                env=_get_palace_env(),
             )
             stdout, stderr = await proc.communicate()
             if proc.returncode != 0:
@@ -144,21 +159,29 @@ async def main():
         try:
             for fpath in wing_files["unknown"]:
                 shutil.copy2(fpath, os.path.join(tmpdir, os.path.basename(fpath)))
-            print(f"⛏️ Майню 'unknown' ({len(wing_files['unknown'])} файлов) без крыла...")
+            print(
+                f"⛏️ Майню 'unknown' ({len(wing_files['unknown'])} файлов) без крыла...",
+            )
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "mempalace", "mine", tmpdir,
-                "--mode", "projects",
+                sys.executable,
+                "-m",
+                "mempalace",
+                "mine",
+                tmpdir,
+                "--mode",
+                "projects",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=DATA_DIR,
-                env=_get_palace_env()
+                env=_get_palace_env(),
             )
             await proc.communicate()
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
-    print(f"\n✅ Готово! Все файлы классифицированы и замайнены.")
-    print(f"Теперь можешь искать с крыльями: /search --wing dreams <текст>")
+    print("\n✅ Готово! Все файлы классифицированы и замайнены.")
+    print("Теперь можешь искать с крыльями: /search --wing dreams <текст>")
+
 
 def _get_palace_env() -> dict:
     env = os.environ.copy()
@@ -167,6 +190,7 @@ def _get_palace_env() -> dict:
     env["PATH"] = os.path.join(venv_dir, "bin") + os.pathsep + env.get("PATH", "")
     env["PYTHONPATH"] = DATA_DIR + os.pathsep + env.get("PYTHONPATH", "")
     return env
+
 
 if __name__ == "__main__":
     asyncio.run(main())

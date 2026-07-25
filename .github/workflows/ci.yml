@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .[dev]
+
+      - name: Run flake8
+        run: flake8 .
+
+      - name: Run mypy
+        run: mypy handlers/ services/ main.py config.py
+
+      - name: Run bandit
+        run: bandit -r handlers/ services/
+
+      - name: Run pytest with coverage
+        run: pytest --cov=. --cov-report=term-missing --cov-report=xml --cov-fail-under=5
+
+      - name: Run behave
+        run: behave
+
+      - name: Run mutmut
+        run: mutmut run --paths-to-mutate services --runner "python -m pytest -q"
+
+      - name: Run pip-audit
+        run: pip-audit

@@ -1,20 +1,21 @@
-"""
-graceful_degradation.py
+"""graceful_degradation.py
 Постепенная деградация функциональности при отказе компонентов.
 4 уровня: Full → Medium → Basic → Emergency.
 """
+
 import logging
+from dataclasses import dataclass
 from enum import Enum
-from dataclasses import dataclass, field
-from typing import Optional
 
 logger = logging.getLogger("GracefulDegradation")
 
+
 class DegradationLevel(Enum):
-    FULL = "full"           # AI + Palace + Memory + Code
-    MEDIUM = "medium"       # AI + Memory (Palace off)
-    BASIC = "basic"         # AI only
-    EMERGENCY = "emergency" # Заглушка
+    FULL = "full"  # AI + Palace + Memory + Code
+    MEDIUM = "medium"  # AI + Memory (Palace off)
+    BASIC = "basic"  # AI only
+    EMERGENCY = "emergency"  # Заглушка
+
 
 @dataclass
 class ComponentHealth:
@@ -23,6 +24,7 @@ class ComponentHealth:
     memory_store: bool = True
     whisper: bool = True
     last_check: float = 0
+
 
 class DegradationManager:
     def __init__(self):
@@ -54,17 +56,25 @@ class DegradationManager:
 
     def _recalculate(self):
         old = self.level
-        if self.health.palace_mcp and self.health.palace_search and self.health.memory_store:
+        if (
+            self.health.palace_mcp
+            and self.health.palace_search
+            and self.health.memory_store
+        ):
             self.level = DegradationLevel.FULL
-        elif self.health.memory_store:
-            self.level = DegradationLevel.MEDIUM
-        elif self.health.palace_mcp or self.health.palace_search:
+        elif (
+            self.health.memory_store
+            or self.health.palace_mcp
+            or self.health.palace_search
+        ):
             self.level = DegradationLevel.MEDIUM
         else:
             self.level = DegradationLevel.BASIC
 
         if self.level != old:
-            logger.warning(f"Degradation level changed: {old.value} → {self.level.value}")
+            logger.warning(
+                f"Degradation level changed: {old.value} → {self.level.value}",
+            )
 
     def should_use_palace(self) -> bool:
         return self.level in (DegradationLevel.FULL, DegradationLevel.MEDIUM)
@@ -86,15 +96,23 @@ class DegradationManager:
 
     def get_available_features(self) -> list[str]:
         if self.level == DegradationLevel.FULL:
-            return ["AI", "Palace Search", "Knowledge Graph", "Memory", "Code Mode", "Voice"]
-        elif self.level == DegradationLevel.MEDIUM:
+            return [
+                "AI",
+                "Palace Search",
+                "Knowledge Graph",
+                "Memory",
+                "Code Mode",
+                "Voice",
+            ]
+        if self.level == DegradationLevel.MEDIUM:
             return ["AI", "Memory", "Code Mode", "Voice"]
-        elif self.level == DegradationLevel.BASIC:
+        if self.level == DegradationLevel.BASIC:
             return ["AI", "Voice (если доступен)"]
-        else:
-            return ["Emergency responses only"]
+        return ["Emergency responses only"]
 
-_mgr: Optional[DegradationManager] = None
+
+_mgr: DegradationManager | None = None
+
 
 def get_degradation_manager() -> DegradationManager:
     global _mgr
@@ -102,8 +120,10 @@ def get_degradation_manager() -> DegradationManager:
         _mgr = DegradationManager()
     return _mgr
 
+
 def report_failure(component: str):
     get_degradation_manager().record_failure(component)
+
 
 def report_success(component: str):
     get_degradation_manager().record_success(component)

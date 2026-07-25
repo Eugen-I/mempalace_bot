@@ -1,17 +1,17 @@
-"""
-semantic_cache.py
+"""semantic_cache.py
 Кэш AI-ответов с семантическим сравнением запросов.
 Позволяет избежать повторных API-вызовов на похожие вопросы.
 """
-import time
+
 import logging
+import time
 from difflib import SequenceMatcher
-from typing import Dict, Tuple, Optional
 
 logger = logging.getLogger("SemanticCache")
 
+
 class SemanticCacheEntry:
-    __slots__ = ("response", "query", "timestamp", "hits")
+    __slots__ = ("hits", "query", "response", "timestamp")
 
     def __init__(self, query: str, response: str):
         self.query = query
@@ -19,12 +19,13 @@ class SemanticCacheEntry:
         self.timestamp = time.time()
         self.hits = 1
 
+
 class SemanticCache:
     def __init__(self, ttl: int = 300, max_size: int = 200, threshold: float = 0.82):
         self.ttl = ttl
         self.max_size = max_size
         self.threshold = threshold
-        self._entries: Dict[str, SemanticCacheEntry] = {}
+        self._entries: dict[str, SemanticCacheEntry] = {}
 
     def _normalize(self, text: str) -> str:
         return " ".join(text.lower().split())
@@ -34,16 +35,13 @@ class SemanticCache:
 
     def _evict_expired(self):
         now = time.time()
-        expired = [
-            k for k, v in self._entries.items()
-            if now - v.timestamp > self.ttl
-        ]
+        expired = [k for k, v in self._entries.items() if now - v.timestamp > self.ttl]
         for k in expired:
             del self._entries[k]
         if expired:
             logger.debug(f"Evicted {len(expired)} expired cache entries")
 
-    def get(self, query: str) -> Optional[str]:
+    def get(self, query: str) -> str | None:
         self._evict_expired()
         normalized = self._normalize(query)
 
@@ -61,7 +59,7 @@ class SemanticCache:
             best_match.timestamp = time.time()
             logger.info(
                 f"[CACHE_HIT] similarity={best_score:.3f} "
-                f"hits={best_match.hits} query='{query[:60]}'"
+                f"hits={best_match.hits} query='{query[:60]}'",
             )
             return best_match.response
 
@@ -74,8 +72,7 @@ class SemanticCache:
         normalized = self._normalize(query)
 
         if len(self._entries) >= self.max_size:
-            oldest = min(self._entries.keys(),
-                         key=lambda k: self._entries[k].timestamp)
+            oldest = min(self._entries.keys(), key=lambda k: self._entries[k].timestamp)
             del self._entries[oldest]
 
         self._entries[normalized] = SemanticCacheEntry(normalized, response)
@@ -88,7 +85,7 @@ class SemanticCache:
             logger.info("Semantic cache cleared")
 
     @property
-    def stats(self) -> Dict:
+    def stats(self) -> dict:
         self._evict_expired()
         total_hits = sum(e.hits for e in self._entries.values())
         return {
@@ -98,13 +95,16 @@ class SemanticCache:
             "threshold": self.threshold,
         }
 
+
 _cache: SemanticCache | None = None
+
 
 def get_cache() -> SemanticCache:
     global _cache
     if _cache is None:
         _cache = SemanticCache()
     return _cache
+
 
 def reset_cache():
     global _cache

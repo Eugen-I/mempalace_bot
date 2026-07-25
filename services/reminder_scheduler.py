@@ -1,10 +1,14 @@
-import asyncio, logging, time
+import asyncio
+import logging
+import time
+
 from services.kv_store import get_kv_store
 
 logger = logging.getLogger("ReminderScheduler")
 REMINDER_NS = "reminders"
 
 _scheduler_task: asyncio.Task | None = None
+
 
 async def _run_scheduler(bot):
     logger.info("[REMINDER] Scheduler started")
@@ -24,10 +28,11 @@ async def _run_scheduler(bot):
                     chat_id = data.get("chat_id", 0)
                     try:
                         from services.text_formatter import safe_html_format
+
                         await bot.send_message(
                             chat_id,
                             f"⏰ <b>Напоминание!</b>\n\n{safe_html_format(text)}",
-                            parse_mode="HTML"
+                            parse_mode="HTML",
                         )
                         logger.info(f"[REMINDER] Sent to user {user_id}: {text[:50]}")
                     except Exception as e:

@@ -1,7 +1,9 @@
 import logging
+
 from services.palace_bridge import export_chat_verbatim, sync_to_palace
 
 logger = logging.getLogger("AutoSync")
+
 
 async def auto_sync_chat(uid: int, chat_name: str, chat_path: str):
     try:

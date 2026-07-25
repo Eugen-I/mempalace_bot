@@ -1,0 +1,8 @@
+
+{
+  "scripts": {
+    "test": "vitest",
+    "test:mutation": "stryker run",
+    "lint": "eslint ."
+  }
+}

@@ -1,20 +1,23 @@
-"""
-kv_store.py
+"""kv_store.py
 SQLite-бэкед для TTL-кэшей и временных состояний.
 Позволяет переживать рестарты бота без потери сессионных данных.
 API совместим с dict/TTLCache для бесшовной замены.
 """
+
 import json
+import logging
+import os
 import sqlite3
 import threading
 import time
-import os
-import logging
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("KVStore")
 
-_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot_state.sqlite")
+_DB_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot_state.sqlite",
+)
+
 
 class KVStore:
     _instance = None
@@ -55,10 +58,15 @@ class KVStore:
     def _evict_expired(self):
         conn = self._get_conn()
         now = time.time()
-        conn.execute("DELETE FROM kv_store WHERE expires_at IS NOT NULL AND expires_at < ?", (now,))
+        conn.execute(
+            "DELETE FROM kv_store WHERE expires_at IS NOT NULL AND expires_at < ?",
+            (now,),
+        )
         conn.commit()
 
-    def set(self, key: str, value: Any, namespace: str = "default", ttl: Optional[float] = None):
+    def set(
+        self, key: str, value: Any, namespace: str = "default", ttl: float | None = None,
+    ):
         self._evict_expired()
         conn = self._get_conn()
         expires_at = (time.time() + ttl) if ttl is not None else None
@@ -66,7 +74,7 @@ class KVStore:
         conn.execute(
             """INSERT OR REPLACE INTO kv_store (key, value, namespace, expires_at)
                VALUES (?, ?, ?, ?)""",
-            (key, serialized, namespace, expires_at)
+            (key, serialized, namespace, expires_at),
         )
         conn.commit()
 
@@ -75,13 +83,15 @@ class KVStore:
         conn = self._get_conn()
         row = conn.execute(
             "SELECT value, expires_at FROM kv_store WHERE key = ? AND namespace = ?",
-            (key, namespace)
+            (key, namespace),
         ).fetchone()
         if row is None:
             return default
         value_raw, expires_at = row
         if expires_at is not None and time.time() > expires_at:
-            conn.execute("DELETE FROM kv_store WHERE key = ? AND namespace = ?", (key, namespace))
+            conn.execute(
+                "DELETE FROM kv_store WHERE key = ? AND namespace = ?", (key, namespace),
+            )
             conn.commit()
             return default
         try:
@@ -91,7 +101,9 @@ class KVStore:
 
     def delete(self, key: str, namespace: str = "default"):
         conn = self._get_conn()
-        conn.execute("DELETE FROM kv_store WHERE key = ? AND namespace = ?", (key, namespace))
+        conn.execute(
+            "DELETE FROM kv_store WHERE key = ? AND namespace = ?", (key, namespace),
+        )
         conn.commit()
 
     def pop(self, key: str, namespace: str = "default", default: Any = None) -> Any:
@@ -103,11 +115,11 @@ class KVStore:
         self._evict_expired()
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT key FROM kv_store WHERE namespace = ?", (namespace,)
+            "SELECT key FROM kv_store WHERE namespace = ?", (namespace,),
         ).fetchall()
         return [r[0] for r in rows]
 
-    def clear(self, namespace: Optional[str] = None):
+    def clear(self, namespace: str | None = None):
         conn = self._get_conn()
         if namespace:
             conn.execute("DELETE FROM kv_store WHERE namespace = ?", (namespace,))
@@ -127,6 +139,7 @@ class KVStore:
         conn = self._get_conn()
         row = conn.execute("SELECT COUNT(*) FROM kv_store").fetchone()
         return {"size": row[0] if row else 0}
+
 
 def get_kv_store() -> KVStore:
     with KVStore._lock:
