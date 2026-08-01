@@ -1,5 +1,5 @@
 """handlers/palace/__init__.py — All palace handlers"""
-from . import admin, navigation, kg, save, tunnels, hints  # noqa: F401
+from . import admin, navigation, kg, save, tunnels, hints, action_bar  # noqa: F401
 from ._utils import (  # noqa: F401
     safe_edit_text,
     safe_answer,
@@ -32,6 +32,8 @@ from .shared import (
     _save_state, KG_PREDICATES, _create_tunnel_state,
     _normalize_query, _send_kg_page, _wing_cache, _user_context,
 )
+
+router.include_router(action_bar.router)
 
 # ─── MAIN PALACE MENU ───
 
@@ -139,17 +141,22 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                 else:
                     wing_names = list(wdata)
                 lines = ["<b>🕸️ Все крылья:</b>\n"]
-                kb = InlineKeyboardBuilder()
+                extra_rows = []
                 for w in wing_names:
                     cnt = wdata.get(w, "") if isinstance(wdata, dict) else ""
                     lines.append(f"  • <b>{safe_html_format(w)}</b> {cnt}")
-                    kb.row(types.InlineKeyboardButton(
-                        text=f"🪪 {w}", callback_data=f"p_rs_:{navigation._encode_callback_part(w)}",
-                    ))
+                    extra_rows.append([
+                        types.InlineKeyboardButton(
+                            text=f"🪪 {w}",
+                            callback_data=f"p_rs_:{navigation._encode_callback_part(w)}",
+                        ),
+                    ])
                 _wing_cache[uid] = wing_names
-                kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_wing"))
-                await msg.edit_text(
-                    "\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup(),
+                from .action_bar import finalize_answer
+                await finalize_answer(
+                    uid, msg.edit_text, "\n".join(lines), is_html=True,
+                    ctx={"parent_cb": "p_wing"},
+                    extra_rows=extra_rows,
                 )
             else:
                 wing = _normalize_query(raw)
@@ -163,18 +170,22 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                 if truncated:
                     sorted_rooms = sorted_rooms[:room_limit]
                 lines = [f"<b>🪪 Комнаты крыла «{safe_html_format(wing_name)}»:</b>\n"]
-                kb = InlineKeyboardBuilder()
+                extra_rows = []
                 for idx, (room, count) in enumerate(sorted_rooms, 1):
                     lines.append(f"  {idx}. <b>{safe_html_format(room)}</b> — {count}")
-                    kb.row(types.InlineKeyboardButton(
-                        text=f"📖 {room}",
-                        callback_data=navigation._build_room_callback_data(wing, room),
-                    ))
+                    extra_rows.append([
+                        types.InlineKeyboardButton(
+                            text=f"📖 {room}",
+                            callback_data=navigation._build_room_callback_data(wing, room),
+                        ),
+                    ])
                 if truncated:
                     lines.append(f"\n... и ещё {len(rooms) - room_limit} комнат.")
-                kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_nav"))
-                await msg.edit_text(
-                    "\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup(),
+                from .action_bar import finalize_answer
+                await finalize_answer(
+                    uid, msg.edit_text, "\n".join(lines), is_html=True,
+                    ctx={"parent_cb": "p_nav"},
+                    extra_rows=extra_rows,
                 )
 
         elif action in ("traverse", "traverse_start"):
@@ -208,7 +219,11 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                     lines.append(
                         f"  {hop} hop: <b>{safe_html_format(r)}</b> — {wings} ({count} зап.)"
                     )
-                await msg.edit_text("\n".join(lines), parse_mode="HTML")
+                from .action_bar import finalize_answer
+                await finalize_answer(
+                    uid, msg.edit_text, "\n".join(lines), is_html=True,
+                    ctx={"parent_cb": "p_nav"},
+                )
             else:
                 await msg.edit_text(raw or "❌ Нет результатов.")
 
@@ -357,7 +372,11 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                         f"{', '.join(t.get('wings', []))} "
                         f"({t.get('count', 0)} записей)",
                     )
-                await msg.edit_text("\n".join(lines), parse_mode="HTML")
+                from .action_bar import finalize_answer
+                await finalize_answer(
+                    uid, msg.edit_text, "\n".join(lines), is_html=True,
+                    ctx={"parent_cb": "p_tun"},
+                )
 
         elif action == "follow_tunnels":
             parts = text.strip().split(maxsplit=1)
@@ -372,7 +391,11 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             raw = await mcp.call_tool(
                 "mempalace_follow_tunnels", {"wing": wing, "room": room},
             )
-            await msg.edit_text(raw or "❌ Нет результатов.")
+            from .action_bar import finalize_answer
+            await finalize_answer(
+                uid, msg.edit_text, raw or "❌ Нет результатов.",
+                ctx={"wing": wing, "room": room, "parent_cb": "p_tun"},
+            )
 
         elif action == "create_tunnel":
             state = _create_tunnel_state.pop(uid, None)
@@ -396,18 +419,26 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             try:
                 result = json.loads(raw)
                 tunnel_id = result.get("tunnel_id", "")
-                await msg.edit_text(
+                text = (
                     f"✅ <b>Туннель создан!</b>\n\n"
                     f"• {safe_html_format(state['source_wing'])}"
                     f"/{safe_html_format(state['source_room'])}\n"
                     f"  ⟷ {safe_html_format(state['target_wing'])}"
                     f"/{safe_html_format(state['target_room'])}\n"
                     + (f"• Описание: {label}\n" if label else "")
-                    + (f"• ID: {tunnel_id}" if tunnel_id else ""),
-                    parse_mode="HTML",
+                    + (f"• ID: {tunnel_id}" if tunnel_id else "")
                 )
             except (json.JSONDecodeError, TypeError):
-                await msg.edit_text(raw or "✅ Туннель создан!")
+                text = raw or "✅ Туннель создан!"
+            from .action_bar import finalize_answer
+            await finalize_answer(
+                uid, msg.edit_text, text, is_html=True,
+                ctx={
+                    "source_wing": state.get("source_wing", ""),
+                    "target_wing": state.get("target_wing", ""),
+                    "parent_cb": "p_tun",
+                },
+            )
 
         elif action and action.startswith("ask_room_ai:"):
             parts = action.split(":", 2)
@@ -464,12 +495,15 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
                 ])
-                await msg.edit_text(
-                    f"<b>🤖 Анализ туннеля</b>\n"
-                    f"{safe_html_format(src_wing)}/{safe_html_format(src_room)} "
-                    f"⟷ {safe_html_format(dst_wing)}/{safe_html_format(dst_room)}\n\n"
-                    f"{result or '❌ Пустой ответ.'}",
-                    parse_mode="HTML",
+                from .action_bar import finalize_answer
+                await finalize_answer(
+                    uid, msg.edit_text, result or "❌ Пустой ответ.",
+                    ctx={"parent_cb": "p_tun"},
+                    title=(
+                        f"<b>🤖 Анализ туннеля</b>\n"
+                        f"{safe_html_format(src_wing)}/{safe_html_format(src_room)} "
+                        f"⟷ {safe_html_format(dst_wing)}/{safe_html_format(dst_room)}"
+                    ),
                 )
             except Exception as ai_e:
                 await msg.edit_text(f"❌ Ошибка ИИ: {ai_e}")

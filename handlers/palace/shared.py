@@ -3,7 +3,6 @@ import json
 import logging
 
 from aiogram import Router, types
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from services.conversation_fsm import ConversationFSM
 from services.text_formatter import safe_html_format
@@ -171,7 +170,6 @@ async def _send_kg_page(uid: int, edit_func):
             line = f"  • {safe_html_format(str(f))}"
         lines.append(line)
 
-    kb = InlineKeyboardBuilder()
     nav_buttons = []
     if end < total:
         more = total - end
@@ -184,14 +182,18 @@ async def _send_kg_page(uid: int, edit_func):
         nav_buttons.append(
             types.InlineKeyboardButton(text="◀️ Начать сначала", callback_data="p_kgs"),
         )
+    extra_rows = []
     if nav_buttons:
-        kb.row(*nav_buttons)
-    kb.row(types.InlineKeyboardButton(text="📖 Читать записи", callback_data="p_kgr"))
+        extra_rows.append(nav_buttons)
+    extra_rows.append([types.InlineKeyboardButton(
+        text="📖 Читать записи", callback_data="p_kgr",
+    )])
 
-    await edit_func(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=kb.as_markup() if kb else None,
+    from .action_bar import finalize_answer
+    await finalize_answer(
+        uid, edit_func, "\n".join(lines), is_html=True,
+        ctx={"entity": data["entity"], "parent_cb": "p_kg"},
+        extra_rows=extra_rows,
     )
 
 

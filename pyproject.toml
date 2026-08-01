@@ -74,7 +74,7 @@ exclude_lines = [
 
 [tool.mutmut]
 backup = false
-source_paths = ["services/semantic_cache.py", "services/circuit_breaker.py", "services/event_bus.py", "services/kv_store.py", "services/graceful_degradation.py"]
+source_paths = ["services/semantic_cache.py", "services/circuit_breaker.py", "services/event_bus.py", "services/kv_store.py", "services/graceful_degradation.py", "handlers/palace/action_bar.py"]
 tests_dir = ["tests"]
 runner = "python -m pytest tests/ -q --override-ini=addopts=-ra"
 swhitelist = [

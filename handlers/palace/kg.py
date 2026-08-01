@@ -79,7 +79,11 @@ async def cb_kg_stats(cb: types.CallbackQuery):
                     lines.append(f"\n<b>{k}:</b> {v}")
         else:
             lines.append(str(parsed))
-        await msg.edit_text("\n".join(lines), parse_mode="HTML")
+        from .action_bar import finalize_answer
+        await finalize_answer(
+            cb.from_user.id, msg.edit_text, "\n".join(lines), is_html=True,
+            ctx={"parent_cb": "p_kg"},
+        )
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка: {e}")
 
@@ -179,7 +183,11 @@ async def cb_kg_add_confirm(cb: types.CallbackQuery):
             "predicate": state["predicate"],
             "object": state["object"],
         })
-        await cb.message.edit_text(raw or "✅ Факт сохранён!")
+        from .action_bar import finalize_answer
+        await finalize_answer(
+            uid, cb.message.edit_text, raw or "✅ Факт сохранён!",
+            ctx={"parent_cb": "p_kg"},
+        )
     except Exception as e:
         await cb.message.edit_text(f"❌ Ошибка: {e}")
 
@@ -229,6 +237,18 @@ async def cb_kg_read(cb: types.CallbackQuery):
     await _kg_search_and_show(uid, cb.message.edit_text, entity, None)
 
 
+@router.callback_query(F.data == "p_kgsr")
+@allowed_callback
+async def cb_kg_back_to_search(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    data = _kg_search_data.get(uid)
+    if not data:
+        await cb.message.edit_text("❌ Сессия истекла. Откройте заново.")
+        return
+    await _send_kg_search_page(uid, cb.message.edit_text)
+
+
 @router.callback_query(F.data.startswith("p_kgrs:"))
 @allowed_callback
 async def cb_kg_read_search(cb: types.CallbackQuery):
@@ -275,7 +295,6 @@ async def _send_kg_search_page(uid: int, edit_func):
         else:
             line = f"  {i}. {safe_html_format(str(r)[:200])}"
         lines.append(line)
-    kb = InlineKeyboardBuilder()
     nav = []
     if end < len(results):
         nav.append(types.InlineKeyboardButton(
@@ -285,13 +304,22 @@ async def _send_kg_search_page(uid: int, edit_func):
         nav.append(types.InlineKeyboardButton(
             text="◀️ Назад", callback_data="p_krd:p",
         ))
+    extra_rows = []
     if nav:
-        kb.row(*nav)
+        extra_rows.append(nav)
+    read_rows = []
     for i in range(start, end):
-        kb.row(types.InlineKeyboardButton(
+        read_rows.append(types.InlineKeyboardButton(
             text=f"📄 {i + 1}", callback_data=f"p_krd:{i}",
         ))
-    await edit_func("\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup())
+    if read_rows:
+        extra_rows.append(read_rows)
+    from .action_bar import finalize_answer
+    await finalize_answer(
+        uid, edit_func, "\n".join(lines), is_html=True,
+        ctx={"entity": data["entity"], "parent_cb": "p_kg"},
+        extra_rows=extra_rows,
+    )
 
 
 @router.callback_query(F.data.startswith("p_krd:"))
@@ -332,29 +360,25 @@ async def cb_kg_read_result(cb: types.CallbackQuery):
         room = ""
     pure_text = content
     _read_state[uid] = {"room": room, "wing": wing, "drawer": source, "source": ""}
-    msg_len = len(pure_text)
-    if msg_len > 3500:
-        lines_out = [safe_html_format(pure_text[:3500])]
-        kb = InlineKeyboardBuilder()
-        kb.row(types.InlineKeyboardButton(
-            text=f"📄 Далее ({msg_len - 3500} символов)",
-            callback_data="p_krb:0",
-        ))
-        if source:
-            full_text = _get_full_text_from_chroma(source, wing, room)
-            if full_text and len(full_text) > msg_len:
-                _read_state[uid]["source"] = full_text
-                kb.row(types.InlineKeyboardButton(
-                    text="📖 Читать полный текст", callback_data="p_krb:f",
-                ))
-        await cb.message.edit_text(
-            "\n".join(lines_out), parse_mode="HTML",
-            reply_markup=kb.as_markup(),
-        )
-    else:
-        await cb.message.edit_text(
-            safe_html_format(pure_text), parse_mode="HTML",
-        )
+    if source:
+        full_text = _get_full_text_from_chroma(source, wing, room)
+        if full_text and len(full_text) > len(pure_text):
+            pure_text = full_text
+            _read_state[uid]["source"] = full_text
+    from .action_bar import finalize_answer
+
+    async def _edit_result(text: str, **kwargs):
+        await cb.message.edit_text(text, **kwargs)
+        return cb.message
+
+    await finalize_answer(
+        uid, _edit_result, pure_text or "📄 (пустая запись)",
+        ctx={
+            "wing": wing, "room": room, "drawer": source,
+            "parent_cb": "p_kgsr",
+        },
+        title=f"📄 {safe_html_format(source or 'Запись')}",
+    )
 
 
 @router.callback_query(F.data.startswith("p_krb:"))

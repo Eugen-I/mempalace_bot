@@ -90,10 +90,10 @@ async def cb_find_tunnels_result(cb: types.CallbackQuery):
                 f"  • <b>{safe_html_format(t.get('room', '?'))}</b> — "
                 f"{', '.join(t.get('wings', []))} ({t.get('count', 0)})",
             )
-        kb = InlineKeyboardBuilder()
-        kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
-        await cb.message.edit_text(
-            "\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup(),
+        from .action_bar import finalize_answer
+        await finalize_answer(
+            uid, cb.message.edit_text, "\n".join(lines), is_html=True,
+            ctx={"parent_cb": "p_tun"},
         )
     except Exception as e:
         await cb.message.edit_text(f"❌ Ошибка: {e}")
@@ -154,7 +154,11 @@ async def cb_follow_tunnels_result(cb: types.CallbackQuery):
         raw = await mcp.call_tool(
             "mempalace_follow_tunnels", {"wing": wing, "room": room},
         )
-        await cb.message.edit_text(raw or "❌ Нет результатов.")
+        from .action_bar import finalize_answer
+        await finalize_answer(
+            uid, cb.message.edit_text, raw or "❌ Нет результатов.",
+            ctx={"wing": wing, "room": room, "parent_cb": "p_tun"},
+        )
     except Exception as e:
         await cb.message.edit_text(f"❌ Ошибка: {e}")
 

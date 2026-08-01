@@ -378,7 +378,17 @@ async def cb_cross_ai_article(cb: types.CallbackQuery):
             f"из комнаты {wing}/{room}:\n\n{content}"
         )
         result = _sync_ai_call_wrapper("gemini", "gemini-2.0-flash", prompt)
-        await safe_edit_text(cb.message, result or "❌ Пустой ответ.", parse_mode="HTML")
+        from .action_bar import finalize_answer
+
+        async def _edit_article(content: str, **kwargs):
+            await safe_edit_text(cb.message, content, **kwargs)
+            return cb.message
+
+        await finalize_answer(
+            uid, _edit_article, result or "❌ Пустой ответ.",
+            ctx={"parent_cb": "p_rdb"},
+            title="<b>🤖 Статья</b>",
+        )
     except Exception as e:
         await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
 
@@ -651,15 +661,15 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
             safe_n = safe_html_format(name or preview[:60])
             lines.append(f"{offset + i + 1}. <b>{safe_n}</b>")
 
-        kb = InlineKeyboardBuilder()
+        extra_rows = []
         for i, d in enumerate(drawers):
             closet = d.get("closet_name") or d.get("title") or d.get("name", "")
             name = closet or f"Запись {offset + i + 1}"
-            kb.row(
+            extra_rows.append([
                 types.InlineKeyboardButton(
                     text=f"📄 {name[:40]}", callback_data=f"p_rd:{i}",
                 ),
-            )
+            ])
         nav_row = []
         if offset > 0:
             nav_row.append(
@@ -674,13 +684,17 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
                 ),
             )
         if nav_row:
-            kb.row(*nav_row)
-        kb.row(types.InlineKeyboardButton(
+            extra_rows.append(nav_row)
+        extra_rows.append([types.InlineKeyboardButton(
             text="🤖 Спросить ИИ по комнате", callback_data="p_room_ai",
-        ))
-        kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_nav"))
+        )])
 
-        await edit_func("\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup())
+        from .action_bar import finalize_answer
+        await finalize_answer(
+            uid, edit_func, "\n".join(lines), is_html=True,
+            ctx={"wing": wing, "room": room, "parent_cb": "p_nav"},
+            extra_rows=extra_rows,
+        )
     except Exception as e:
         await edit_func(f"❌ Ошибка: {e}")
 
@@ -690,7 +704,6 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
 async def cb_read_drawer(cb: types.CallbackQuery):
     await cb.answer()
     try:
-        from aiogram.utils.keyboard import InlineKeyboardBuilder
         if not cb.data:
             return
         parts = cb.data.split(":")
@@ -745,35 +758,19 @@ async def cb_read_drawer(cb: types.CallbackQuery):
         }
         _user_context[uid] = {"wing": wing, "room": room, "drawer": drawer_name}
 
-        from services.text_formatter import split_message as _split_msg
-        parts = _split_msg(text, limit=4000)
-        if not parts:
-            parts = ["📄 (пустая запись)"]
+        from .action_bar import finalize_answer
 
-        # First part edits the current message
-        first = safe_html_format(parts[0])
-        kb = InlineKeyboardBuilder()
-        kb.row(
-            types.InlineKeyboardButton(text="🤖 Спросить ИИ", callback_data="p_room_ai"),
-            types.InlineKeyboardButton(text="◀️ Назад к списку", callback_data="p_rdb"),
-        )
-        ok = await safe_edit_text(
-            cb.message,
-            first,
-            parse_mode="HTML",
-            reply_markup=kb.as_markup(),
-        )
-        if not ok:
-            await cb.message.answer(first, parse_mode="HTML", reply_markup=kb.as_markup())
+        async def _edit_or_answer(content: str, **kwargs):
+            ok = await safe_edit_text(cb.message, content, **kwargs)
+            if not ok:
+                await cb.message.answer(content, **kwargs)
+            return cb.message
 
-        # Remaining parts as new messages (auto-send full content)
-        for part in parts[1:]:
-            chunk_kb = InlineKeyboardBuilder()
-            chunk_kb.row(types.InlineKeyboardButton(
-                text="◀️ Назад к списку", callback_data="p_rdb",
-            ))
-            formatted = safe_html_format(part)
-            await cb.message.answer(formatted, parse_mode="HTML", reply_markup=chunk_kb.as_markup())
+        await finalize_answer(
+            uid, _edit_or_answer, text or "📄 (пустая запись)",
+            ctx={"wing": wing, "room": room, "drawer": drawer_name, "parent_cb": "p_rdb"},
+            title=f"📄 {safe_html_format(drawer_name or 'Запись')}",
+        )
     except Exception as e:
         err = f"❌ Ошибка: {e}"
 
@@ -883,13 +880,15 @@ async def _answer_room_ai(
                 {"role": "system", "content": system},
                 {"role": "user", "content": question},
             ])
-            kb = InlineKeyboardBuilder()
-            kb.row(types.InlineKeyboardButton(text="◀️ Назад в комнату", callback_data="p_rdb"))
             _user_context[uid]["_last_ai_answer"] = result
-            await msg.edit_text(
-                f"<b>🌐 Ответ по комнате {wing}/{room}</b>\n\n"
-                f"{result or '❌ Пустой ответ.'}",
-                parse_mode="HTML", reply_markup=kb.as_markup(),
+            from .action_bar import finalize_answer
+            await finalize_answer(
+                uid, msg.edit_text, result or "❌ Пустой ответ.",
+                ctx={"wing": wing, "room": room, "parent_cb": "p_rdb"},
+                title=(
+                    f"<b>🌐 Ответ по комнате "
+                    f"{safe_html_format(wing)}/{safe_html_format(room)}</b>"
+                ),
             )
             return
 
@@ -964,22 +963,17 @@ async def _answer_room_ai(
         {"role": "user", "content": question},
     ])
 
-    kb = InlineKeyboardBuilder()
-    kb.row(types.InlineKeyboardButton(
-        text="🌐 Уточнить в интернете", callback_data="p_room_ai_web",
-    ))
-    kb.row(types.InlineKeyboardButton(
-        text="◀️ Назад в комнату", callback_data="p_rdb",
-    ))
-
     _user_context[uid]["_last_ai_question"] = question
     _user_context[uid]["_last_ai_answer"] = result
 
-    await msg.edit_text(
-        f"<b>🤖 Ответ по комнате {wing}/{room}</b>\n\n"
-        f"{result or '❌ Пустой ответ.'}",
-        parse_mode="HTML",
-        reply_markup=kb.as_markup(),
+    from .action_bar import finalize_answer
+    await finalize_answer(
+        uid, msg.edit_text, result or "❌ Пустой ответ.",
+        ctx={"wing": wing, "room": room, "parent_cb": "p_rdb"},
+        title=(
+            f"<b>🤖 Ответ по комнате "
+            f"{safe_html_format(wing)}/{safe_html_format(room)}</b>"
+        ),
     )
 
 

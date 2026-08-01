@@ -13,6 +13,14 @@ from services.palace_bridge import (
 from .shared import router
 
 
+async def _finalize_admin_result(uid: int, edit_func, text: str, parent_cb: str):
+    from .action_bar import finalize_answer
+    await finalize_answer(
+        uid, edit_func, text or "❌ Нет данных.",
+        ctx={"parent_cb": parent_cb},
+    )
+
+
 @router.callback_query(F.data == "palace_status")
 @allowed_callback
 async def cb_palace_status(cb: types.CallbackQuery):
@@ -20,7 +28,7 @@ async def cb_palace_status(cb: types.CallbackQuery):
     msg = await cb.message.answer("🔍 Получаю статус...")
     try:
         result = await palace_status()
-        await msg.edit_text(result or "❌ Нет данных.")
+        await _finalize_admin_result(cb.from_user.id, msg.edit_text, result, "palace_back")
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка: {e}")
 
@@ -32,7 +40,7 @@ async def cb_palace_mcp(cb: types.CallbackQuery):
     msg = await cb.message.answer("🔌 Получаю настройку MCP...")
     try:
         result = await palace_mcp()
-        await msg.edit_text(result or "❌ Ошибка.")
+        await _finalize_admin_result(cb.from_user.id, msg.edit_text, result, "palace_admin")
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка: {e}")
 
@@ -44,7 +52,9 @@ async def cb_palace_instructions(cb: types.CallbackQuery):
     msg = await cb.message.answer("📖 Загружаю инструкции...")
     try:
         result = await palace_instructions()
-        await msg.edit_text(result or "❌ Нет инструкций.", parse_mode="HTML")
+        await _finalize_admin_result(
+            cb.from_user.id, msg.edit_text, result, "palace_back",
+        )
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка: {e}")
 
@@ -85,11 +95,12 @@ async def cb_palace_admin(cb: types.CallbackQuery):
 async def cb_palace_repair(cb: types.CallbackQuery):
     await cb.answer()
     msg = await cb.message.answer("🔁 Repair запущен в фоне. Бот не блокируется.")
+    uid = cb.from_user.id
 
     async def _run():
         try:
             result = await palace_repair()
-            await msg.edit_text(result or "❌ Ошибка.")
+            await _finalize_admin_result(uid, msg.edit_text, result, "palace_admin")
         except Exception as e:
             await msg.edit_text(f"❌ Ошибка: {e}")
 
@@ -101,11 +112,12 @@ async def cb_palace_repair(cb: types.CallbackQuery):
 async def cb_palace_compact(cb: types.CallbackQuery):
     await cb.answer()
     msg = await cb.message.answer("🗜️ Compact запущен в фоне...")
+    uid = cb.from_user.id
 
     async def _run():
         try:
             result = await palace_compact()
-            await msg.edit_text(result or "❌ Ошибка.")
+            await _finalize_admin_result(uid, msg.edit_text, result, "palace_admin")
         except Exception as e:
             await msg.edit_text(f"❌ Ошибка: {e}")
 
@@ -117,11 +129,12 @@ async def cb_palace_compact(cb: types.CallbackQuery):
 async def cb_palace_compress(cb: types.CallbackQuery):
     await cb.answer()
     msg = await cb.message.answer("📦 Компрессия в фоне...")
+    uid = cb.from_user.id
 
     async def _run():
         try:
             result = await palace_compress()
-            await msg.edit_text(result or "❌ Ошибка.")
+            await _finalize_admin_result(uid, msg.edit_text, result, "palace_admin")
         except Exception as e:
             await msg.edit_text(f"❌ Ошибка: {e}")
 
@@ -133,11 +146,12 @@ async def cb_palace_compress(cb: types.CallbackQuery):
 async def cb_palace_wakeup(cb: types.CallbackQuery):
     await cb.answer()
     msg = await cb.message.answer("🌙 Загружаю в контекст...")
+    uid = cb.from_user.id
 
     async def _run():
         try:
             result = await palace_wake_up()
-            await msg.edit_text(result or "❌ Ошибка.")
+            await _finalize_admin_result(uid, msg.edit_text, result, "palace_admin")
         except Exception as e:
             await msg.edit_text(f"❌ Ошибка: {e}")
 
