@@ -9,6 +9,7 @@ from config import ALLOWED_IDS, API_TOKEN
 # Кэши для временных состояний
 photo_delete_cache: TTLCache[str, str] = TTLCache(maxsize=500, ttl=300)
 pending_wing_search: TTLCache[int, str] = TTLCache(maxsize=100, ttl=60)
+pending_web_search: TTLCache[int, bool] = TTLCache(maxsize=100, ttl=120)
 sync_counter: TTLCache[int, int] = TTLCache(maxsize=100, ttl=3600)
 sync_in_progress: TTLCache[int, bool] = TTLCache(maxsize=100, ttl=60)
 yt_waiting_url: TTLCache[int, str] = TTLCache(maxsize=50, ttl=60)

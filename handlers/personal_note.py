@@ -7,7 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from faster_whisper import WhisperModel
 
 from config import allowed_callback, allowed_only
-from handlers.palace import TtlDict
+from services.ttl_dict import TtlDict
 from services.ai_engine import get_ai_response_async, get_current_ai
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
@@ -268,6 +268,8 @@ async def cb_pn_reclass(callback: types.CallbackQuery):
 @allowed_callback
 async def cb_pn_wing(callback: types.CallbackQuery):
     await callback.answer()
+    if not callback.data:
+        return
     uid = callback.from_user.id
     wing = callback.data.split(":", 1)[1]
     data = _note_data.get(uid)
@@ -306,6 +308,8 @@ async def cb_pn_wing(callback: types.CallbackQuery):
 @allowed_callback
 async def cb_pn_room(callback: types.CallbackQuery):
     await callback.answer()
+    if not callback.data:
+        return
     uid = callback.from_user.id
     idx_str = callback.data.split(":", 1)[1]
     data = _note_data.get(uid)
@@ -456,6 +460,8 @@ async def _show_pn_page(msg_or_cb, edit_func, wing: str, room: str, offset: int)
 @allowed_callback
 async def cb_pn_page(callback: types.CallbackQuery):
     await callback.answer()
+    if not callback.data:
+        return
     uid = callback.from_user.id
     offset = int(callback.data.split(":", 1)[1])
     state = _list_state.get(uid)
@@ -481,6 +487,8 @@ async def cb_pn_list_back(callback: types.CallbackQuery):
 @allowed_callback
 async def cb_pn_view(callback: types.CallbackQuery):
     await callback.answer()
+    if not callback.data:
+        return
     uid = callback.from_user.id
     idx = int(callback.data.split(":", 1)[1])
     state = _list_state.get(uid)

@@ -15,9 +15,9 @@ from cli.commands import (
     cmd_wings, cmd_rooms, cmd_taxonomy, cmd_graph, cmd_traverse,
     cmd_tunnels, cmd_follow, cmd_kg, cmd_kgstats, cmd_enrich, cmd_sync,
     cmd_remind, cmd_pdfs, cmd_yt, cmd_transkript, cmd_kgadd,
-    cmd_settings, save_quick_note, save_extraction, process_ai_query,
+    cmd_settings, cmd_web, save_quick_note, save_extraction, process_ai_query,
 )
-from cli.utils import C, format_for_terminal, get_cli_voice
+from cli.utils import C, format_for_terminal, get_cli_voice, is_noise_input
 from cli.help_sections import HELP_SECTIONS
 
 
@@ -25,7 +25,7 @@ from cli.help_sections import HELP_SECTIONS
 class CLICompleter(Completer):
     def __init__(self):
         self.commands = [
-            '/help', '/h', '/search', '/history', '/export', '/new', '/del', '/chats',
+            '/help', '/h', '/search', '/web', '/history', '/export', '/new', '/del', '/chats',
             '/sync', '/photos', '/analyze_photo', '/status', '/mcp', '/wakeup',
             '/repair', '/compact', '/compress', '/palace', '/wings', '/rooms',
             '/taxonomy', '/graph', '/traverse', '/tunnels', '/follow', '/kg',
@@ -115,12 +115,13 @@ async def chat_loop(chat_path: str, session: PromptSession):
             await cmd_analyze_photo(engine, model, messages)
             continue
 
-        if cmd == "звук":
+        if cmd in ("звук", "/звук"):
             await cmd_sound_toggle()
             continue
 
-        if cmd.startswith("звук-"):
-            await cmd_sound_speed(cmd.split("-", 1)[1])
+        raw_cmd = cmd.lstrip("/")
+        if raw_cmd.startswith("звук-"):
+            await cmd_sound_speed(raw_cmd.split("-", 1)[1])
             continue
 
         if cmd in ["q", "й", "quit", "exit", "выход"]:
@@ -128,9 +129,17 @@ async def chat_loop(chat_path: str, session: PromptSession):
             save_chat(chat_path, data)
             return "quit"
 
-        if cmd in ["/help", "/h", "-h", "h", "help"]:
+        if cmd in ["/help", "/h", "-h", "h", "help", "?", "/?"]:
             from cli.help_sections import show_help
             show_help()
+            continue
+
+        if cmd in HELP_SECTIONS or cmd == "0":
+            from cli.help_sections import show_section, show_all_help
+            if cmd == "0":
+                show_all_help()
+            else:
+                show_section(cmd)
             continue
 
         if cmd.startswith("h ") or cmd.startswith("help "):
@@ -253,6 +262,19 @@ async def chat_loop(chat_path: str, session: PromptSession):
             engine, model = get_current_ai()
             continue
 
+        if cmd.startswith("/web"):
+            query = user_input[4:].strip()
+            if not query:
+                query = await session.prompt_async(
+                    HTML('<ansicyan>🔍 Введите запрос: </ansicyan>'),
+                )
+                query = query.strip()
+            if query:
+                await cmd_web(query)
+            else:
+                print(f"{C.YELLOW}Отменено.{C.END}")
+            continue
+
         if cmd == "/del":
             if os.path.exists(chat_path):
                 os.remove(chat_path)
@@ -298,6 +320,17 @@ async def chat_loop(chat_path: str, session: PromptSession):
                 await save_extraction(prefix, clean_q, messages, last_ai, engine, model)
             continue
         elif prefix:
+            continue
+
+        # --- Accidental input guard ---
+        if is_noise_input(clean_q):
+            print(
+                f"{C.YELLOW}⚠️  Слишком короткий ввод или нераспознанная команда.{C.END}\n"
+                f"{C.CYAN}  Если вы хотели отправить это сообщение — "
+                f"начните с '?': {C.END}{C.GREEN}? {clean_q}{C.END}\n"
+                f"{C.CYAN}  Или введите {C.END}{C.YELLOW}h{C.END}"
+                f"{C.CYAN} для справки.{C.END}"
+            )
             continue
 
         # --- AI Query Processing ---

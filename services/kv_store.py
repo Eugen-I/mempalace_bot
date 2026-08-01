@@ -20,7 +20,7 @@ _DB_PATH = os.path.join(
 
 
 class KVStore:
-    _instance = None
+    _instance: "KVStore | None" = None
     _lock = threading.Lock()
 
     def __init__(self, db_path: str = _DB_PATH):

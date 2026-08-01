@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from services.prompts.focus_modules import (
     FOCUS_CODE_TECH,
@@ -11,7 +12,7 @@ from services.prompts.focus_modules import (
 
 logger = logging.getLogger("PromptsEngine")
 
-PROMPT_MIXING_RULES = [
+PROMPT_MIXING_RULES: list[dict[str, Any]] = [
     {
         "name": "Dream + Photo Hybrid",
         "condition": lambda q, has_img: (

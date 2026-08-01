@@ -39,10 +39,10 @@ get_env_value() {
 update_env_key() {
     local key=$1
     local value=$2
-    
+
     # Экранирование спецсимволов для sed
     local escaped_value=$(printf '%s\n' "$value" | sed 's/[&/\]/\\&/g')
-    
+
     if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
         # macOS sed требует '' после -i
         sed -i '' "s|^${key}=.*|${key}=${escaped_value}|" "$ENV_FILE"
@@ -83,30 +83,32 @@ while true; do
     echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}"
     echo -e "${CYAN}  🦾 MemPalace: Меню управления конфигурацией${NC}"
     echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}\n"
-    
+
     # Получаем текущие значения
     TG_TOKEN=$(get_env_value "TELEGRAM_BOT_TOKEN")
     ADMIN_ID=$(get_env_value "ADMIN_ID")
     GEMINI_KEY=$(get_env_value "GEMINI_API_KEY")
     OPENAI_KEY=$(get_env_value "OPENAI_API_KEY")
+    TAVILY_KEY=$(get_env_value "TAVILY_API_KEY")
     ALLOWED_USERS=$(get_env_value "ALLOWED_USERS")
     TTS_ENGINE=$(get_env_value "TTS_ENGINE")
-    
+
     # Меню
     echo -e " 1. TELEGRAM_BOT_TOKEN  $(mask_value "$TG_TOKEN")"
     echo -e " 2. ADMIN_ID            ${YELLOW}${ADMIN_ID:-0}${NC}"
     echo -e " 3. GEMINI_API_KEY      $(mask_value "$GEMINI_KEY")"
     echo -e " 4. OPENAI_API_KEY      $(mask_value "$OPENAI_KEY")"
-    echo -e " 5. TTS_ENGINE          ${YELLOW}${TTS_ENGINE:-system}${NC} (system/openai/elevenlabs)"
-    echo -e " 6. MEMPALACE_DATA_DIR     ${YELLOW}${MEMPALACE_DATA_DIR:-$HOME/Documents/mempalace}${NC}"
-    echo -e " 7. ALLOWED_USERS       ${YELLOW}${ALLOWED_USERS:-0}${NC} (ID через запятую)"
+    echo -e " 5. TAVILY_API_KEY      $(mask_value "$TAVILY_KEY")"
+    echo -e " 6. TTS_ENGINE          ${YELLOW}${TTS_ENGINE:-system}${NC} (system/openai/elevenlabs)"
+    echo -e " 7. MEMPALACE_DATA_DIR    ${YELLOW}${MEMPALACE_DATA_DIR:-$HOME/Documents/mempalace}${NC}"
+    echo -e " 8. ALLOWED_USERS       ${YELLOW}${ALLOWED_USERS:-0}${NC} (ID через запятую)"
     echo ""
     echo -e " ${RED}Q${NC}. Выход и закрытие окна"
     echo -e "${CYAN}──────────────────────────────────────────────────────────────${NC}"
     echo -ne "\n${GREEN}➤ Выберите пункт: ${NC}"
-    
+
     read -r choice
-    
+
     case "$choice" in
         1)
             echo -ne "\n🤖 Введите TELEGRAM_BOT_TOKEN: "
@@ -143,6 +145,14 @@ while true; do
             fi
             ;;
         5)
+            echo -ne "\n🔍 Введите TAVILY_API_KEY: "
+            read -r val
+            if [[ -n "$val" ]]; then
+                update_env_key "TAVILY_API_KEY" "$val"
+                echo -e "${GREEN}✅ Tavily ключ обновлен.${NC}"
+            fi
+            ;;
+        6)
             echo -e "\n🔊 Выберите TTS_ENGINE:"
             echo "   1) system (macOS say)"
             echo "   2) openai"
@@ -156,31 +166,31 @@ while true; do
                 *) echo -e "${RED}❌ Неверный выбор.${NC}" ;;
             esac
             ;;
-	6)
-    	    echo -ne "\n📂 Введите путь к MEMPALACE_DATA_DIR: "
+        7)
+            echo -ne "\n📂 Введите путь к MEMPALACE_DATA_DIR: "
             read -r val
             if [[ -n "$val" ]]; then
-            update_env_key "MEMPALACE_DATA_DIR" "$val"
-            echo -e "${GREEN}✅ Путь обновлен.${NC}"
+                update_env_key "MEMPALACE_DATA_DIR" "$val"
+                echo -e "${GREEN}✅ Путь обновлен.${NC}"
+            fi
+            ;;
+        8)
+            echo -ne "\n👥 Введите ALLOWED_USERS (ID Telegram через запятую): "
+            read -r val
+            if [[ -n "$val" ]]; then
+                update_env_key "ALLOWED_USERS" "$val"
+                echo -e "${GREEN}✅ Список пользователей обновлен.${NC}"
             fi
             ;;
         [Qq])
             close_terminal
             ;;
-	7)
-    	    echo -ne "\n👥 Введите ALLOWED_USERS (ID Telegram через запятую): "
-    	    read -r val
-    	    if [[ -n "$val" ]]; then
-            update_env_key "ALLOWED_USERS" "$val"
-            echo -e "${GREEN}✅ Список пользователей обновлен.${NC}"
-    	    fi
-    	    ;;
         *)
             echo -e "\n${RED}⚠️ Неверный ввод. Попробуйте снова.${NC}"
             sleep 1
             ;;
     esac
-    
+
     echo -e "\n${YELLOW}⏳ Нажмите Enter для продолжения...${NC}"
     read -r
 done

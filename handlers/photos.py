@@ -5,6 +5,7 @@
 import asyncio
 import hashlib
 import os
+import tempfile
 import logging
 
 from aiogram import F, Router, types
@@ -61,12 +62,13 @@ async def handle_photo(message: types.Message):
             file = message.photo[-1]
             logger.info(f"📸 [PHOTO] Получено фото. ID: {file.file_id}")
         elif message.document and message.document.mime_type.startswith("image/"):
-            file = message.document
+            file = message.document  # type: ignore[assignment]
             logger.info(f"📄 [PHOTO] Получен документ-картинка. ID: {file.file_id}")
         else:
             return
 
-        tmp_path = f"/tmp/{message.from_user.id}_{file.file_unique_id}.jpg"
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+        os.close(tmp_fd)
         logger.info(f"⬇️ [PHOTO] Скачиваю файл в: {tmp_path}")
 
         file_info = await message.bot.get_file(file.file_id)
@@ -234,7 +236,7 @@ async def cmd_photos(message: types.Message):
     uid = str(message.from_user.id)
 
     for p in photos:
-        short_id = hashlib.md5(f"{uid}:{p}".encode()).hexdigest()[:8]
+        short_id = hashlib.sha256(f"{uid}:{p}".encode()).hexdigest()[:8]
         _photo_delete_cache[f"{uid}:{short_id}"] = p
 
         btn_text = p[:20] + ("..." if len(p) > 20 else "")
@@ -284,7 +286,7 @@ async def cb_del_photo(cb: types.CallbackQuery):
 
             kb = InlineKeyboardBuilder()
             for p in new_photos:
-                short_id = hashlib.md5(f"{uid}:{p}".encode()).hexdigest()[:8]
+                short_id = hashlib.sha256(f"{uid}:{p}".encode()).hexdigest()[:8]
                 _photo_delete_cache[f"{uid}:{short_id}"] = p
                 btn_text = p[:20] + ("..." if len(p) > 20 else "")
                 kb.row(

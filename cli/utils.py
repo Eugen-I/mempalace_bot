@@ -21,6 +21,7 @@ class C:
     YELLOW = "\033[93m"
     RED = "\033[91m"
     CYAN = "\033[96m"
+    L_BLUE = "\033[94m"
     PURPLE = "\033[95m"
     BOLD = "\033[1m"  # Жирный
     ITALIC = "\033[3m"  # Курсив (поддерживается не всеми терминалами, но стандартен)
@@ -249,3 +250,20 @@ def export_chat_to_md(chat_path: str) -> str:
 
 def get_bot_dir() -> str:
     return os.path.expanduser("~/Documents/mempalace_bot")
+
+
+def is_noise_input(text: str) -> bool:
+    """Detect accidental keyboard input (wrong layout, single chars, etc.)"""
+    if not text:
+        return True
+    cleaned = text.strip()
+    # Single character is almost always accidental
+    if len(cleaned) == 1 and cleaned not in ("?", "~"):
+        return True
+    # Two characters that aren't known shortcuts
+    if len(cleaned) == 2 and cleaned not in ("??", "!!", "#ctx"):
+        return True
+    # Punctuation-only
+    if all(c in ".,;:!?-+=()[]{}@#$%^&*_|\\/'\"" for c in cleaned):
+        return True
+    return False

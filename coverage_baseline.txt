@@ -1,0 +1,168 @@
+python3 -m pytest --cov-report=term-missing --cov-fail-under=5
+============================= test session starts ==============================
+platform darwin -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/evg.pit/Documents/mempalace_bot
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-7.1.0, timeout-2.4.0, asyncio-1.4.0, anyio-4.13.0
+timeout: 60.0s
+timeout method: thread
+timeout func_only: False
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 93 items
+
+tests/test_circuit_breaker.py .......                                    [  7%]
+tests/test_cli_extras.py ...............                                 [ 23%]
+tests/test_event_bus.py ......                                           [ 30%]
+tests/test_graceful_degradation.py ...............                       [ 46%]
+tests/test_kv_store.py ...............                                   [ 62%]
+tests/test_logging_setup.py ....                                         [ 66%]
+tests/test_palace_navigation_callbacks.py ..                             [ 68%]
+tests/test_prompts.py ..................                                 [ 88%]
+tests/test_semantic_cache.py .........../Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113fcac50>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113fcb010>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113fcb3d0>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113fcb790>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113fcbb50>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113ff4040>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113ff4310>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113ff46d0>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113ff4a90>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113ff4e50>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113ff53f0>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113ff56c0>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113ff58a0>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113ff5d50>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/collections/__init__.py:453: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x113ff6110>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+                                 [100%]
+
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:491
+<frozen importlib._bootstrap>:491
+  <frozen importlib._bootstrap>:491: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:491
+<frozen importlib._bootstrap>:491
+  <frozen importlib._bootstrap>:491: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:491
+  <frozen importlib._bootstrap>:491: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+../../../../Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/google/genai/types.py:42
+  /Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/google/genai/types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17
+    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+_______________ coverage: platform darwin, python 3.14.3-final-0 _______________
+
+Name                                Stmts   Miss Branch BrPart  Cover   Missing
+-------------------------------------------------------------------------------
+__init__.py                             0      0      0      0   100%
+cli/__init__.py                         4      4      0      0     0%   2-6
+cli/commands.py                       482    482    116      0     0%   2-706
+cli/dialog.py                         224    224    126      0     0%   2-339
+cli/help_sections.py                   28     28      8      0     0%   3-115
+cli/menu.py                            36     36      8      0     0%   2-52
+cli/utils.py                          162    162     46      0     0%   2-269
+cli_ask.py                             90     90     22      0     0%   2-129
+cli_extras.py                         159    108     68      7    32%   28-36, 41-79, 91-112, 124-135, 138-145, 148-149, 152-154, 179-217, 229
+config.py                              65     12     14      3    73%   19, 33-37, 49->52, 87-89, 97-100
+handlers/__init__.py                    0      0      0      0   100%
+handlers/chat.py                      352    352    102      0     0%   6-584
+handlers/messages.py                  452    452    156      0     0%   2-795
+handlers/notes.py                      52     52     10      0     0%   6-157
+handlers/palace/__init__.py           287    261    104      0     7%   42-59, 69-77, 86-93, 100-479
+handlers/palace/_utils.py              63     51     14      0    16%   43, 53-54, 76-83, 105-112, 134-141, 161-168, 190-197, 218-225
+handlers/palace/admin.py               95     65      0      0    32%   19-25, 31-37, 43-49, 55-78, 86-96, 102-112, 118-128, 134-144
+handlers/palace/hints.py              111     88     28      0    17%   24-67, 73-92, 100-108, 114-118, 122-166
+handlers/palace/kg.py                 265    204     62      0    19%   27-34, 43-59, 65-84, 90-92, 102-106, 112-114, 120-134, 144-151, 160-162, 168-184, 190-192, 200-205, 211-216, 222-229, 235-238, 242-252, 256-294, 300-355, 363-381
+handlers/palace/navigation.py         979    827    272      6    13%   34, 41, 44-45, 48-49, 52, 63, 70-71, 76-81, 85-86, 95-107, 118-147, 153-192, 198-238, 246-254, 260-269, 279-289, 299-350, 355-383, 389-482, 493, 499-527, 533-569, 577-609, 619-685, 691-781, 787-803, 809-838, 847-854, 864-978, 989-999, 1007-1016, 1027-1029, 1041-1045, 1053-1061, 1072-1127, 1135-1137, 1150-1180, 1186-1226, 1232-1239, 1250-1273, 1281-1301, 1309-1352, 1358-1387, 1393-1402, 1411-1420, 1428-1449, 1455-1476
+handlers/palace/save.py               190    146     38      0    19%   24-43, 49-52, 58-63, 69-71, 77-96, 105-118, 124-126, 132-165, 174-175, 181-194, 200-202, 208-218, 232-233, 239-263
+handlers/palace/shared.py             109     68     30      0    29%   76-80, 86, 90, 94, 105, 108, 111-114, 117, 120, 123-126, 146-191, 199-215
+handlers/palace/tunnels.py            213    174     38      0    16%   21-49, 58-61, 71-99, 105-107, 117-137, 146-159, 163-182, 188-191, 199-220, 229-239, 247-269, 278-292
+handlers/pdf.py                       283    283     96      0     0%   10-484
+handlers/personal_note.py             414    414     78      0     0%   1-751
+handlers/photos.py                    168    168     44      0     0%   5-303
+handlers/reactions.py                  57     57     20      0     0%   1-93
+handlers/reminder.py                  165    133     38      0    16%   38-43, 47-85, 89-96, 105-137, 148-172, 183-185, 189-205, 210-316
+handlers/search.py                    159    159     38      0     0%   1-245
+handlers/settings.py                  170    170     38      0     0%   6-339
+handlers/transkript.py                107    107     30      0     0%   1-168
+handlers/voice.py                      57     57      8      0     0%   6-93
+handlers/web_search_btn.py            201    201     96      0     0%   1-275
+handlers/youtube_ui.py                124    124     20      0     0%   1-187
+main.py                               105    105      6      0     0%   4-177
+services/__init__.py                    0      0      0      0   100%
+services/ai_cache.py                   10      7      4      0    21%   5-10, 14
+services/ai_engine.py                 229    206    100      0     7%   21-22, 27-28, 36-44, 49-74, 79-80, 96-285, 298-318, 333-475
+services/auto_sync.py                  12     12      2      0     0%   1-16
+services/bot_setup.py                  35     35     10      0     0%   1-54
+services/circuit_breaker.py            65      6     16      1    86%   68->81, 102-104, 109-113
+services/code_mode.py                  88     88     30      0     0%   2-152
+services/conversation_fsm.py           71     43     14      0    33%   26-28, 31-33, 36-41, 44-49, 52, 55-61, 64-69, 72, 75-81, 84-85, 89-90
+services/event_bus.py                  47      5     10      1    86%   41->exit, 61, 69-71, 76
+services/graceful_degradation.py       76      7     30      2    90%   54, 111, 119-121, 125, 129
+services/kg_enricher.py               154    154     66      0     0%   1-328
+services/kv_store.py                   90      9     10      1    88%   92-96, 99-100, 145-148
+services/logging_setup.py              21      0      4      0   100%
+services/memory.py                     82     82     20      0     0%   1-133
+services/multimodal.py                 71     71     16      0     0%   1-98
+services/note_linker.py                62     62     24      0     0%   1-115
+services/palace_bridge.py             307    273     90      0     9%   28-33, 40-65, 72-88, 95-118, 125-191, 198-246, 253-298, 303-363, 367-385, 389-393, 397-404, 408-421, 425, 430, 434, 438-441, 445, 449, 453, 457, 512-519, 523-560
+services/palace_mcp.py                109     89     30      0    14%   14-19, 22-55, 58-62, 65, 68-87, 92-105, 108-114, 117-125, 128-139, 148-150, 155
+services/pdf_engine.py                164    138     42      0    13%   63-68, 72-104, 108-110, 114-117, 121, 136-155, 161-227, 231-257, 261-268, 272-282
+services/prompts/__init__.py            6      0      0      0   100%
+services/prompts/base_rules.py          1      0      0      0   100%
+services/prompts/focus_modules.py       7      0      0      0   100%
+services/prompts/mixing_rules.py       25      0     14      3    92%   169->174, 174->180, 183->186
+services/prompts/pdf_prompts.py         2      0      0      0   100%
+services/prompts/summary.py             2      0      0      0   100%
+services/reminder_scheduler.py         40     40     10      0     0%   1-56
+services/semantic_cache.py             70      4     18      0    93%   104-106, 111
+services/sender.py                     61     61     26      0     0%   6-88
+services/tavily_search.py              79     79     28      0     0%   2-195
+services/text_formatter.py             77     71     46      0     5%   10-30, 38-55, 59-109
+services/ttl_dict.py                   29     10      2      1    65%   16-17, 24-25, 32-35, 38-39
+services/tts_processor.py              80     80     26      0     0%   6-145
+services/web_search.py                257    257    106      0     0%   1-461
+services/web_search_cache.py           44     44      8      0     0%   1-93
+services/whisper_service.py            14     14      0      0     0%   6-31
+services/wing_classifier.py            18     18      8      0     0%   6-246
+services/youtube.py                    98     78     18      0    17%   35-36, 40-43, 47-50, 54-83, 87-115, 119-139, 143-164, 168-182
+-------------------------------------------------------------------------------
+TOTAL                                9031   7907   2602     25    11%
+Coverage XML written to file coverage.xml
+Required test coverage of 5% reached. Total coverage: 10.65%
+======================== 93 passed, 6 warnings in 4.42s ========================
+<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute

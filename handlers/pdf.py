@@ -37,7 +37,7 @@ from services.tts_processor import (
 
 logger = logging.getLogger("PDF_Handler")
 router = Router()
-pdf_buffer = {}  # user_id: {"files": [(name, path)], "mode": "single"|"compare", "timer": Task}
+pdf_buffer: dict = {}  # user_id: {"files": [...], "mode": "single"|"compare", "timer": Task}
 
 # Директория для хранения частей длинных ответов
 LONG_RESPONSES_DIR = os.path.join(DATA_DIR, "long_responses")
@@ -69,7 +69,7 @@ async def handle_pdf(message: types.Message):
     if not doc.file_name.lower().endswith(".pdf"):
         return None
     # Лимит 50MB
-    if doc.file_size > 50 * 1024 * 1024:
+    if (doc.file_size or 0) > 50 * 1024 * 1024:
         return await message.answer("❌ Лимит 50MB")
 
     status = await message.answer("📄 Загружаю PDF...")
@@ -201,6 +201,8 @@ async def cb_activate_compare(cb: types.CallbackQuery):
 @allowed_callback
 async def cb_pdf_type(cb: types.CallbackQuery):
     uid = cb.from_user.id
+    if not cb.data:
+        return await cb.answer("❌ Неверный запрос", show_alert=True)
     ptype = cb.data.split(":")[1]
     buf = pdf_buffer.get(uid, {})
     if not buf.get("files"):
@@ -289,6 +291,8 @@ async def send_long_response_parts(
 @router.callback_query(F.data.startswith("read_next:"))
 @allowed_callback
 async def cb_read_next(cb: types.CallbackQuery):
+    if not cb.data:
+        return await cb.answer("❌ Неверный запрос", show_alert=True)
     _, base_filename, current_idx_str = cb.data.split(":")
     current_idx = int(current_idx_str)
 
@@ -369,6 +373,8 @@ async def cmd_pdfs(message: types.Message):
 @router.callback_query(F.data.startswith("pdf_archive:"))
 @allowed_callback
 async def cb_select_archived_pdf(cb: types.CallbackQuery):
+    if not cb.data:
+        return await cb.answer("❌ Неверный запрос", show_alert=True)
     pdf_id = cb.data.split(":", 1)[1]
     uid = cb.from_user.id
     pdfs = list_archived_pdfs()

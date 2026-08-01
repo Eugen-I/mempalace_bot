@@ -1,6 +1,7 @@
 """Help sections for CLI - extracted from cli_ask.py"""
 
 from cli.utils import C
+from services.ai_engine import get_current_ai
 
 HELP_SECTIONS = {
     "1": {
@@ -29,7 +30,8 @@ HELP_SECTIONS = {
         "items": [
             ("/search <запрос>", "Поиск по всей базе MemPalace"),
             ("/search --wing dreams ...", "Поиск по конкретному крылу"),
-            ("sync", "Синхронизировать чат с MemPalace"),
+            ("/web <запрос>", "Поиск в интернете через DuckDuckGo"),
+            ("/sync", "Синхронизировать чат с MemPalace"),
             ("/photos", "Список фото"),
             ("/analyze_photo", "Анализ фото ИИ"),
         ],
@@ -67,11 +69,12 @@ HELP_SECTIONS = {
         ],
     },
     "6": {
-        "title": "⚙️ Системные",
+        "title": "⚙️ Системные и поиск в интернете",
         "items": [
             ("/settings", "Сменить модель ИИ"),
-            ("Звук", "Вкл/Выкл озвучку"),
-            ("Звук-150", "Скорость голоса (100-300)"),
+            ("/звук", "Вкл/Выкл озвучку"),
+            ("/звук-150", "Скорость голоса (100-300)"),
+            ("💡 SEARCH: запрос", "ИИ сам запросит поиск если нужно"),
             ("q / й / Ctrl+C", "Выход с сохранением"),
         ],
     },
@@ -80,9 +83,11 @@ HELP_SECTIONS = {
 
 def show_help():
     """Показать главное меню справки"""
+    engine, model = get_current_ai()
     print(f"{C.CYAN}==========================================================")
     print("    🦾 MemPalace CLI | Справка")
-    print(f"{'=' * 58}{C.END}")
+    print(f"    {C.GREEN}🤖 Модель: {model} ({engine}){C.END}")
+    print(f"{C.CYAN}{'=' * 58}{C.END}")
     for key, sec in HELP_SECTIONS.items():
         print(f"  {C.YELLOW}{key}. {sec['title']}{C.END}")
     print(f"\n  {C.PURPLE}0) {C.END}Вся справка разом")
@@ -98,12 +103,13 @@ def show_section(key: str):
         return
     print(f"\n{C.YELLOW}--- {sec['title']} ---{C.END}")
     for cmd, desc in sec["items"]:
-        print(f"  {C.GREEN}{cmd}{C.END}")
-        print(f"    {desc}")
+        print(f"  {C.GREEN}{cmd}{C.END} -- {desc}")
 
 
 def show_all_help():
     """Показать всю справку"""
+    engine, model = get_current_ai()
+    print(f"{C.GREEN}🤖 Модель: {model} ({engine}){C.END}\n")
     for key in sorted(HELP_SECTIONS):
         show_section(key)
     print()

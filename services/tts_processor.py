@@ -104,7 +104,7 @@ async def generate_voice_async(user_id: int, text: str) -> list[str]:
     paths = []
     speed = get_voice_settings(user_id).get("speed", DEFAULT_SPEED)
     for i, chunk in enumerate(chunks):
-        uid = next(tempfile._get_candidate_names())
+        uid = next(tempfile._get_candidate_names())  # type: ignore[attr-defined]
         aiff = os.path.join(VOICE_OUTPUT_DIR, f"v_{user_id}_{uid}_{i}.aiff")
         ogg = aiff.replace(".aiff", ".ogg")
         try:

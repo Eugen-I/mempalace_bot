@@ -26,8 +26,8 @@ from services.text_formatter import safe_html_format, split_message
 logger = logging.getLogger("ChatHandler")
 
 router = Router()
-user_sessions = {}
-waiting_for_name = {}
+user_sessions: dict = {}
+waiting_for_name: dict = {}
 _chat_callback_cache: dict[str, str] = {}
 
 
@@ -172,6 +172,11 @@ async def cb_select_chat(callback: types.CallbackQuery):
     kb.row(
         types.InlineKeyboardButton(
             text="🔄 Обновить саммари", callback_data=f"refresh_summary:{sid_refresh}",
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🌐 В интернет", callback_data="web_search",
         ),
     )
 
@@ -417,9 +422,13 @@ async def cb_show_full_chat(callback: types.CallbackQuery):
         return await callback.answer("Нет сообщений", show_alert=True)
 
     parts = split_message(full_text)
-    for p in parts:
+    for i, p in enumerate(parts):
         try:
-            await callback.message.answer(p, parse_mode="HTML")
+            if i == len(parts) - 1:
+                from services.sender import send_text_only
+                await send_text_only(callback.message, p)
+            else:
+                await callback.message.answer(p, parse_mode="HTML")
         except Exception:
             pass
     await callback.answer()

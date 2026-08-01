@@ -76,7 +76,10 @@ async def cb_show_help(callback: types.CallbackQuery):
         "/export — Экспорт в .md\n"
         "~ или #ctx — Контекст чата\n\n"
         "<b>🔍 Поиск:</b>\n"
-        "/search запрос — Поиск по базе\n\n"
+        "/search запрос — Поиск по базе MemPalace\n"
+        "/web запрос — Поиск в интернете\n"
+        "🌐 Кнопка «В интернет» под ответом — ищет по вашему вопросу\n"
+        "💡 ИИ может сам запросить поиск (SEARCH: запрос) если нужно уточнить информацию\n\n"
         "<b>📸 Фотографии:</b>\n"
         "/photos — Список фото\n"
         "/analyze_photo — Анализ фото\n\n"
@@ -129,6 +132,8 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
     # ✅ 1. СРАЗУ отвечаем на callback, чтобы Telegram не ждал
     await callback.answer()
 
+    if not callback.data:
+        return
     command = callback.data.split(":", 1)[1]
 
     # Эмулируем выполнение команды через отправку сообщения пользователю
@@ -288,6 +293,8 @@ async def cb_voice_toggle(cb: types.CallbackQuery):
 @router.callback_query(F.data.startswith("spd:"))
 @allowed_callback
 async def cb_speed(cb: types.CallbackQuery):
+    if not cb.data:
+        return
     delta = int(cb.data.split(":")[1])
     cur = get_voice_settings(cb.from_user.id)["speed"]
     set_voice_setting(cb.from_user.id, "speed", max(100, min(300, cur + delta)))

@@ -178,7 +178,9 @@ async def cmd_compress():
 
 
 async def cmd_palace():
+    engine, model = get_current_ai()
     print(f"{C.CYAN}Дворец MemPalace — команды:{C.END}")
+    print(f"{C.GREEN}🤖 Модель: {model} ({engine}){C.END}\n")
     for line in [
         "/status     — статистика дворца (крылья, комнаты, записи)",
         "/wings      — список всех крыльев",
@@ -504,6 +506,40 @@ async def save_extraction(prefix, clean_q, messages, answer, engine, model):
     print(f"{C.GREEN}Сохранено в {label}.{C.END}")
 
 
+async def cmd_web(query: str):
+    from services.web_search import search_web
+    print(f"{C.CYAN}🔍 Ищу в интернете: {query}{C.END}")
+    try:
+        results = await search_web(query)
+        # Перевод английских результатов на русский (немецкий не трогаем)
+        import re
+        german_words = ["der", "die", "das", "und", "ist", "für", "mit", "auf", "ein", "eine"]
+        if any(w in results.lower() for w in german_words):
+            # Скорее всего на немецком — не переводим
+            pass
+        elif re.search(r'\b(the|and|for|with|is|are|to|of|in|a|an)\b', results, re.IGNORECASE):
+            # Есть английские стоп-слова — переводим через ИИ
+            from services.ai_engine import get_ai_response_async, get_current_ai
+            engine, model = get_current_ai()
+            trans_prompt = (
+                "Переведи текст на русский. Сохрани форматирование, ссылки и структуру. "
+                "Если текст на немецком — оставь как есть.\n\n"
+                f"{results}"
+            )
+            try:
+                translated = await get_ai_response_async(
+                    engine, model,
+                    [{"role": "user", "content": trans_prompt}],
+                    context="", user_query="",
+                )
+                results = translated
+            except Exception:
+                pass
+        print(f"\n{C.L_BLUE}{results}{C.END}\n")
+    except Exception as e:
+        print(f"{C.RED}Ошибка поиска: {e}{C.END}")
+
+
 async def process_ai_query(clean_q, messages, data, chat_path, engine, model):
     target_wing = None
     explicit_match = re.match(r"^/(\w+):\s*(.+)", clean_q)
@@ -616,12 +652,52 @@ async def process_ai_query(clean_q, messages, data, chat_path, engine, model):
             voice_cfg.get("enabled", True),
         )
 
-        asyncio.create_task(extract_and_store_facts(messages, hash(chat_path)))
+        asyncio.create_task(extract_and_store_facts(hash(chat_path), clean_q, answer))
         await generate_summary_if_needed(messages, data, chat_path)
 
         save_chat(chat_path, data)
 
         return answer
+
+        # 🌐 SEARCH pattern: если ИИ запросил поиск, выполняем и переспрашиваем
+        search_match = re.search(
+            r"(?:SEARCH|ПОИСК|SEARCH_WEB):\s*(.+)", answer, re.IGNORECASE,
+        )
+        if search_match:
+            search_query = search_match.group(1).strip()
+            print(f"{C.YELLOW}🌐 ИИ запросил поиск: {search_query}{C.END}")
+            from services.web_search import search_web
+            web_results = await search_web(search_query)
+            print(f"{C.CYAN}{web_results}{C.END}")
+            context_msgs.append({"role": "assistant", "content": answer})
+            context_msgs.append({
+                "role": "user",
+                "content": (
+                    f"Вот результаты поиска по запросу «{search_query}»:\n\n"
+                    f"{web_results}\n\n"
+                    "Ответь на мой исходный вопрос с учётом этой информации."
+                ),
+            })
+            answer2 = await get_ai_response_async(engine, model, context_msgs, context="")
+            console2 = Console()
+            if "```" in answer2:
+                parts2 = answer2.split("```")
+                for i, part2 in enumerate(parts2):
+                    if i % 2 == 0:
+                        if part2.strip():
+                            print(f"{C.GREEN}AI: {format_for_terminal(part2)}{C.END}")
+                    else:
+                        lines2 = part2.split('\n')
+                        lang2 = lines2[0].strip() if lines2 else ""
+                        code2 = '\n'.join(lines2[1:]) if len(lines2) > 1 else part2
+                        syntax2 = Syntax(
+                            code2, lang2 or "python", theme="monokai", line_numbers=True,
+                        )
+                        console2.print(syntax2)
+            else:
+                print(f"{C.GREEN}AI: {format_for_terminal(answer2)}{C.END}")
+            messages.append({"role": "assistant", "content": answer2})
+            answer = answer2
 
     except Exception as e:
         print(f"{C.RED}Ошибка ИИ: {e}{C.END}")

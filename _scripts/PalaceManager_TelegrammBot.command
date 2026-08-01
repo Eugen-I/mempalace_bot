@@ -8,6 +8,7 @@ PYTHON_BIN="$VENV_DIR/bin/python3"
 FULL_BOT_PATH="$BOT_DIR/main.py"
 LOG_FILE="$BOT_DIR/nohup.out"
 VOICE_DIR="$DATA_DIR/voice_replies"
+PID_FILE="$BOT_DIR/bot.pid"
 
 # Переходим в папку бота
 cd "$BOT_DIR" || exit 1
@@ -25,10 +26,10 @@ show_menu() {
     echo "    MemPalace Bot Control Center"
     echo "=========================================="
 
-    PID=$(pgrep -f "$FULL_BOT_PATH")
-
-    if [ -z "$PID" ]; then
+    PID=$(cat "$PID_FILE" 2>/dev/null)
+    if [ -z "$PID" ] || ! ps -p "$PID" >/dev/null 2>&1; then
         echo -e " СТАТУС: ${RED}🔴 ОСТАНОВЛЕН${NC}"
+        rm -f "$PID_FILE"
     else
         echo -e " СТАТУС: ${GREEN}🟢 РАБОТАЕТ (PID: $PID)${NC}"
     fi
@@ -52,28 +53,61 @@ show_menu() {
 }
 
 stop_bot() {
-    echo "🛑 Проверка и остановка..."
-    PIDS=$(pgrep -f "$FULL_BOT_PATH")
-    if [ ! -z "$PIDS" ]; then
-        kill -9 $PIDS > /dev/null 2>&1
+    echo "🛑 Проверка и остановка бота..."
+    killed_any=false
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if [ -n "$PID" ] && ps -p "$PID" >/dev/null 2>&1; then
+            kill "$PID" 2>/dev/null
+            sleep 1
+            if ps -p "$PID" >/dev/null 2>&1; then
+                echo -e "${YELLOW}⚠️ Процесс не завершился мягко, применяем SIGKILL${NC}"
+                kill -9 "$PID" 2>/dev/null
+            fi
+            echo "✅ Процесс остановлен (PID: $PID)."
+            killed_any=true
+        else
+            echo "ℹ️ Записанный PID недействителен или процесс уже останован."
+        fi
+        rm -f "$PID_FILE"
+    fi
+    
+    # Fallback: always try to find and kill any remaining processes
+    echo "ℹ️ Проверяю оставшиеся процессы..."
+    pids=$(pgrep -f "main.py" 2>/dev/null)
+    if [ -n "$pids" ]; then
+        echo "Найдено процессы: $pids"
+        echo "$pids" | xargs kill 2>/dev/null
         sleep 1
-        echo "✅ Процессы завершены."
-    else
-        echo "ℹ️ Активных процессов не найдено."
+        remaining=$(echo "$pids" | while read pid; do
+            if ps -p "$pid" >/dev/null 2>&1; then
+                echo "$pid"
+            fi
+        done)
+        if [ -n "$remaining" ]; then
+            echo -e "${YELLOW}⚠️ Некоторые процессы не завершились, применяем SIGKILL${NC}"
+            echo "$remaining" | xargs kill -9 2>/dev/null
+        fi
+        echo "✅ Все связанные процессы остановлены."
+        killed_any=true
+    fi
+    
+    if [ "$killed_any" = false ]; then
+        echo "ℹ️ Активных процессов бота не найдено."
     fi
 }
 
 force_kill() {
     echo -e "${RED}💀 Выполняю полную очистку памяти от процессов...${NC}"
-    PIDS=$(pgrep -f "$FULL_BOT_PATH")
-    if [ ! -z "$PIDS" ]; then
-        echo "Найдено: $PIDS"
-        kill -9 $PIDS
+    pids=$(pgrep -f "main.py" 2>/dev/null)
+    if [ -n "$pids" ]; then
+        echo "Найдено PID: $pids"
+        echo "$pids" | xargs kill -9 2>/dev/null
         echo -e "${GREEN}✅ Все связанные процессы уничтожены.${NC}"
     else
         echo "Зависших процессов не обнаружено."
     fi
-    sleep 2
+    rm -f "$PID_FILE"
 }
 
 cleanup_voice_files() {
@@ -112,7 +146,7 @@ while true; do
                     echo "🚀 Запуск: $FULL_BOT_PATH"
                     echo -e " СТАТУС: ${GREEN}🟢 РАБОТАЕТ (ИНТЕРАКТИВНЫЙ РЕЖИМ)${NC}"
                     
-                    # ✅ Активация venv и проверка Ollama
+                    # Активация venv и проверка Ollama
                     source "$VENV_DIR/bin/activate"
                     
                     # Проверка наличия активной модели в .current_ai
@@ -125,8 +159,18 @@ while true; do
                         fi
                     fi
                     
-                    # Запуск бота
-                    "$PYTHON_BIN" "$FULL_BOT_PATH"
+                    # Запуск бота в фоновом режиме, записываем PID, затем ждем завершения
+                    "$PYTHON_BIN" "$FULL_BOT_PATH" &
+                    BPID=$!
+                    echo "$BPID" > "$PID_FILE"
+                    wait $BPID
+                    RESULT=$?
+                    rm -f "$PID_FILE"
+                    if [ $RESULT -ne 0 ]; then
+                        echo -e "${RED}❌ Бот завершился с кодом $RESULT${NC}"
+                    else
+                        echo "🛑 Бот остановлен пользователем."
+                    fi
                 else
                     echo -e "${RED}❌ ОШИБКА: Python не найден или не исполняем: $PYTHON_BIN${NC}"
                 fi
@@ -140,9 +184,10 @@ while true; do
             if [ -f "$FULL_BOT_PATH" ]; then
                 if [ -x "$PYTHON_BIN" ]; then
                     cd "$BOT_DIR" || exit 1
-                    # ✅ ИСПРАВЛЕНО: 2>&1 перенаправляет stderr (логи Python) в файл
+                    # ИСПРАВЛЕНО: 2>&1 перенаправляет stderr (логи Python) в файл
                     nohup caffeinate -isum "$PYTHON_BIN" "$FULL_BOT_PATH" > "$LOG_FILE" 2>&1 &
                     echo -e "${GREEN}✅ Бот запущен в фоне. Логи пишутся в $LOG_FILE${NC}"
+                    echo $! > "$PID_FILE"
                 else
                     echo -e "${RED}❌ ОШИБКА: Python не найден или не исполняем: $PYTHON_BIN${NC}"
                 fi

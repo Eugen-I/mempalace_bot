@@ -1,4 +1,4 @@
-# MemPalace Bot 🤖
+****# MemPalace Bot 🤖
 
 Ein Telegram-Bot, der mit KI kommuniziert (lokal oder über API), in deinen persönlichen Notizen (MemPalace) sucht, YouTube-Videos herunterlädt, Transkriptionen erstellt und vieles mehr. Läuft nur auf deinem Computer. Solange der Computer läuft, läuft auch der Bot.
 

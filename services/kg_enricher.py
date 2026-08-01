@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+from typing import Any
 
 logger = logging.getLogger("KGEnricher")
 
@@ -41,7 +42,7 @@ def _build_prompt(fname: str, folder: str, content: str) -> str:
 
 
 def _extract_from_filename(fname: str, folder: str) -> dict:
-    result = {
+    result: dict = {
         "author": None,
         "book": None,
         "ideas": [],
@@ -292,7 +293,7 @@ async def enrich_all_notes(progress_callback=None) -> dict:
     except Exception as e:
         return {"error": f"MCP start failed: {e}"}
 
-    stats = {
+    stats: dict[str, Any] = {
         "total": len(files),
         "processed": 0,
         "failed": 0,

@@ -7,6 +7,7 @@ import logging
 import os
 
 from aiogram import types
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from services.text_formatter import safe_html_format, split_message
 from services.tts_processor import (
@@ -16,6 +17,20 @@ from services.tts_processor import (
 )
 
 logger = logging.getLogger("Sender")
+
+
+async def _add_web_search_button(sent_msg: types.Message) -> None:
+    """Добавить кнопку 'В интернет' к сообщению."""
+    if sent_msg and hasattr(sent_msg, "edit_reply_markup"):
+        try:
+            kb = InlineKeyboardBuilder()
+            kb.row(
+                types.InlineKeyboardButton(text="📥 В заметки", callback_data="p_sv"),
+                types.InlineKeyboardButton(text="🌐 В интернет", callback_data="web_search"),
+            )
+            await sent_msg.edit_reply_markup(reply_markup=kb.as_markup())
+        except Exception:
+            pass
 
 
 async def send_response_with_mode(message: types.Message, text: str, voice_mode: str):
@@ -54,14 +69,20 @@ async def send_response_with_mode(message: types.Message, text: str, voice_mode:
         except Exception as e:
             logger.error(f"Ошибка генерации голоса: {e}")
 
+    if first_msg:
+        await _add_web_search_button(first_msg)
+
     return first_msg
 
 
 async def send_text_only(message: types.Message, text: str):
     parts = split_message(safe_html_format(text))
+    last_msg = None
     for p in parts:
         if p and p.strip():
             try:
-                await message.answer(p, parse_mode="HTML")
+                last_msg = await message.answer(p, parse_mode="HTML")
             except Exception:
                 pass
+    if last_msg:
+        await _add_web_search_button(last_msg)

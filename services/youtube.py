@@ -12,6 +12,25 @@ yt_logger = logging.getLogger("yt_dlp")
 yt_logger.setLevel(logging.ERROR)
 
 
+_YT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+              "image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+}
+
+_YT_EXTRACTOR_ARGS = {
+    "youtube": {
+        "player_client": ["android", "web"],
+        "skip": ["webpage"],
+    },
+}
+
+
 def _sanitize_filename(title: str) -> str:
     clean = re.sub(r"[^\w\s\-]", "", title)[:40].strip()
     return clean.replace(" ", "_") or "video"
@@ -47,6 +66,8 @@ async def download_video(url: str, quality: str = "720") -> str:
             "quiet": True,
             "no_warnings": True,
             "logger": yt_logger,
+            "http_headers": _YT_HEADERS,
+            "extractor_args": _YT_EXTRACTOR_ARGS,
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
@@ -84,6 +105,8 @@ async def download_audio(url: str) -> tuple[str, str]:
             "quiet": True,
             "no_warnings": True,
             "logger": yt_logger,
+            "http_headers": _YT_HEADERS,
+            "extractor_args": _YT_EXTRACTOR_ARGS,
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
@@ -94,7 +117,7 @@ async def download_audio(url: str) -> tuple[str, str]:
 
 def _format_transcription(segments) -> str:
     paragraphs = []
-    current = []
+    current: list = []
     prev_end = 0.0
     GAP_THRESHOLD = 2.0
 

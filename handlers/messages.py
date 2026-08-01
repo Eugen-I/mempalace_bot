@@ -7,7 +7,6 @@ import time
 from datetime import datetime
 
 from aiogram import types
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import (
     ADMIN_ID, CHATS_DIR, DATA_DIR,
@@ -15,16 +14,21 @@ from config import (
 )
 from handlers.chat import load_chat, save_chat, user_sessions, waiting_for_name
 from handlers.palace import process_mcp_text_input, suggest_tunnel_hint
+from handlers.palace.shared import _user_context
+from services.palace_mcp import get_mcp as _get_mcp
+import json
 from handlers.personal_note import (
     _waiting_for_note, process_note_input, _quote_waiting, _save_quote_to_palace,
 )
 from handlers.reminder import handle_reminder_text
+from handlers.search import search_result_cache as _search_result_cache
 from services.ai_cache import cache_ai_response
 from services.ai_engine import get_current_ai, stream_ai_response_async, _sync_ai_call
 from services.auto_sync import auto_sync_chat
 from services.bot_setup import (
     bot,
     pending_wing_search as _pending_wing_search,
+    pending_web_search as _pending_web_search,
     sync_counter as _sync_counter,
     sync_in_progress as _sync_in_progress,
     yt_audio_cache as _yt_audio_cache,
@@ -39,9 +43,7 @@ from services.graceful_degradation import get_degradation_manager, report_failur
 from services.memory import extract_and_store_facts, get_memory_context
 from services.multimodal import check_capability, encode_image_to_base64, list_photos
 from services.note_linker import schedule_linking
-from services.palace_bridge import (
-    search_palace_context, search_with_kg,
-)
+from services.palace_bridge import search_with_kg
 from services.prompts import get_smart_prompt
 from services.semantic_cache import get_cache
 from services.sender import send_response_with_mode
@@ -55,6 +57,8 @@ from services.logging_setup import setup_logging
 logger = setup_logging(DATA_DIR)
 
 FILE_LIMIT = 50 * 1024 * 1024
+
+_last_user_query: dict[int, str] = {}
 
 bus = get_bus()
 
@@ -83,15 +87,8 @@ async def _on_ai_sent(**kwargs):
     if sent_msg and hasattr(sent_msg, "message_id"):
         cache_ai_response(chat_id, sent_msg.message_id, answer)
 
-    if sent_msg and hasattr(sent_msg, "edit_reply_markup"):
-        try:
-            kb = InlineKeyboardBuilder()
-            kb.row(
-                types.InlineKeyboardButton(text="📥 В заметки", callback_data="p_sv"),
-            )
-            await sent_msg.edit_reply_markup(reply_markup=kb.as_markup())
-        except Exception:
-            pass
+    if clean_q:
+        _last_user_query[chat_id] = clean_q
 
     _sync_counter[uid] = _sync_counter.get(uid, 0) + 1
     if _sync_counter[uid] % 5 == 0 and not _sync_in_progress.get(uid):
@@ -114,6 +111,7 @@ async def _auto_sync_wrapper(uid: int, fname: str, fpath: str):
 
 
 async def process_user_message(message: types.Message):
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
     if not message.text:
         logger.debug(
             f"⚠️ [TEXT_HANDLER] Пропущено не-текстовое сообщение. Type: {type(message)}",
@@ -141,6 +139,12 @@ async def process_user_message(message: types.Message):
         try:
             path, raw_title = await download_audio(text)
             size = os.path.getsize(path)
+            if size == 0:
+                os.remove(path)
+                return await st.edit_text(
+                    "❌ Аудио пустое. Возможно, видео недоступно или "
+                    "требуется обновление yt-dlp (pip install -U yt-dlp)."
+                )
             if size > FILE_LIMIT:
                 os.remove(path)
                 return await st.edit_text(
@@ -191,10 +195,79 @@ async def process_user_message(message: types.Message):
         wing_info = f" (крыло: {wing})" if wing else ""
         st = await message.answer(f"🔍 Ищу в MemPalace{wing_info}...")
         try:
-            res = await search_palace_context(text, limit=5, wing=wing)
-            await st.edit_text(res or "Ничего не найдено.")
+            from services.palace_bridge import search_palace_with_sources
+            result_text, sources = await search_palace_with_sources(text, limit=5, wing=wing)
+            if not result_text:
+                await st.edit_text("Ничего не найдено.")
+                return None
+
+            _search_result_cache[uid] = sources
+
+            kb = InlineKeyboardBuilder()
+            for s in sources:
+                loc = f"{s['wing']}/{s['room']}"
+                kb.row(types.InlineKeyboardButton(
+                    text=f"📄 [{s['id']}] {loc}",
+                    callback_data=f"p_src:{s['id']}",
+                ))
+            kb.row(types.InlineKeyboardButton(
+                text="🔍 Новый поиск", callback_data="search:wing",
+            ))
+
+            await st.edit_text(
+                result_text, parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
         except Exception as e:
             await st.edit_text(f"❌ Ошибка поиска: {str(e)[:100]}")
+        return None
+
+# 0e. Ожидание текста для поиска в интернете
+    if uid in _pending_web_search:
+        _pending_web_search.pop(uid, None)
+        from services.web_search import deep_search_web
+        from services.sender import send_text_only
+        from services.text_formatter import split_message
+        st = await message.answer("🌐 Глубокий поиск в интернете...")
+        try:
+            result = await deep_search_web(text)
+            await st.delete()
+            if isinstance(result, dict):
+                search_id = result.get("search_id")
+                ai_summary = result.get("ai_summary", "")
+                sources = result.get("sources", [])
+
+                # Отправляем ИИ-саммари или fallback
+                if ai_summary:
+                    for part in split_message(ai_summary):
+                        await send_text_only(message, part)
+                elif sources:
+                    # Fallback: если ИИ не ответил, показываем источники
+                    parts = [f"🔍 <b>Результаты по: {result.get('query', text)}</b>\n"]
+                    for i, src in enumerate(sources, 1):
+                        parts.append(f"\n[{i}] {src['text'][:200]}...")
+                        parts.append(f"    🔗 {src['url']}\n")
+                    for part in split_message("".join(parts)):
+                        await send_text_only(message, part)
+                else:
+                    await message.answer("🤷 Ничего не найдено. Попробуйте другой запрос.")
+
+                # Кнопки для источников и сохранения
+                if sources:
+                    kb = InlineKeyboardBuilder()
+                    kb.row(
+                        types.InlineKeyboardButton(
+                            text="📄 Источники", callback_data=f"ws_sources:{search_id}"
+                        ),
+                        types.InlineKeyboardButton(
+                            text="💾 В базу", callback_data=f"ws_save:{search_id}"
+                        ),
+                    )
+                    await message.answer("🔗 Действия:", reply_markup=kb.as_markup())
+            else:
+                await message.answer("❌ Ошибка: неожиданный формат ответа поиска")
+        except Exception as e:
+            await st.edit_text(f"❌ Ошибка поиска: {str(e)[:200]}")
         return None
 
     # 1. 💻 Mac команды
@@ -343,6 +416,22 @@ async def process_user_message(message: types.Message):
             await st.edit_text(f"❌ Ошибка: {str(e)[:100]}")
             return None
 
+    # 6.5 🌐 Поиск в интернете
+    if clean_q.lower().startswith("/web"):
+        query = clean_q[4:].strip()
+        if not query:
+            return await message.answer("Использование: /web <запрос>")
+        from services.web_search import search_web
+        from services.sender import send_text_only
+        st = await message.answer("🔍 Ищу в интернете...")
+        try:
+            results = await search_web(query)
+            await st.delete()
+            await send_text_only(message, results)
+        except Exception as e:
+            await st.edit_text(f"❌ Ошибка: {e}")
+        return None
+
     # === 🧠 ЯДРО ИИ (со стримингом) ===
     status = await message.answer(
         f"⏳ <code>{get_current_ai()[1]}</code> думает...", parse_mode="HTML",
@@ -390,7 +479,54 @@ async def process_user_message(message: types.Message):
         palace_context = ""
         deg = get_degradation_manager()
 
-        if deg.should_use_palace():
+        ctx = _user_context.get(uid)
+        if ctx and ctx.get("wing") and ctx.get("room"):
+            wing_room = f"{ctx['wing']}/{ctx['room']}"
+            logger.info(f"[USER_CONTEXT] User in {wing_room} drawer={ctx.get('drawer')}")
+            try:
+                mcp = _get_mcp()
+                if ctx.get("drawer"):
+                    drawer_raw = await mcp.call_tool("mempalace_get_drawer", {
+                        "drawer": ctx["drawer"], "room": ctx["room"], "wing": ctx["wing"],
+                    })
+                    if drawer_raw:
+                        palace_context = (
+                            "\n--- ТЕКУЩАЯ ЗАПИСЬ "
+                            "(Пользователь сейчас читает эту запись) ---\n"
+                            f"Крыло: {ctx['wing']}, Комната: {ctx['room']}, "
+                            f"Запись: {ctx['drawer']}\n\n"
+                            f"{drawer_raw}\n--- КОНЕЦ ЗАПИСИ ---\n"
+                        )
+                else:
+                    list_raw = await mcp.call_tool("mempalace_list_drawers", {
+                        "wing": ctx["wing"], "room": ctx["room"], "limit": 20, "offset": 0,
+                    })
+                    parsed_drawers = json.loads(list_raw) if list_raw else {}
+                    drawers = parsed_drawers.get("drawers", [])
+                    if drawers:
+                        texts = []
+                        for d in drawers[:10]:
+                            content = d.get("content_preview", "") or d.get("content", "")[:500]
+                            dn = d.get("closet_name", d.get("title", d.get("name", "")))
+                            if dn:
+                                texts.append(f"--- {dn} ---\n{content}")
+                        if texts:
+                            header = (
+                                "\n--- ЗАПИСИ ИЗ ТЕКУЩЕЙ КОМНАТЫ "
+                                "(Пользователь сейчас в этой комнате) ---\n"
+                            )
+                            palace_context = (
+                                header
+                                + f"Крыло: {ctx['wing']}, Комната: {ctx['room']}\n\n"
+                                + "\n\n".join(texts)
+                                + "\n--- КОНЕЦ ЗАПИСЕЙ КОМНАТЫ ---\n"
+                            )
+            except Exception as e:
+                logger.warning(f"[USER_CONTEXT] Error loading context: {e}")
+        else:
+            logger.info("[USER_CONTEXT] No user context, using regular search")
+
+        if not palace_context and deg.should_use_palace():
             palace_context = await search_with_kg(clean_q, limit=5, wing=target_wing)
             if not palace_context:
                 report_failure("palace_search")
@@ -438,7 +574,18 @@ async def process_user_message(message: types.Message):
             context=palace_context, query=clean_q, has_images=has_images_in_query,
         )
 
-        if palace_context and "[1]" in palace_context:
+        if ctx and ctx.get("wing") and (ctx.get("room") or ctx.get("drawer")):
+            system_instruction += (
+                "\n📎 КРИТИЧЕСКИ ВАЖНО: Пользователь сейчас просматривает свои личные записи. "
+                "Ты должен отвечать ИСКЛЮЧИТЕЛЬНО на основании предоставленных выше записей. "
+                "Не используй свои общие знания — только текст из '--- ТЕКУЩАЯ ЗАПИСЬ ---' "
+                "или '--- ЗАПИСИ ИЗ ТЕКУЩЕЙ КОМНАТЫ ---'. "
+                "Можешь форматировать, суммаризировать, пересказывать, "
+                "вычленять факты и детали из этих записей. "
+                "Если нужны дополнительные факты (даты, имена, события) — "
+                "используй команду SEARCH_WEB: <запрос> для поиска в интернете."
+            )
+        elif palace_context and "[1]" in palace_context:
             system_instruction += (
                 "\n📎 ПРАВИЛА ЦИТИРОВАНИЯ: "
                 "В контексте выше есть блок '--- ИСТОЧНИКИ ---' "
@@ -530,6 +677,47 @@ async def process_user_message(message: types.Message):
 
             if answer and not answer.startswith("❌"):
                 _sem_cache.set(clean_q, answer)
+
+        # 🌐 SEARCH pattern: если ИИ запросил поиск
+        search_match = re.search(
+            r"(?:SEARCH|ПОИСК|SEARCH_WEB):\s*(.+)", answer, re.IGNORECASE,
+        )
+        if search_match and not answer.startswith("❌"):
+            search_query = search_match.group(1).strip()
+            logger.info(f"[WEB_SEARCH] AI requested search: {search_query}")
+            try:
+                from services.web_search import search_web
+                web_results = await search_web(search_query)
+                context_msgs.append({"role": "assistant", "content": answer})
+                context_msgs.append({
+                    "role": "user",
+                    "content": (
+                        f"Вот результаты поиска по запросу «{search_query}»:\n\n"
+                        f"{web_results}\n\n"
+                        "Ответь на мой исходный вопрос с учётом этой информации."
+                    ),
+                })
+                if stream_msg is not None:
+                    try:
+                        await bot.delete_message(message.chat.id, stream_msg.message_id)
+                    except Exception:
+                        pass
+                answer = ""
+                async for chunk in stream_ai_response_async(
+                    _engine, _model, context_msgs,
+                    context=palace_context, user_query=clean_q,
+                    has_images=has_images_in_query, images=images_b64,
+                ):
+                    answer += chunk
+                if not answer.startswith("❌"):
+                    msg_text = answer[:200] if len(answer) > 200 else answer
+                    await status.edit_text(
+                        f"🌐 <code>{get_current_ai()[1]}</code> (с поиском): "
+                        f"{safe_html_format(msg_text)}",
+                        parse_mode="HTML",
+                    )
+            except Exception as e:
+                logger.error(f"[WEB_SEARCH] Failed: {e}", exc_info=True)
 
         if stream_msg is not None:
             try:

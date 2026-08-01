@@ -10,6 +10,7 @@ import os
 import re
 import time
 from collections.abc import AsyncIterator
+from typing import Any
 from functools import lru_cache
 
 # Настройка логгера для этого модуля
@@ -18,13 +19,13 @@ logger = logging.getLogger("AI_Engine")
 try:
     from openai import OpenAI
 except ImportError:
-    OpenAI = None
+    OpenAI: Any = None  # type: ignore[no-redef]
 
 try:
     from google import genai
     from google.genai import types as genai_types
 except ImportError:
-    genai = None
+    genai: Any = None  # type: ignore[no-redef]
 
 from config import CONFIG_AI_FILE, MODELS_CONFIG_PATH  # noqa: E402
 
@@ -148,7 +149,7 @@ def _sync_ai_call(
 
     try:
         if engine == "qwen":  # Ollama через OpenAI совместимый API
-            if not OpenAI:
+            if OpenAI is None:
                 raise ImportError("Библиотека openai не установлена.")
 
             client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
@@ -222,7 +223,7 @@ def _sync_ai_call(
             return "❌ Пустой ответ от Ollama."
 
         if engine == "openai":
-            if not OpenAI:
+            if OpenAI is None:
                 raise ImportError("Библиотека openai не установлена.")
 
             api_key = os.getenv("OPENAI_API_KEY")
@@ -244,17 +245,17 @@ def _sync_ai_call(
                     "\nUser:",
                 ],
             )
-            return r.choices[0].message.content
+            return r.choices[0].message.content or ""
 
         if engine == "gemini":
-            if not genai:
+            if genai is None:
                 raise ImportError("Библиотека google-genai не установлена.")
 
             api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
                 raise ValueError("GEMINI_API_KEY not set.")
 
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(api_key=api_key)  # type: ignore[assignment]
 
             # Преобразование сообщений в формат Gemini
             hist = []
@@ -263,7 +264,7 @@ def _sync_ai_call(
                 parts = [genai_types.Part(text=m["content"])]
                 hist.append(genai_types.Content(role=role, parts=parts))
 
-            r = client.models.generate_content(
+            r = client.models.generate_content(  # type: ignore[attr-defined]
                 model=model,
                 contents=hist,
                 config=genai_types.GenerateContentConfig(
@@ -358,7 +359,8 @@ async def stream_ai_response_async(
                         "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
                     },
                 )
-            full_messages.append({"role": "user", "content": content_parts})
+            user_content: dict[str, Any] = {"role": "user", "content": content_parts}
+            full_messages.append(user_content)
         else:
             full_messages.append(m)
 
@@ -375,7 +377,7 @@ async def stream_ai_response_async(
     def _run_stream():
         try:
             if engine == "qwen":
-                if not OpenAI:
+                if OpenAI is None:
                     raise ImportError("Библиотека openai не установлена.")
                 client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
                 stream = client.chat.completions.create(
@@ -401,7 +403,7 @@ async def stream_ai_response_async(
                             loop.call_soon_threadsafe(queue.put_nowait, cleaned)
 
             elif engine == "openai":
-                if not OpenAI:
+                if OpenAI is None:
                     raise ImportError("Библиотека openai не установлена.")
                 api_key = os.getenv("OPENAI_API_KEY")
                 if not api_key:
@@ -428,7 +430,7 @@ async def stream_ai_response_async(
                         loop.call_soon_threadsafe(queue.put_nowait, delta.content)
 
             elif engine == "gemini":
-                if not genai:
+                if genai is None:
                     raise ImportError("Библиотека google-genai не установлена.")
                 api_key = os.getenv("GEMINI_API_KEY")
                 if not api_key:

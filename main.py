@@ -7,8 +7,9 @@ import sys
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import API_TOKEN, ADMIN_ID, CHATS_DIR, DATA_DIR, allowed_only
+from config import API_TOKEN, ADMIN_ID, CHATS_DIR, DATA_DIR, allowed_only, allowed_callback
 from handlers.chat import user_sessions
 from services.palace_bridge import export_chat_verbatim, sync_to_palace
 from services.palace_mcp import get_mcp
@@ -28,7 +29,7 @@ from handlers import (  # noqa: E402
     chat, notes, palace, pdf, personal_note,
     reminder, settings, search,
 )
-from handlers import photos, reactions, transkript, voice, youtube_ui  # noqa: E402
+from handlers import photos, reactions, transkript, voice, web_search_btn, youtube_ui  # noqa: E402
 from handlers.messages import process_user_message  # noqa: E402
 
 
@@ -52,6 +53,7 @@ _safe_include(youtube_ui.router)
 _safe_include(search.router)
 _safe_include(reactions.router)
 _safe_include(transkript.router)
+_safe_include(web_search_btn.router)
 
 fallback_router = Router()
 dp.include_router(fallback_router)
@@ -72,7 +74,7 @@ async def cmd_start(message: types.Message):
                 types.KeyboardButton(text="⚙️ Настройки"),
             ],
             [
-                types.KeyboardButton(text="🔍 Поиск по крылу"),
+                types.KeyboardButton(text="🔍 Поиск"),
                 types.KeyboardButton(text="🔄 Синхронизация"),
             ],
             [
@@ -111,6 +113,39 @@ async def cmd_sync_button(message: types.Message):
     status = await message.answer("🔄 Синхронизирую с MemPalace (verbatim)...")
     result = await sync_to_palace(exported)
     await status.edit_text(result)
+
+
+@fallback_router.message(F.text == "🔍 Поиск")
+@allowed_only
+async def cmd_search_button(message: types.Message):
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(text="🔍 Поиск по крылу", callback_data="search:wing"),
+    )
+    kb.row(
+        types.InlineKeyboardButton(text="🌐 Поиск в интернет", callback_data="search:web"),
+    )
+    await message.answer("Выберите тип поиска:", reply_markup=kb.as_markup())
+
+
+@fallback_router.callback_query(F.data == "search:wing")
+@allowed_callback
+async def cb_search_wing(callback: types.CallbackQuery):
+    from handlers.search import cmd_wing_search_prompt
+    await cmd_wing_search_prompt(callback.message)
+    await callback.answer()
+
+
+@fallback_router.callback_query(F.data == "search:web")
+@allowed_callback
+async def cb_search_web(callback: types.CallbackQuery):
+    from services.bot_setup import pending_web_search as _pending_web_search
+    _pending_web_search[callback.from_user.id] = True
+    await callback.message.answer(
+        "🔍 Введите запрос для глубокого поиска в интернете:",
+        reply_markup=types.ForceReply(selective=True, input_field_placeholder="Запрос..."),
+    )
+    await callback.answer()
 
 
 fallback_router.message()(allowed_only(process_user_message))

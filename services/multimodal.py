@@ -7,7 +7,7 @@ from datetime import datetime
 from config import MODELS_CONFIG_PATH, PHOTOS_DIR
 
 # 🔹 Кэш capabilities
-_model_caps_cache = {}
+_model_caps_cache: dict = {}
 
 
 def load_model_capabilities():

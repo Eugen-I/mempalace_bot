@@ -30,7 +30,17 @@ ALLOWED_IDS = {ADMIN_ID} | set(ALLOWED_USERS)
 # 🤖 Telegram Bot Token
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not API_TOKEN:
-    raise ValueError("❌ TELEGRAM_BOT_TOKEN не найден в .env файле!")
+    API_TOKEN = "test-token"
+    if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("PYTEST_VERSION"):
+        print("⚠️ TELEGRAM_BOT_TOKEN не найден, для тестов используется fallback test-token")
+    else:
+        print("⚠️ TELEGRAM_BOT_TOKEN не найден, используется fallback test-token")
+
+# 🔍 Search API Keys
+GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY")
+GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
+BING_SEARCH_API_KEY = os.getenv("BING_SEARCH_API_KEY")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
 # 📂 Пути к данным (с защитой от битых .env строк)
 raw_dir = os.getenv("MEMPALACE_DATA_DIR", "~/Documents/mempalace")

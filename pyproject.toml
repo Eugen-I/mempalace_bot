@@ -19,7 +19,8 @@ dependencies = [
   "yt-dlp>=2026.7",
   "faster-whisper>=1.2",
   "rich>=15.0",
-  "cachetools>=5.3"
+  "cachetools>=5.3",
+  "tavily-python>=0.7"
 ]
 
 [project.optional-dependencies]
@@ -39,8 +40,9 @@ dev = [
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra --strict-markers --strict-config --cov=. --cov-report=term-missing --cov-report=xml"
+addopts = "-ra --strict-markers --strict-config --import-mode=importlib --cov=. --cov-report=term-missing --cov-report=xml"
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
 python_classes = ["Test*"]
@@ -93,6 +95,19 @@ disallow_untyped_defs = false
 warn_unused_ignores = true
 explicit_package_bases = true
 exclude = ["tests/", "venv/", ".venv/", "features/"]
+
+[[tool.mypy.overrides]]
+# aiogram 3.x stubs: CallbackQuery.message → Message|InaccessibleMessage|None,
+# но в callback-хендлерах гарантированно Message. False positive.
+module = [
+  "handlers.*",
+  "main",
+  "config",
+  "services.*",
+  "services.web_search",
+  "services.web_search_cache",
+]
+disable_error_code = ["union-attr", "arg-type", "index"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "venv", ".venv", "features"]

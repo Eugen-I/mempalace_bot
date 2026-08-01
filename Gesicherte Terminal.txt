@@ -1,0 +1,60 @@
+ СТАТУС: 🔴 ОСТАНОВЛЕН
+------------------------------------------
+ Бот:      /Users/evg.pit/Documents/mempalace_bot/main.py
+ Python:   /Users/evg.pit/Documents/mempalace/venv/bin/python3
+ Логи:     /Users/evg.pit/Documents/mempalace_bot/nohup.out
+ VoiceDir: /Users/evg.pit/Documents/mempalace/voice_replies
+------------------------------------------
+1. Запустить (ИНТЕРАКТИВНО)
+2. Запустить (ФОН + caffeinate)
+3. ОСТАНОВИТЬ (Мягко)
+4. ЛОГИ
+5. Очистить логи
+6. ПРИНУДИТЕЛЬНО УБИТЬ ПРОЦЕССЫ
+7. ВОССТАНОВИТЬ настройки системы (.zprofile/.zshrc)
+8. Очистить временные аудиофайлы
+0. ВЫХОД
+------------------------------------------
+Выбор: 2
+🛑 Проверка и остановка бота...
+ℹ️ Проверяю оставшиеся процессы...
+ℹ️ Активных процессов бота не найдено.
+✅ Бот запущен в фоне. Логи пишутся в /Users/evg.pit/Documents/mempalace_bot/nohup.out
+
+==========================================
+    MemPalace Bot Control Center
+==========================================
+ СТАТУС: 🟢 РАБОТАЕТ (PID: 27645)
+------------------------------------------
+ Бот:      /Users/evg.pit/Documents/mempalace_bot/main.py
+ Python:   /Users/evg.pit/Documents/mempalace/venv/bin/python3
+ Логи:     /Users/evg.pit/Documents/mempalace_bot/nohup.out
+ VoiceDir: /Users/evg.pit/Documents/mempalace/voice_replies
+------------------------------------------
+1. Запустить (ИНТЕРАКТИВНО)
+2. Запустить (ФОН + caffeinate)
+3. ОСТАНОВИТЬ (Мягко)
+4. ЛОГИ
+5. Очистить логи
+6. ПРИНУДИТЕЛЬНО УБИТЬ ПРОЦЕССЫ
+7. ВОССТАНОВИТЬ настройки системы (.zprofile/.zshrc)
+8. Очистить временные аудиофайлы
+0. ВЫХОД
+------------------------------------------
+Выбор: 4
+📜 Открываю логи... (для выхода нажмите q)
+
+
+:7b...
+2026-07-27 16:42:37,843 - httpx - INFO - HTTP Request: POST http://localhost:11434/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-27 16:42:38,316 - AI_Engine - INFO - Selected AI Engine: qwen, Model: qwen2.5:7b
+2026-07-27 16:42:38,317 - AI_Engine - INFO - [SYNC_CALL] Starting call. Engine: qwen, Model: qwen2.5:7b
+2026-07-27 16:42:38,317 - PromptsEngine - INFO - [PROMPT_ENGINE] Selected rule: General Expert
+2026-07-27 16:42:38,331 - AI_Engine - INFO - [OLLAMA] Sending request to qwen2.5:7b...
+2026-07-27 16:42:43,825 - httpx - INFO - HTTP Request: POST http://localhost:11434/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-27 16:42:43,929 - aiogram.event - INFO - Update id=788197410 is handled. Duration 23644 ms by bot id=8601519019
+2026-07-27 16:42:47,616 - aiogram.event - INFO - Update id=788197411 is handled. Duration 120 ms by bot id=8601519019
+2026-07-27 16:42:49,077 - aiogram.event - INFO - Update id=788197412 is handled. Duration 121 ms by bot id=8601519019
+2026-07-27 16:42:50,302 - aiogram.event - INFO - Update id=788197413 is handled. Duration 117 ms by bot id=8601519019
+2026-07-27 16:42:51,778 - aiogram.event - INFO - Update id=788197414 is handled. Duration 412 ms by bot id=8601519019
+/Users/evg.pit/Documents/mempalace_bot/nohup.out (END)

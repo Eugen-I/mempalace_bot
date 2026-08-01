@@ -88,7 +88,7 @@ def save_code_from_text(
     return saved_files
 
 
-def is_coding_context(text: str, history: list = None) -> bool:
+def is_coding_context(text: str, history: list | None = None) -> bool:
     """Определяет, относится ли запрос к программированию."""
     text_lower = text.lower()
     # 1. Проверка на синтаксис кода

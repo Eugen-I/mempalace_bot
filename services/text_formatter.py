@@ -11,6 +11,8 @@ def safe_html_format(text: str) -> str:
         return ""
     # Экранируем спецсимволы HTML
     text = html.escape(text)
+    # Заголовки: 1-6 # → <b>
+    text = re.sub(r"^#{1,6}\s+(.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
     # Жирный текст
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     # Курсив
@@ -19,8 +21,12 @@ def safe_html_format(text: str) -> str:
     text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
     # Блоки кода
     text = re.sub(r"```([\s\S]*?)```", r"<pre>\1</pre>", text)
-    # Заголовки
-    text = re.sub(r"^#{1,3}\s+(.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
+    # Маркированные списки: - текст → • текст
+    text = re.sub(r"^\s*[-*]\s+(.+)$", r"• \1", text, flags=re.MULTILINE)
+    # Нумерованные списки: 1. текст → 1. текст (оставляем как есть, но делаем жирным номер)
+    text = re.sub(r"^(\s*)(\d+)\.\s+(.+)$", r"\1<b>\2.</b> \3", text, flags=re.MULTILINE)
+    # Горизонтальные линии
+    text = re.sub(r"^---+$", r"<i>────</i>", text, flags=re.MULTILINE)
     return text.strip()
 
 
@@ -82,7 +88,7 @@ def split_message(text: str, limit: int = 4000) -> list:
         chunk = remaining[:split_idx].strip()
         remaining = remaining[split_idx:].strip()
 
-        open_tags = []
+        open_tags: list[str] = []
         for m in TAG_PATTERN.finditer(chunk):
             t = m.group(1)
             if t not in BALANCE_TAGS:

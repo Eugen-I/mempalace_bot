@@ -8,7 +8,7 @@ from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import allowed_callback
-from handlers.palace import TtlDict
+from services.ttl_dict import TtlDict
 from services.kv_store import get_kv_store
 from services.text_formatter import safe_html_format
 

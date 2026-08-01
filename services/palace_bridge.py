@@ -65,6 +65,29 @@ async def search_palace_context(
     return f"\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n{text}\n--- КОНЕЦ ЛИЧНЫХ ЗАПИСЕЙ ---\n"  # noqa: E501
 
 
+async def search_palace_with_sources(
+    query: str, limit: int = 5, wing: str = "", room: str = "",
+) -> tuple[str, list]:
+    """Поиск по базе MemPalace. Возвращает (text, sources) для пользовательского показа."""
+    cb = get_palace_circuit_breaker()
+    try:
+        result = await cb.call(_search_palace_context_impl, query, limit, wing, room)
+    except CircuitBreakerOpenError as e:
+        logger.warning(f"[PALACE] Circuit breaker OPEN: {e}")
+        return "", []
+    except Exception as e:
+        logger.error(f"Error searching MemPalace: {e}", exc_info=True)
+        return "", []
+
+    text = result.get("text", "")
+    sources = result.get("sources", [])
+
+    if not text:
+        return "", []
+
+    return text, sources
+
+
 async def _search_palace_context_impl(
     query: str, limit: int = 5, wing: str = "", room: str = "",
 ) -> dict:
@@ -76,13 +99,109 @@ async def _search_palace_context_impl(
     if not safe_query:
         return {"text": "", "sources": []}
 
+    # Try direct API first (structured results with scores)
+    result = await _search_via_api(safe_query, limit, wing, room)
+    if result["text"]:
+        return result
+
+    # Fallback: if wing-specific returned nothing, try global
+    if wing and not result["text"]:
+        logger.info(
+            f"[PALACE_SEARCH] ⚠️ В крыле {wing} ничего нет, повторяю глобальный поиск",
+        )
+        result = await _search_via_api(safe_query, limit, "", "")
+        if result["text"]:
+            return result
+
+    # Final fallback: CLI (legacy text output)
+    logger.info("[PALACE_SEARCH] Прямой API недоступен, пробую CLI...")
+    return await _search_via_cli(safe_query, limit, wing, room)
+
+
+async def _search_via_api(
+    query: str, limit: int = 5, wing: str = "", room: str = "",
+) -> dict:
+    """Search via mempalace.searcher (structured results with scores)."""
+    try:
+        from mempalace.searcher import search_memories
+        from mempalace.config import MempalaceConfig
+    except ImportError:
+        return {"text": "", "sources": []}
+
+    try:
+        config = MempalaceConfig()
+        palace_path = str(config.palace_path)
+        collection = config.collection_name
+
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            search_memories,
+            query,
+            palace_path,
+            wing or None,
+            room or None,
+            None,
+            limit * 3,
+            0.6,
+            False,
+            "union",
+            collection,
+        )
+
+        hits = result.get("results", [])
+        if not hits:
+            return {"text": "", "sources": []}
+
+        # Filter irrelevant results (BM25 score = 0.0 or distance too high)
+        filtered = []
+        for h in hits:
+            bm25 = h.get("bm25_score")
+            distance = h.get("distance")
+            if bm25 is not None and bm25 == 0.0:
+                continue
+            if distance is not None and distance > 0.7:
+                continue
+            filtered.append(h)
+
+        if not filtered:
+            return {"text": "", "sources": []}
+
+        filtered = filtered[:limit]
+
+        lines = []
+        sources = []
+        for i, h in enumerate(filtered, 1):
+            text = h.get("text", "")
+            wing_name = h.get("wing", "")
+            room_name = h.get("room", "")
+            score = h.get("distance") or h.get("bm25_score") or 0
+            lines.append(f"[{i}] {text[:500]}")
+            sources.append({
+                "id": i,
+                "wing": wing_name,
+                "room": room_name,
+                "file": h.get("source_file", ""),
+                "score": score,
+            })
+
+        return {"text": "\n\n".join(lines), "sources": sources}
+
+    except Exception as e:
+        logger.warning(f"[PALACE_SEARCH] API error: {e}", exc_info=True)
+        return {"text": "", "sources": []}
+
+
+async def _search_via_cli(
+    query: str, limit: int = 5, wing: str = "", room: str = "",
+) -> dict:
+    """Legacy fallback: search via CLI subprocess."""
     async def _run(use_wing: str) -> dict:
         cmd = [
             sys.executable,
             "-m",
             "mempalace",
             "search",
-            safe_query,
+            query,
             "--results",
             str(limit),
         ]
@@ -115,19 +234,15 @@ async def _search_palace_context_impl(
     try:
         result = await _run(wing)
 
-        # Fallback: если с крылом пусто — ищем глобально
         if not result["text"] and wing:
             logger.info(
                 f"[PALACE_SEARCH] ⚠️ В крыле {wing} ничего нет, повторяю глобальный поиск",
             )
             result = await _run("")
 
-        if not result["text"]:
-            return {"text": "", "sources": []}
-
         return result
     except Exception as e:
-        logger.error(f"Error searching MemPalace: {e}", exc_info=True)
+        logger.error(f"Error searching MemPalace via CLI: {e}", exc_info=True)
         return {"text": "", "sources": []}
 
 
@@ -335,7 +450,7 @@ async def palace_compact() -> str:
 
 
 async def palace_repair() -> str:
-    return await _run_mempalace(["repair"])
+    return await _run_mempalace(["repair", "--yes"])
 
 
 async def palace_instructions() -> str:
@@ -393,7 +508,7 @@ async def palace_instructions() -> str:
     )
 
 
-async def sync_to_palace(target_path: str = None) -> str:
+async def sync_to_palace(target_path: str | None = None) -> str:
     cb = get_palace_circuit_breaker()
     try:
         return await cb.call(_sync_to_palace_impl, target_path)
@@ -404,7 +519,7 @@ async def sync_to_palace(target_path: str = None) -> str:
         return f"❌ Ошибка синхронизации: {e}"
 
 
-async def _sync_to_palace_impl(target_path: str = None) -> str:
+async def _sync_to_palace_impl(target_path: str | None = None) -> str:
     mine_target = target_path or PALACE_SYNC_DIR
     if not os.path.exists(mine_target) or (
         os.path.isdir(mine_target) and not os.listdir(mine_target)

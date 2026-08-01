@@ -29,6 +29,7 @@ import asyncio
 from config import CHATS_DIR
 from cli import list_chats, save_chat, chat_loop, create_new_chat
 from cli.utils import C, format_for_terminal
+from services.ai_engine import get_current_ai
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -60,8 +61,10 @@ async def main():
     while True:
         chats = list_chats()
         
+        engine, model = get_current_ai()
         print(f"\n{C.CYAN}=========================================================={C.END}")
         print(f"{C.CYAN}    🦾 MemPalace CLI — Меню чатов{C.END}")
+        print(f"{C.GREEN}    🤖 Модель: {model} ({engine}){C.END}")
         print(f"{C.CYAN}=========================================================={C.END}")
         
         if not chats:

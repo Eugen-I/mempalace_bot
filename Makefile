@@ -26,7 +26,7 @@ deps-audit: # аудит зависимостей
 	python3 -m pip_audit
 
 mutate: # мутационное тестирование
-	python3 -m mutmut run --paths-to-mutate services/semantic_cache.py services/circuit_breaker.py services/event_bus.py services/kv_store.py services/graceful_degradation.py
+	python3 -m mutmut run
 
 qa: lint typecheck test security # полный цикл проверки
 

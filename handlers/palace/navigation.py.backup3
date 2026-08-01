@@ -1,0 +1,692 @@
+"""handlers/palace/navigation.py — Wings, rooms, drawers, taxonomy, graph, traverse"""
+import asyncio
+import json
+import os
+import time
+
+from aiogram import F, types
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+from config import DATA_DIR, allowed_callback
+from services.palace_mcp import get_mcp
+from services.text_formatter import safe_html_format
+from ._utils import (
+    safe_answer_returning_message,
+    safe_edit_text,
+)
+
+from .shared import (
+    router,
+    _pending_mcp_input, _drawer_state, _read_state,
+    _room_cache, _room_session, _wing_cache,
+)
+
+
+# ─── NAVIGATION ───
+
+
+@router.callback_query(F.data == "p_nav")
+@allowed_callback
+async def cb_nav_menu(cb: types.CallbackQuery):
+    await cb.answer()
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="🕸️ Крылья", callback_data="p_wing"))
+    kb.row(types.InlineKeyboardButton(text="🪪 Комнаты", callback_data="p_room"))
+    kb.row(types.InlineKeyboardButton(text="🏛️ Таксономия", callback_data="p_tax"))
+    kb.row(types.InlineKeyboardButton(text="📊 Граф связей", callback_data="p_grf"))
+    kb.row(types.InlineKeyboardButton(text="🔀 Траверс", callback_data="p_trv"))
+    kb.row(types.InlineKeyboardButton(text="🔄 Туннели", callback_data="p_tun"))
+    kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="palace_back"))
+    await safe_edit_text(
+        cb.message,
+        "🗺️ **Навигация**\nВыберите раздел:",
+        reply_markup=kb.as_markup(),
+        parse_mode="Markdown",
+    )
+
+
+@router.callback_query(F.data == "p_wing")
+@allowed_callback
+async def cb_list_wings(cb: types.CallbackQuery):
+    await cb.answer()
+    msg = await safe_answer_returning_message(cb.message, "🕸️ Загружаю крылья...")
+    if msg is None:
+        return
+    try:
+        mcp = get_mcp()
+        raw = await mcp.call_tool("mempalace_list_wings")
+        parsed = json.loads(raw)
+        wings = parsed.get("wings", parsed)
+        lines = ["<b>🕸️ Крылья MemPalace:</b>\n"]
+
+        def _sort_key(x):
+            return wings[x] if isinstance(wings, dict) else ""
+        for w in sorted(wings, key=_sort_key, reverse=True):
+            count = wings[w] if isinstance(wings, dict) else ""
+            lines.append(f"  • <b>{safe_html_format(w)}</b> {count}")
+
+        await safe_edit_text(msg, "\n".join(lines), parse_mode="HTML")
+    except Exception as e:
+        await safe_edit_text(msg, f"❌ Ошибка: {e}")
+
+
+@router.callback_query(F.data == "p_room")
+@allowed_callback
+async def cb_rooms_menu(cb: types.CallbackQuery):
+    await cb.answer()
+    _pending_mcp_input[cb.from_user.id] = "list_rooms"
+    await safe_edit_text(cb.message, "🪪 Введите название крыла (или '*' для всех крыльев):")
+
+
+@router.callback_query(F.data.startswith("p_rs_"))
+@allowed_callback
+async def cb_rooms_select(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    idx = int(cb.data[5:])
+    wings = _wing_cache.get(uid)
+    if not wings or idx >= len(wings):
+        await safe_edit_text(cb.message, "❌ Сессия истекла. Начните заново.")
+        return
+    wing = wings[idx]
+    mcp = get_mcp()
+    raw = await mcp.call_tool("mempalace_list_rooms", {"wing": wing})
+    parsed = json.loads(raw)
+    rooms = parsed.get("rooms", {})
+    if not rooms:
+        await safe_edit_text(cb.message, f"❌ В крыле «{wing}» нет комнат.")
+        return
+    _room_cache[uid] = list(rooms.items())
+    kb = InlineKeyboardBuilder()
+    for i, (room, count) in enumerate(rooms.items()):
+        kb.row(
+            types.InlineKeyboardButton(
+                text=f"{i + 1}. {room} ({count})", callback_data=f"p_rdr:{i}",
+            ),
+        )
+    kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_nav"))
+    await safe_edit_text(
+        cb.message,
+        f"🪪 **Комнаты крыла «{wing}»:**", parse_mode="Markdown",
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("p_rdr:"))
+@allowed_callback
+async def cb_room_drawers(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    idx = int(cb.data[6:])
+    rooms = _room_cache.get(uid)
+    if not rooms or idx >= len(rooms):
+        await safe_edit_text(cb.message, "❌ Сессия истекла. Начните заново.")
+        return
+    room_name, _ = rooms[idx]
+    mcp = get_mcp()
+    try:
+        parsed = json.loads(
+            await mcp.call_tool("mempalace_list_rooms"),
+        )
+        actual_rooms = parsed.get("rooms", {})
+        _room_cache[uid] = list(actual_rooms.items())
+    except Exception:
+        pass
+    await _show_drawers_page(cb.message, uid, "", room_name, 0)
+
+
+async def _show_drawers_page(message, uid: int, wing: str, room: str, offset: int):
+    mcp = get_mcp()
+    room_filter = room
+    wing_filter = wing or None
+    try:
+        raw = await mcp.call_tool(
+            "mempalace_list_drawers",
+            {"room": room_filter, "wing": wing_filter} if wing_filter else {"room": room_filter},
+        )
+        parsed = json.loads(raw)
+        drawers = parsed.get("drawers", parsed)
+    except Exception:
+        drawers = []
+    _drawer_state[uid] = {"drawers": drawers, "room": room, "wing": wing, "offset": offset}
+    PAGE = 10
+    page_items = drawers[offset:offset + PAGE]
+    if not page_items:
+        await safe_edit_text(message, f"📭 В комнате «{room}» нет записей.")
+        return
+    lines = [f"📄 <b>Записи комнаты «{room}»</b>  ({len(drawers)} всего)\n"]
+    for i, d in enumerate(page_items, offset + 1):
+        title = d.get("title", d.get("closet_name", d.get("name", "?")))
+        lines.append(f"  {i}. {safe_html_format(title)}")
+    kb = InlineKeyboardBuilder()
+    nav = []
+    if offset > 0:
+        nav.append(types.InlineKeyboardButton(
+            text="◀️ Назад", callback_data=f"p_rdp:{offset - PAGE}",
+        ))
+    if offset + PAGE < len(drawers):
+        nav.append(types.InlineKeyboardButton(
+            text="▶️ Вперёд", callback_data=f"p_rdp:{offset + PAGE}",
+        ))
+    if nav:
+        kb.row(*nav)
+    for i, d in enumerate(page_items, offset + 1):
+        drawer_name = d.get("closet_name", d.get("title", d.get("name", "")))
+        if drawer_name:
+            kb.row(types.InlineKeyboardButton(
+                text=f"📄 {i}", callback_data=f"p_gd:{drawer_name}",
+            ))
+    kb.row(types.InlineKeyboardButton(
+        text="🔗 Связано", callback_data=f"p_ct:{room}",
+    ))
+    kb.row(types.InlineKeyboardButton(
+        text="📡 Читать с туннелями", callback_data=f"p_crd:{room}",
+    ))
+    await safe_edit_text(
+        message,
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("p_rdp:"))
+@allowed_callback
+async def cb_drawers_page(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    offset = int(cb.data[6:])
+    state = _drawer_state.get(uid)
+    if not state:
+        await safe_edit_text(cb.message, "❌ Сессия истекла.")
+        return
+    await _show_drawers_page(
+        cb.message, uid, state["wing"], state["room"], offset,
+    )
+
+
+@router.callback_query(F.data.startswith("p_gd:"))
+@allowed_callback
+async def cb_get_drawer(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    drawer_name = cb.data[5:]
+    state = _drawer_state.get(uid)
+    if not state:
+        await safe_edit_text(cb.message, "❌ Сессия истекла. Начните заново.")
+        return
+    await safe_edit_text(cb.message, "📄 Загружаю запись...")
+    mcp = get_mcp()
+    room = state["room"]
+    wing = state.get("wing", "")
+    try:
+        raw = await mcp.call_tool(
+            "mempalace_get_drawer",
+            (
+                {"drawer": drawer_name, "room": room, "wing": wing}
+                if wing else {"drawer": drawer_name, "room": room}
+            ),
+        )
+        text = raw or "❌ Пустой ответ."
+        _read_state[uid] = {"room": room, "wing": wing, "drawer": drawer_name, "source": ""}
+        if len(text) > 3500:
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(
+                text="📄 Читать далее", callback_data=f"p_cr:{0}",
+            ))
+            await safe_edit_text(
+                cb.message,
+                safe_html_format(text[:3500]),
+                parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
+        else:
+            await safe_edit_text(cb.message, safe_html_format(text), parse_mode="HTML")
+    except Exception as e:
+        await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
+
+
+@router.callback_query(F.data.startswith("p_cr:"))
+@allowed_callback
+async def cb_read_more(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    start = int(cb.data[5:])
+    state = _read_state.get(uid)
+    if not state:
+        await safe_edit_text(cb.message, "❌ Нет данных для чтения.")
+        return
+    mcp = get_mcp()
+    try:
+        raw = await mcp.call_tool(
+            "mempalace_get_drawer",
+            (
+                {"drawer": state["drawer"], "room": state["room"], "wing": state["wing"]}
+                if state.get("wing")
+                else {"drawer": state["drawer"], "room": state["room"]}
+            ),
+        )
+        text = raw or ""
+        chunk = text[start:start + 3500]
+        if not chunk:
+            await safe_edit_text(cb.message, "📖 Конец записи.")
+            return
+        kb = InlineKeyboardBuilder()
+        kb.row(types.InlineKeyboardButton(
+            text="📄 Далее", callback_data=f"p_cr:{start + 3500}",
+        ))
+        kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_bd"))
+        await safe_edit_text(cb.message, safe_html_format(text[:3500]), parse_mode="HTML", reply_markup=kb.as_markup())
+    except Exception as e:
+        await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
+
+
+@router.callback_query(F.data == "p_bd")
+@allowed_callback
+async def cb_back_to_drawers(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    state = _drawer_state.get(uid)
+    if state:
+        await _show_drawers_page(
+            cb.message, uid, state["wing"], state["room"], state.get("offset", 0),
+        )
+    else:
+        await safe_edit_text(cb.message, "✅")
+
+
+@router.callback_query(F.data.startswith("p_crr:"))
+@allowed_callback
+async def cb_cross_room_read(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    room_name = cb.data[6:]
+    state = _drawer_state.get(uid)
+    _room_session[uid] = {"room": room_name, "wing": state.get("wing", "") if state else ""}
+    await safe_edit_text(cb.message, "🔍 Ищу записи в этой и связанных комнатах...")
+    mcp = get_mcp()
+    try:
+        connected = json.loads(
+            await mcp.call_tool("mempalace_traverse", {"start_room": room_name, "max_hops": 1}),
+        )
+    except Exception:
+        connected = []
+    if not isinstance(connected, list):
+        connected = [connected] if connected else []
+    rooms_to_read = []
+    for node in connected:
+        if isinstance(node, dict):
+            r = node.get("room", "")
+            w = node.get("wing", "")
+            if r:
+                rooms_to_read.append((w, r))
+    if not rooms_to_read:
+        default_wing = state.get("wing", "") if state else ""
+        rooms_to_read = [(default_wing, room_name)]
+    _room_session[uid]["rooms"] = rooms_to_read
+    _room_session[uid]["current_index"] = 0
+    await _send_cross_page(cb.message, uid)
+
+
+async def _send_cross_page(message, uid: int):
+    session = _room_session.get(uid)
+    if not session:
+        await safe_edit_text(message, "❌ Сессия чтения не найдена.")
+        return
+    rooms = session.get("rooms", [])
+    idx = session.get("current_index", 0)
+    if idx >= len(rooms):
+        await safe_edit_text(message, "✅ Все записи прочитаны.")
+        return
+    wing, room = rooms[idx]
+    mcp = get_mcp()
+    try:
+        raw = await mcp.call_tool(
+            "mempalace_list_drawers", {"room": room, "wing": wing} if wing else {"room": room},
+        )
+        parsed = json.loads(raw)
+        drawers = parsed.get("drawers", parsed)
+    except Exception:
+        drawers = []
+    _room_session[uid]["drawers"] = drawers
+    lines = [f"📡 <b>{wing}/{room}</b>  ({len(drawers)} записей)\n"]
+    for i, d in enumerate(drawers[:10], 1):
+        title = d.get("title", d.get("closet_name", d.get("name", "?")))
+        lines.append(f"  {i}. {safe_html_format(title)}")
+    kb = InlineKeyboardBuilder()
+    if drawers:
+        for i, d in enumerate(drawers[:10], 1):
+            drawer_name = d.get("closet_name", d.get("title", d.get("name", "")))
+            if drawer_name:
+                kb.row(types.InlineKeyboardButton(
+                    text=f"📄 {i}", callback_data=f"p_crg:{drawer_name}",
+                ))
+    if idx + 1 < len(rooms):
+        kb.row(types.InlineKeyboardButton(
+            text=f"▶️ Следующая комната ({idx + 2}/{len(rooms)})",
+            callback_data=f"p_crp:{idx + 1}",
+        ))
+    kb.row(types.InlineKeyboardButton(text="🤖 Статья", callback_data="p_crai"))
+    kb.row(types.InlineKeyboardButton(text="◀️ К записям", callback_data="p_bd"))
+    await safe_edit_text(
+        message,
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("p_crp:"))
+@allowed_callback
+async def cb_cross_room_page(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    idx = int(cb.data[6:])
+    session = _room_session.get(uid)
+    if session:
+        session["current_index"] = idx
+    await _send_cross_page(cb.message, uid)
+
+
+@router.callback_query(F.data.startswith("p_crg:"))
+@allowed_callback
+async def cb_cross_get_drawer(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    drawer_name = cb.data[6:]
+    session = _room_session.get(uid)
+    if not session:
+        await safe_edit_text(cb.message, "❌ Сессия чтения не найдена.")
+        return
+    rooms = session.get("rooms", [])
+    idx = session.get("current_index", 0)
+    wing, room = rooms[idx] if idx < len(rooms) else ("", "")
+    mcp = get_mcp()
+    try:
+        raw = await mcp.call_tool(
+            "mempalace_get_drawer",
+            (
+                {"drawer": drawer_name, "room": room, "wing": wing}
+            await safe_edit_text(
+                cb.message,
+                safe_html_format(text[:3500]),
+                parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
+            ),
+        )
+        text = raw or ""
+        _read_state[uid] = {"room": room, "wing": wing, "drawer": drawer_name, "source": ""}
+        if len(text) > 3500:
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(
+                text="📄 Далее", callback_data=f"p_cr:{0}",
+            ))
+            await safe_edit_text(cb.message, safe_html_format(text[:3500]), parse_mode="HTML", reply_markup=kb.as_markup())
+        else:
+            await safe_edit_text(cb.message, safe_html_format(text), parse_mode="HTML")
+    except Exception as e:
+        await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
+
+
+@router.callback_query(F.data == "p_crai")
+@allowed_callback
+async def cb_cross_ai_article(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    session = _room_session.get(uid)
+    if not session:
+        await safe_edit_text(cb.message, "❌ Нет данных для статьи.")
+        return
+    await safe_edit_text(cb.message, "🤖 Составляю статью из записей...")
+    rooms = session.get("rooms", [])
+    all_texts = []
+    sources = []
+    mcp = get_mcp()
+    for wing, room in rooms:
+        try:
+            raw = await mcp.call_tool(
+                "mempalace_list_drawers",
+                {"room": room, "wing": wing} if wing else {"room": room},
+            )
+            parsed = json.loads(raw)
+            drawers = parsed.get("drawers", parsed)
+        except Exception:
+            drawers = []
+        for d in drawers:
+            drawer_name = d.get("closet_name", d.get("title", d.get("name", "")))
+            if drawer_name:
+                try:
+                    text = await mcp.call_tool(
+                        "mempalace_get_drawer",
+                        {"drawer": drawer_name, "room": room, "wing": wing}
+                        if wing else {"drawer": drawer_name, "room": room},
+                    )
+                    if text:
+                        all_texts.append(f"[{wing}/{room}] {text[:2000]}")
+                        sources.append(f"{wing}/{room}")
+                except Exception:
+                    pass
+    combined = "\n\n".join(all_texts) if all_texts else "Нет записей для анализа."
+    from services.ai_engine import get_current_ai
+
+            await safe_edit_text(
+                cb.message,
+                safe_html_format(resp_text)[:4000],
+                parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
+    try:
+        resp = await asyncio.to_thread(
+            _sync_ai_call_wrapper, engine, model, combined,
+        )
+        resp_text = resp or "❌ Пустой ответ от ИИ."
+        _read_state[uid] = {"room": "", "wing": "", "drawer": "", "source": combined}
+        kb = InlineKeyboardBuilder()
+        kb.row(types.InlineKeyboardButton(
+            text="💾 Сохранить статью", callback_data="p_cras",
+        ))
+        if len(resp_text) > 3500:
+            kb.row(types.InlineKeyboardButton(
+                text="📄 Далее", callback_data=f"p_cr:{0}",
+            ))
+        await safe_edit_text(cb.message, safe_html_format(resp_text)[:4000], parse_mode="HTML", reply_markup=kb.as_markup())
+    except Exception as e:
+        await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
+
+
+def _sync_ai_call_wrapper(engine: str, model: str, text: str) -> str:
+    from services.ai_engine import _sync_ai_call
+
+    msgs = [
+        {"role": "system", "content": (
+            "
+".join(lines),
+            "Структурируй: введение, основные темы, выводы."
+        )},
+        {"role": "user", "content": text},
+    ]
+    return _sync_ai_call(engine, model, msgs)
+
+
+@router.callback_query(F.data == "p_cras")
+@allowed_callback
+async def cb_save_article(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    state = _read_state.get(uid)
+    if not state or not state.get("source"):
+        await safe_edit_text(cb.message, "❌ Нет статьи для сохранения.")
+        return
+    article_text = cb.message.text or cb.message.html_text or ""
+    notes_dir = os.path.join(DATA_DIR, "my_notes", "ai_articles")
+    os.makedirs(notes_dir, exist_ok=True)
+    fname = f"article_{int(time.time())}.md"
+    with open(os.path.join(notes_dir, fname), "w", encoding="utf-8") as f:
+        f.write(article_text)
+    await safe_edit_text(cb.message, f"✅ Статья сохранена в my_notes/ai_articles/{fname}")
+
+
+@router.callback_query(F.data.startswith("p_ct:"))
+@allowed_callback
+async def cb_record_connections(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    _ = uid
+    room = cb.data[5:]
+    await safe_edit_text(cb.message, f"🔍 Ищу связанные комнаты для «{room}»...")
+    mcp = get_mcp()
+    try:
+        connected = json.loads(
+            await mcp.call_tool("mempalace_traverse", {"start_room": room, "max_hops": 1}),
+        )
+    except Exception:
+            await safe_edit_text(
+                cb.message,
+                "
+".join(lines),
+                parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
+    if not connected:
+        await safe_edit_text(cb.message, f"🔗 Для «{room}» нет связанных комнат.")
+        return
+    lines = [f"<b>🔗 Связанные комнаты для «{room}»:</b>\n"]
+    for node in connected if isinstance(connected, list) else [connected]:
+        if isinstance(node, dict):
+            r = node.get("room", "?")
+            w = node.get("wing", "?")
+            lines.append(f"  • {safe_html_format(w)}/{safe_html_format(r)}")
+    kb = InlineKeyboardBuilder()
+    for node in connected if isinstance(connected, list) else [connected]:
+        if isinstance(node, dict):
+            r = node.get("room", "")
+            w = node.get("wing", "")
+            if r:
+                kb.row(types.InlineKeyboardButton(
+                    text=f"📄 {w}/{r}", callback_data=f"p_ctr:{r}",
+                ))
+    kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_bd"))
+    await safe_edit_text(cb.message, "\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("p_ctr:"))
+@allowed_callback
+async def cb_connection_room(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    room = cb.data[6:]
+    uid = cb.from_user.id
+    state = _drawer_state.get(uid)
+    wing = state.get("wing", "") if state else ""
+    await _show_drawers_page(cb.message, uid, wing, room, 0)
+
+
+# ─── TAXONOMY / GRAPH / TRAVERSE ───
+
+
+@router.callback_query(F.data == "p_tax")
+@allowed_callback
+async def cb_taxonomy(cb: types.CallbackQuery):
+    await cb.answer()
+    msg = await safe_answer_returning_message(cb.message, "🏛️ Загружаю таксономию...")
+    try:
+        mcp = get_mcp()
+        raw = await mcp.call_tool("mempalace_list_wings")
+        parsed = json.loads(raw)
+        wings = parsed.get("wings", parsed)
+        if isinstance(wings, dict):
+            lines = []
+            for wing, count in sorted(wings.items(), key=lambda x: -x[1]):
+                lines.append(f"<b>🪽 {safe_html_format(wing)}</b> ({count} записей)")
+                try:
+                    r_raw = await mcp.call_tool("mempalace_list_rooms", {"wing": wing})
+                    r_parsed = json.loads(r_raw)
+                    rooms = r_parsed.get("rooms", {})
+                    for room, rcount in sorted(rooms.items(), key=lambda x: -x[1]):
+                        lines.append(f"    📁 {safe_html_format(room)} — {rcount}")
+                except Exception:
+                    pass
+            await safe_edit_text(msg, "\n".join(lines), parse_mode="HTML")
+        else:
+            await safe_edit_text(msg, "\n".join(f"  • {w}" for w in wings))
+    except Exception as e:
+        await safe_edit_text(msg, f"❌ Ошибка: {e}")
+
+
+@router.callback_query(F.data == "p_grf")
+@allowed_callback
+async def cb_graph_stats(cb: types.CallbackQuery):
+    await cb.answer()
+    msg = await safe_answer_returning_message(cb.message, "📊 Строю граф связей...")
+    if msg is None:
+        return
+    try:
+        mcp = get_mcp()
+        raw = await mcp.call_tool("mempalace_graph_stats")
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            lines = ["<b>📊 Граф связей</b>\n"]
+            for k, v in parsed.items():
+                if isinstance(v, dict):
+                    lines.append(f"  <b>{k}:</b>")
+                    for sk, sv in v.items():
+                        lines.append(f"    • {sk}: {sv}")
+                elif isinstance(v, list):
+                    lines.append(f"  <b>{k}:</b> {', '.join(str(x) for x in v)}")
+                else:
+                    lines.append(f"  <b>{k}:</b> {v}")
+            await safe_edit_text(msg, "\n".join(lines), parse_mode="HTML")
+        else:
+            await safe_edit_text(msg, str(parsed))
+    except Exception as e:
+        await safe_edit_text(msg, f"❌ Ошибка: {e}")
+
+
+@router.callback_query(F.data == "p_trv")
+@allowed_callback
+async def cb_traverse_menu(cb: types.CallbackQuery):
+    await cb.answer()
+    _pending_mcp_input[cb.from_user.id] = "traverse"
+    await safe_edit_text(cb.message,
+                         "🔀 Введите комнату и (опционально) глубину обхода.\n"
+                         "Пример: <code>мои_сны 3</code> (глубина 3)\n"
+                         "Или просто: <code>архетипы</code> (глубина 2 по умолчанию)",
+                         parse_mode="HTML",
+                         )
+
+
+@router.callback_query(F.data.startswith("p_tr_"))
+@allowed_callback
+async def cb_traverse_select(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    room = cb.data[5:]
+    _pending_mcp_input[uid] = "traverse"
+    await safe_edit_text(
+        cb.message,
+        f"🔀 Комната выбрана: <code>{room}</code>. Теперь укажите глубину "
+        f"(целое число, или Enter для 2):",
+        parse_mode="HTML",
+    )

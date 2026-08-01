@@ -87,7 +87,7 @@ class PalaceMCPClient:
             self._pending.clear()
 
     async def _rpc(
-        self, method: str, params: dict = None, timeout: float = 30.0,
+        self, method: str, params: dict | None = None, timeout: float = 30.0,
     ) -> dict:
         async with self._lock:
             self._seq += 1
@@ -113,7 +113,7 @@ class PalaceMCPClient:
         if not self._ready.is_set():
             await self._ready.wait()
 
-    async def call_tool(self, name: str, arguments: dict = None) -> str:
+    async def call_tool(self, name: str, arguments: dict | None = None) -> str:
         await self._ensure_alive()
         resp = await self._rpc(
             "tools/call", {"name": name, "arguments": arguments or {}},
