@@ -174,6 +174,14 @@ Reaktion auf eine Bot-Nachricht:
 - `🏛️ Taxonomie` — Vollständiger Baum: Flügel → Raum → Einträge
 - `📊 Graph` — Kreuzungsstatistik, Tunnelanzahl zwischen Flügeln
 
+**Einträge in Räumen:**
+- Liste mit 5 Einträgen pro Seite, Blättern mit `◀️ Zurück` / `▶️ Weiter` (funktioniert auch bei tausenden Einträgen)
+- `📄 Volltext: <Name>` — Vorschau in der Liste, per Button vollständiger Text mit Paginierung (◀️/▶️, ab 1500 Zeichen)
+- `🗑️ Eintrag löschen` — Löschen mit Bestätigung (✅ Löschen / ❌ Abbrechen), danach zurück zur Eintragsliste
+- `🔗 Verbindungen` — per Tunnel verbundene Räume des Eintrags anzeigen
+- `📡 Mit Tunneln lesen` — Einträge aus aktuellem und allen verbundenen Räumen als ein Stream
+- `🤖 Artikel` — KI erstellt einen zusammenhängenden Artikel aus allen Einträgen, speicherbar in `my_notes/ai_articles`
+
 **Tunnel (Verbindungen zwischen Räumen verschiedener Flügel):**
 - `📋 Liste` — Alle erstellten Tunnel
 - `🔍 Zwischen Flügeln` — Gemeinsame Räume zweier Flügel finden

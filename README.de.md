@@ -143,7 +143,9 @@ Foto senden — der Bot analysiert es mit multimodaler KI.
 - `📊 Graph` — Verflechtungsstatistik, Tunnel-Anzahl
 
 **Einträge in Räumen:**
-- `📄 Eintrag öffnen` — Volltext mit Paginierung (>3500 Zeichen)
+- Liste mit 5 Einträgen pro Seite, Blättern mit `◀️ Zurück` / `▶️ Weiter` (auch bei tausenden Einträgen)
+- `📄 Volltext: <Name>` — Vorschau in der Liste, per Button Volltext mit Paginierung (◀️/▶️, ab 1500 Zeichen)
+- `🗑️ Eintrag löschen` — Löschen mit Bestätigung (✅ Löschen / ❌ Abbrechen), danach zurück zur Eintragsliste
 - `🔗 Verbindungen` — zeigt per Tunnel verbundene Räume
 - `📡 Mit Tunneln lesen` — Einträge aus aktuellem + allen verbundenen Räumen
 - `🤖 Artikel` — KI erstellt einen zusammenhängenden Artikel aus allen Einträgen
