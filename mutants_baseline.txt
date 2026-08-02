@@ -1,86 +1,0 @@
-python3 -m mutmut run
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/mutmut/configuration.py:107: UserWarning: The config tests_dir is deprecated. Please add the path to pytest_add_cli_args_test_selection instead
-  warnings.warn(
-⠋ Generating mutants⠙ Generating mutants⠹ Generating mutants⠸ Generating mutants⠼ Generating mutants⠴ Generating mutants⠦ Generating mutants⠧ Generating mutants⠇ Generating mutants⠏ Generating mutants⠋ Generating mutants⠙ Generating mutants⠹ Generating mutants⠸ Generating mutants⠼ Generating mutants⠴ Generating mutants⠦ Generating mutants⠧ Generating mutants⠧ Generating mutants⠧ Generating mutants⠇ Generating mutants⠧ Generating mutants⠇ Generating mutants⠧ Generating mutants⠇ Generating mutants⠇ Generating mutants⠇ Generating mutants
-    done in 188ms (1 files mutated, 0 ignored, 4 unmodified)
-⠧ Running stats     ⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats⠇ Running stats⠏ Running stats⠋ Running stats⠙ Running stats⠹ Running stats⠸ Running stats⠼ Running stats⠴ Running stats⠦ Running stats⠧ Running stats
-........................................................................ [ 77%]
-...................../Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/coverage/control.py:955: CoverageWarning: No data was collected. (no-data-collected); see https://coverage.readthedocs.io/en/7.15.2/messages.html#warning-no-data-collected
-  self._warn("No data was collected.", slug="no-data-collected")
-
-WARNING: Failed to generate report: No data to report.
-
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/pytest_cov/plugin.py:366: CovReportWarning: Failed to generate report: No data to report.
-
-  warnings.warn(CovReportWarning(message), stacklevel=1)
-                                                                         [100%]
-=============================== warnings summary ===============================
-<frozen importlib._bootstrap>:491
-<frozen importlib._bootstrap>:491
-  <frozen importlib._bootstrap>:491: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
-
-<frozen importlib._bootstrap>:491
-<frozen importlib._bootstrap>:491
-  <frozen importlib._bootstrap>:491: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
-
-<frozen importlib._bootstrap>:491
-  <frozen importlib._bootstrap>:491: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
-
-../../../../../Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/google/genai/types.py:42
-  /Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/google/genai/types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17
-    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-93 passed, 6 warnings in 2.42s
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114caa6b0>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114caaa70>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114caae30>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114cab1f0>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114cab5b0>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114cab970>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114cabd30>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114ccc130>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114ccc4f0>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114ccc8b0>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114ccce50>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114ccd120>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114ccd300>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114ccd7b0>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/_pytest/unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x114ccdb70>
-  gc.collect()
-ResourceWarning: Enable tracemalloc to get the object allocation traceback
-Stopping early, because we could not find any test case for any mutant. It seems that the selected tests do not cover any code that we mutated.
-You can set debug=true to see the executed test names in the output above.
-You can use mutmut browse to check which parts of the source code we mutated.
-If some of the mutated code should be covered by the executed tests, consider opening an issue (with a MRE if possible).
-
-<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
-make: *** [mutate] Error 1
