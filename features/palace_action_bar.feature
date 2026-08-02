@@ -9,7 +9,7 @@ Feature: Action Bar in the Palace
     And the record text is 3000 characters long
     When the record is rendered with the action bar
     Then I see one message with the action bar buttons [🤖 Анализ ИИ] [🌐 Поиск в интернете] [💾 Сохранить]
-    And I see pagination buttons [◀️ Назад] [📄 1/2] [▶️ Вперёд]
+    And I see pagination indicator [📄 1/2] with the next button [▶️ Вперёд]
     And I see the button [🔙 Вернуться к списку]
     When I press [▶️ Вперёд]
     Then the same message shows page 2 with indicator [📄 2/2]
@@ -53,5 +53,5 @@ Feature: Action Bar in the Palace
   Scenario: Text longer than 3000 characters
     Given the answer text is 4500 characters
     When the action bar is rendered
-    Then I see pagination buttons and indicator [📄 1/3]
+    Then I see pagination indicator [📄 1/3] with the next button [▶️ Вперёд]
     And pressing [▶️ Вперёд] twice shows [📄 3/3] without a next button
