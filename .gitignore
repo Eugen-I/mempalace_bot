@@ -49,3 +49,6 @@ _scripts/index_critic.py
 GitHub_update.command
 opencode.json
 mutants/
+
+# Локальное руководство для ИИ-разработки (не хранить в репозитории)
+telegram-bot-ai-guide-compressed.md
