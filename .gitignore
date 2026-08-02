@@ -27,6 +27,11 @@ nohup.out
 * Kopie*
 *~
 
+# Артефакты тестов и запуска
+.coverage
+coverage.xml
+bot.pid
+
 # Логи
 *.log
 
