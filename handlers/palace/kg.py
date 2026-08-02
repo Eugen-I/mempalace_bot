@@ -391,15 +391,17 @@ async def cb_kg_read_back(cb: types.CallbackQuery):
     if param == "f" and state:
         full = state.get("source", "")
         if full:
-            lines = [safe_html_format(full[:3500])]
-            kb = InlineKeyboardBuilder()
-            if len(full) > 3500:
-                kb.row(types.InlineKeyboardButton(
-                    text="📄 Далее", callback_data="p_cr:3500",
-                ))
-            await cb.message.edit_text(
-                "\n".join(lines), parse_mode="HTML",
-                reply_markup=kb.as_markup(),
+            from .action_bar import finalize_answer
+
+            async def _edit_result(text: str, **kwargs):
+                await cb.message.edit_text(text, **kwargs)
+                return cb.message
+
+            await finalize_answer(
+                uid, _edit_result, full,
+                ctx={"parent_cb": "p_kgsr"},
+                title="📄 <b>Полный текст источника</b>",
+                is_html=False,
             )
             return
     await cb.message.edit_text("📖 Конец записи.")

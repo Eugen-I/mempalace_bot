@@ -20,6 +20,9 @@ router = Router()
 # Cache search results for inline source buttons
 search_result_cache: dict[int, list] = {}
 
+# Cache drawer chunks opened from search sources (for p_srcdrpg: pagination)
+source_drawer_cache: dict[int, dict] = {}
+
 
 async def _open_room_view(edit_func, uid: int, wing: str, room: str):
     """Open a room's file listing."""
@@ -198,21 +201,63 @@ async def cb_search_source_drawer(callback: types.CallbackQuery):
         raw = await mcp.call_tool("mempalace_get_drawer", {"drawer_id": drawer_id})
         parsed = json.loads(raw) if raw else {}
         text = parsed.get("content", "") if isinstance(parsed, dict) else raw or ""
-        chunk = text[:3500]
-        kb = InlineKeyboardBuilder()
-        if len(text) > 3500:
-            kb.row(types.InlineKeyboardButton(
-                text="Далее", callback_data=f"p_cr:{0}",
-            ))
-        kb.row(types.InlineKeyboardButton(
-            text="◀️ Назад", callback_data=f"p_srcback:{wing}:{room}",
-        ))
-        await callback.message.edit_text(
-            chunk, parse_mode="HTML",
-            reply_markup=kb.as_markup() if kb else None,
-        )
+        chunks = [text[i:i + 3500] for i in range(0, len(text), 3500)]
+        if not chunks:
+            chunks = [""]
+        uid = callback.from_user.id
+        source_drawer_cache[uid] = {"chunks": chunks, "wing": wing, "room": room}
+        await _render_source_drawer_page(callback.message.edit_text, uid, 0)
     except Exception as e:
         await callback.message.edit_text(f"❌ Ошибка: {e}")
+
+
+async def _render_source_drawer_page(edit_func, uid: int, idx: int):
+    data = source_drawer_cache.get(uid)
+    if not data or idx < 0 or idx >= len(data["chunks"]):
+        await edit_func("❌ Данные устарели. Откройте запись заново.")
+        return
+    chunk = data["chunks"][idx]
+    kb = InlineKeyboardBuilder()
+    nav_row = []
+    if idx > 0:
+        nav_row.append(types.InlineKeyboardButton(
+            text="◀️ Назад", callback_data=f"p_srcdrpg:{idx - 1}",
+        ))
+    if idx < len(data["chunks"]) - 1:
+        nav_row.append(types.InlineKeyboardButton(
+            text="▶️ Далее", callback_data=f"p_srcdrpg:{idx + 1}",
+        ))
+    if nav_row:
+        kb.row(*nav_row)
+    kb.row(types.InlineKeyboardButton(
+        text=f"📄 {idx + 1}/{len(data['chunks'])}", callback_data="p_srcdrpg_noop",
+    ))
+    kb.row(types.InlineKeyboardButton(
+        text="◀️ Назад к списку",
+        callback_data=f"p_srcback:{data['wing']}:{data['room']}",
+    ))
+    await edit_func(
+        chunk, parse_mode="HTML",
+        reply_markup=kb.as_markup() if kb else None,
+    )
+
+
+@router.callback_query(F.data.startswith("p_srcdrpg:"))
+@allowed_callback
+async def cb_search_source_drawer_page(callback: types.CallbackQuery):
+    """Navigate between chunks of a drawer opened from search."""
+    await callback.answer()
+    if not callback.data:
+        return
+    idx = int(callback.data.split(":", 1)[1])
+    uid = callback.from_user.id
+    await _render_source_drawer_page(callback.message.edit_text, uid, idx)
+
+
+@router.callback_query(F.data == "p_srcdrpg_noop")
+@allowed_callback
+async def cb_search_source_drawer_page_noop(callback: types.CallbackQuery):
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("p_srcroom:"))
