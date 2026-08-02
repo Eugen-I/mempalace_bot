@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from handlers.palace.navigation import (
@@ -8,6 +10,14 @@ from handlers.palace.navigation import (
 )
 
 from tests.test_action_bar import FakeCallback, FakeMessage, _markup_data, TEST_UID
+
+
+@pytest.fixture(autouse=True)
+def _allow_test_user(monkeypatch):
+    import config
+
+    monkeypatch.setattr(config, "ALLOWED_IDS", {TEST_UID})
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -242,3 +252,79 @@ def test_show_drawers_page_preview_and_full_text_button(monkeypatch):
     assert "Полный текст" in "".join(
         b.text for row in msg.markups[-1].inline_keyboard for b in row
     )
+
+
+# ─── LIST PAGINATION (total from MCP) ───
+
+
+def test_drawers_list_shows_next_page_button(monkeypatch):
+    import asyncio
+
+    from handlers.palace import navigation
+
+    drawers = [
+        {"closet_name": None, "content_preview": f"превью {i}", "drawer_id": f"d{i}"}
+        for i in range(5)
+    ]
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return json.dumps({"drawers": drawers, "count": 5, "total": 20})
+
+    monkeypatch.setattr(navigation, "get_mcp", lambda: FakeMCP())
+    monkeypatch.setattr(navigation, "_drawer_list_state", {})
+    msg = FakeMessage()
+    cb = FakeCallback("p_rd_room:xyz", msg)
+    asyncio.run(navigation.cb_open_room_drawer(cb))
+    data = _markup_data(msg)
+    assert "p_rdp:5" in data
+    assert "(20 записей)" in msg.edited[-1]
+
+
+def test_drawers_list_last_page_shows_prev_and_no_next(monkeypatch):
+    import asyncio
+
+    from handlers.palace import navigation
+
+    drawers = [
+        {"closet_name": None, "content_preview": f"превью {i}", "drawer_id": f"d{i}"}
+        for i in range(5)
+    ]
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return json.dumps({"drawers": drawers, "count": 5, "total": 20})
+
+    monkeypatch.setattr(navigation, "get_mcp", lambda: FakeMCP())
+    monkeypatch.setattr(navigation, "_drawer_list_state", {})
+    monkeypatch.setattr(navigation, "_user_context", {TEST_UID: {"wing": "w1", "room": "r1"}})
+    msg = FakeMessage()
+    cb = FakeCallback("p_rdp:15", msg)
+    asyncio.run(navigation.cb_read_drawer_page(cb))
+    data = _markup_data(msg)
+    assert "p_rdp:10" in data
+    assert "p_rdp:20" not in data
+
+
+def test_drawers_list_total_falls_back_to_count(monkeypatch):
+    import asyncio
+
+    from handlers.palace import navigation
+
+    drawers = [
+        {"closet_name": None, "content_preview": "п", "drawer_id": f"d{i}"}
+        for i in range(2)
+    ]
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return json.dumps({"drawers": drawers, "count": 2})
+
+    monkeypatch.setattr(navigation, "get_mcp", lambda: FakeMCP())
+    monkeypatch.setattr(navigation, "_drawer_list_state", {})
+    msg = FakeMessage()
+    cb = FakeCallback("p_rd_room:xyz", msg)
+    asyncio.run(navigation.cb_open_room_drawer(cb))
+    assert "(2 записей)" in msg.edited[-1]
+    data = _markup_data(msg)
+    assert "p_rdp:" not in data

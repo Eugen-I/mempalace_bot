@@ -490,7 +490,7 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
         )
         parsed = json.loads(raw)
         drawers = parsed.get("drawers", [])
-        total = parsed.get("count", 0)
+        total = parsed.get("total") or parsed.get("count", 0)
 
         _drawer_list_state[uid] = {
             "wing": wing,
