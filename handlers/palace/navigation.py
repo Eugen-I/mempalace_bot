@@ -293,20 +293,9 @@ async def cb_get_drawer(cb: types.CallbackQuery):
         _read_state[uid] = {
             "room": room, "wing": wing, "drawer": drawer_name,
             "drawer_id": drawer_id, "source": "", "full_content": text,
+            "offset": 0, "idx": 0,
         }
-        from .action_bar import finalize_answer
-
-        async def _edit_or_answer(content: str, **kwargs):
-            ok = await safe_edit_text(cb.message, content, **kwargs)
-            if not ok:
-                await cb.message.answer(content, **kwargs)
-            return cb.message
-
-        await finalize_answer(
-            uid, _edit_or_answer, text or "📄 (пустая запись)",
-            ctx={"wing": wing, "room": room, "drawer": drawer_name, "parent_cb": "p_rdb"},
-            title=f"📄 {safe_html_format(drawer_name or 'Запись')}",
-        )
+        await _show_drawer_content(cb, uid, text, drawer_name, wing, room, 0)
     except Exception as e:
         await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
 
@@ -526,6 +515,8 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
             preview = d.get("content_preview", "") or d.get("content", "")[:80]
             safe_n = safe_html_format(name or preview[:60])
             lines.append(f"{offset + i + 1}. <b>{safe_n}</b>")
+            if preview:
+                lines.append(f"   {safe_html_format(preview[:120])}")
 
         extra_rows = []
         for i, d in enumerate(drawers):
@@ -533,7 +524,7 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
             name = closet or f"Запись {offset + i + 1}"
             extra_rows.append([
                 types.InlineKeyboardButton(
-                    text=f"📄 {name[:40]}", callback_data=f"p_rd:{i}",
+                    text=f"📄 Полный текст: {name[:30]}", callback_data=f"p_rd:{i}",
                 ),
             ])
         nav_row = []
@@ -620,28 +611,41 @@ async def cb_read_drawer(cb: types.CallbackQuery):
         _read_state[uid] = {
             "room": room, "wing": wing, "drawer": drawer_name,
             "drawer_id": drawer_id, "source": "", "full_content": text,
-            "offset": 0,
+            "offset": 0, "idx": idx,
         }
         _user_context[uid] = {"wing": wing, "room": room, "drawer": drawer_name}
 
-        from .action_bar import finalize_answer
-
-        async def _edit_or_answer(content: str, **kwargs):
-            ok = await safe_edit_text(cb.message, content, **kwargs)
-            if not ok:
-                await cb.message.answer(content, **kwargs)
-            return cb.message
-
-        await finalize_answer(
-            uid, _edit_or_answer, text or "📄 (пустая запись)",
-            ctx={"wing": wing, "room": room, "drawer": drawer_name, "parent_cb": "p_rdb"},
-            title=f"📄 {safe_html_format(drawer_name or 'Запись')}",
-        )
+        await _show_drawer_content(cb, uid, text, drawer_name, wing, room, idx)
     except Exception as e:
         err = f"❌ Ошибка: {e}"
 
         if not await safe_edit_text(cb.message, err):
             await cb.message.answer(err)
+
+
+async def _show_drawer_content(
+    cb, uid: int, text: str, drawer_name: str, wing: str, room: str, idx: int,
+):
+    """Показывает полный текст записи с панелью действий и кнопкой удаления."""
+    from .action_bar import finalize_answer
+
+    async def _edit_or_answer(content: str, **kwargs):
+        ok = await safe_edit_text(cb.message, content, **kwargs)
+        if not ok:
+            await cb.message.answer(content, **kwargs)
+        return cb.message
+
+    extra_rows = [[
+        types.InlineKeyboardButton(
+            text="🗑️ Удалить запись", callback_data=f"p_drdel:{idx}",
+        ),
+    ]]
+    await finalize_answer(
+        uid, _edit_or_answer, text or "📄 (пустая запись)",
+        ctx={"wing": wing, "room": room, "drawer": drawer_name, "parent_cb": "p_rdb"},
+        title=f"📄 {safe_html_format(drawer_name or 'Запись')}",
+        extra_rows=extra_rows,
+    )
 
 
 @router.callback_query(F.data == "p_rdb")
@@ -664,6 +668,101 @@ async def cb_read_drawer_back(cb: types.CallbackQuery):
     room = state.get("room", "")
     offset = state.get("offset", 0)
     await _show_drawers_page(cb.message.edit_text, uid, wing, room, offset)
+
+
+# ─── DELETE DRAWER ───
+
+
+@router.callback_query(F.data.startswith("p_drdel:"))
+@allowed_callback
+async def cb_drawer_delete(cb: types.CallbackQuery):
+    """Подтверждение удаления записи."""
+    await cb.answer()
+    if not cb.data:
+        return
+    idx = int(cb.data.split(":", 1)[1])
+    uid = cb.from_user.id
+    st = _read_state.get(uid)
+    if not st:
+        if not await safe_edit_text(cb.message, "❌ Сессия истекла. Откройте запись заново."):
+            await cb.message.answer("❌ Сессия истекла. Откройте запись заново.")
+        return
+    name = st.get("drawer") or "эту запись"
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text="✅ Удалить", callback_data=f"p_drdel_c:{idx}",
+        ),
+        types.InlineKeyboardButton(
+            text="❌ Отмена", callback_data=f"p_drdel_x:{idx}",
+        ),
+    )
+    if not await safe_edit_text(
+        cb.message,
+        f"🗑️ <b>Удалить запись</b> «{safe_html_format(name)}»?\n\n"
+        "Запись будет удалена из Дворца безвозвратно.",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    ):
+        await cb.message.answer("❌ Не удалось обновить сообщение.")
+
+
+@router.callback_query(F.data.startswith("p_drdel_c:"))
+@allowed_callback
+async def cb_drawer_delete_confirm(cb: types.CallbackQuery):
+    """Выполняет удаление записи через MCP."""
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    st = _read_state.get(uid)
+    if not st or not st.get("drawer_id"):
+        if not await safe_edit_text(cb.message, "❌ Сессия истекла. Откройте запись заново."):
+            await cb.message.answer("❌ Сессия истекла. Откройте запись заново.")
+        return
+    mcp = get_mcp()
+    try:
+        raw = await mcp.call_tool("mempalace_delete_drawer", {"drawer_id": st["drawer_id"]})
+        parsed = json.loads(raw) if raw else {}
+        if not parsed.get("success"):
+            err = parsed.get("error", "неизвестная ошибка")
+            if not await safe_edit_text(cb.message, f"❌ Не удалось удалить запись: {err}"):
+                await cb.message.answer(f"❌ Не удалось удалить запись: {err}")
+            return
+    except Exception as e:
+        if not await safe_edit_text(cb.message, f"❌ Не удалось удалить запись: {e}"):
+            await cb.message.answer(f"❌ Не удалось удалить запись: {e}")
+        return
+    _read_state.pop(uid, None)
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="◀️ К списку записей", callback_data="p_rdb"))
+    if not await safe_edit_text(
+        cb.message,
+        "🗑️ <b>Запись удалена.</b>",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    ):
+        await cb.message.answer("🗑️ Запись удалена.")
+
+
+@router.callback_query(F.data.startswith("p_drdel_x:"))
+@allowed_callback
+async def cb_drawer_delete_cancel(cb: types.CallbackQuery):
+    """Отмена удаления — возвращает просмотр записи."""
+    await cb.answer()
+    if not cb.data:
+        return
+    idx = int(cb.data.split(":", 1)[1])
+    uid = cb.from_user.id
+    st = _read_state.get(uid)
+    if not st:
+        if not await safe_edit_text(cb.message, "❌ Сессия истекла. Откройте запись заново."):
+            await cb.message.answer("❌ Сессия истекла. Откройте запись заново.")
+        return
+    await _show_drawer_content(
+        cb, uid, st.get("full_content") or "", st.get("drawer") or "",
+        st.get("wing", ""), st.get("room", ""), idx,
+    )
 
 
 @router.callback_query(F.data.startswith("p_rdp:"))
