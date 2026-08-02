@@ -1,4 +1,5 @@
 """handlers/palace/hints.py — Tunnel hints and utility functions"""
+import contextlib
 import json
 import os
 import sqlite3
@@ -125,42 +126,40 @@ def _get_full_text_from_chroma(source: str, wing: str = "", room: str = "") -> s
     if not os.path.exists(db_path):
         return ""
     try:
-        con = sqlite3.connect(db_path)
-        con.row_factory = sqlite3.Row
-        cur = con.cursor()
-        basename = os.path.basename(source.replace("\\", "/"))
-        filename_like = f"%{basename}" if basename else f"%{source}"
-        rows = cur.execute(
-            """
-            SELECT string_value FROM embedding_metadata
-            WHERE key = 'source_file' AND string_value LIKE ?
-            LIMIT 1
-        """,
-            (filename_like,),
-        ).fetchall()
-        if not rows:
-            con.close()
-            return ""
-        source_file = rows[0][0]
-        drawers = cur.execute(
-            """
-            SELECT e.id, emd.string_value as doc_text
-            FROM embeddings e
-            JOIN embedding_metadata emd ON emd.id = e.id AND emd.key = 'chroma:document'
-            JOIN embedding_metadata sf ON sf.id = e.id AND sf.key = 'source_file'
-            WHERE sf.string_value = ? AND e.embedding_id LIKE 'drawer_%'
-            ORDER BY e.id ASC
-        """,
-            (source_file,),
-        ).fetchall()
-        parts = []
-        seen = set()
-        for _, doc_text in drawers:
-            block = doc_text.strip()
-            if block and block not in seen:
-                seen.add(block)
-                parts.append(block)
-        con.close()
-        return "\n\n".join(parts)
+        with contextlib.closing(sqlite3.connect(db_path)) as con:
+            con.row_factory = sqlite3.Row
+            cur = con.cursor()
+            basename = os.path.basename(source.replace("\\", "/"))
+            filename_like = f"%{basename}" if basename else f"%{source}"
+            rows = cur.execute(
+                """
+                SELECT string_value FROM embedding_metadata
+                WHERE key = 'source_file' AND string_value LIKE ?
+                LIMIT 1
+            """,
+                (filename_like,),
+            ).fetchall()
+            if not rows:
+                return ""
+            source_file = rows[0][0]
+            drawers = cur.execute(
+                """
+                SELECT e.id, emd.string_value as doc_text
+                FROM embeddings e
+                JOIN embedding_metadata emd ON emd.id = e.id AND emd.key = 'chroma:document'
+                JOIN embedding_metadata sf ON sf.id = e.id AND sf.key = 'source_file'
+                WHERE sf.string_value = ? AND e.embedding_id LIKE 'drawer_%'
+                ORDER BY e.id ASC
+            """,
+                (source_file,),
+            ).fetchall()
+            parts = []
+            seen = set()
+            for _, doc_text in drawers:
+                block = doc_text.strip()
+                if block and block not in seen:
+                    seen.add(block)
+                    parts.append(block)
+            return "\n\n".join(parts)
     except Exception:
         return ""
