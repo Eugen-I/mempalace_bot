@@ -254,45 +254,6 @@ async def cb_open_room_drawer(cb: types.CallbackQuery):
     await _show_drawers_page(cb.message.edit_text, uid, wing, room, 0)
 
 
-@router.callback_query(F.data.startswith("p_rdr:"))
-@allowed_callback
-async def cb_read_room(cb: types.CallbackQuery):
-    await cb.answer()
-    if not cb.data:
-        return
-    parts = cb.data.split(":", 2)
-    if len(parts) < 3:
-        return
-    wing, room = parts[1], parts[2]
-    uid = cb.from_user.id
-    _pending_mcp_input[uid] = f"read_room:{wing}:{room}"
-    await safe_edit_text(
-        cb.message,
-        f"📖 Чтение комнаты <b>{wing}/{room}</b>.\nУкажите смещение (Enter=0):",
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(F.data.startswith("p_rdp:"))
-@allowed_callback
-async def cb_read_room_page(cb: types.CallbackQuery):
-    await cb.answer()
-    if not cb.data:
-        return
-    parts = cb.data.split(":", 3)
-    if len(parts) < 4:
-        return
-    _, wing, room, offset_str = parts
-    offset = int(offset_str) if offset_str else 0
-    uid = cb.from_user.id
-    _pending_mcp_input[uid] = f"read_room:{wing}:{room}:{offset}"
-    await safe_edit_text(
-        cb.message,
-        f"📖 Чтение <b>{wing}/{room}</b> (смещение {offset})...",
-        parse_mode="HTML",
-    )
-
-
 @router.callback_query(F.data.startswith("p_gd:"))
 @allowed_callback
 async def cb_get_drawer(cb: types.CallbackQuery):
@@ -333,19 +294,19 @@ async def cb_get_drawer(cb: types.CallbackQuery):
             "room": room, "wing": wing, "drawer": drawer_name,
             "drawer_id": drawer_id, "source": "", "full_content": text,
         }
-        if len(text) > 3500:
-            kb = InlineKeyboardBuilder()
-            kb.row(types.InlineKeyboardButton(
-                text="Далее", callback_data=f"p_cr:{0}",
-            ))
-            await safe_edit_text(
-                cb.message,
-                safe_html_format(text[:3500]),
-                parse_mode="HTML",
-                reply_markup=kb.as_markup()
-            )
-        else:
-            await safe_edit_text(cb.message, safe_html_format(text), parse_mode="HTML")
+        from .action_bar import finalize_answer
+
+        async def _edit_or_answer(content: str, **kwargs):
+            ok = await safe_edit_text(cb.message, content, **kwargs)
+            if not ok:
+                await cb.message.answer(content, **kwargs)
+            return cb.message
+
+        await finalize_answer(
+            uid, _edit_or_answer, text or "📄 (пустая запись)",
+            ctx={"wing": wing, "room": room, "drawer": drawer_name, "parent_cb": "p_rdb"},
+            title=f"📄 {safe_html_format(drawer_name or 'Запись')}",
+        )
     except Exception as e:
         await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
 
@@ -396,104 +357,9 @@ async def cb_cross_ai_article(cb: types.CallbackQuery):
 @router.callback_query(F.data.startswith("p_cr:"))
 @allowed_callback
 async def cb_continue_read(cb: types.CallbackQuery):
-    await cb.answer()
-    if not cb.data:
-        return
-    offset = int(cb.data.split(":", 1)[1])
-    uid = cb.from_user.id
-    session = _read_state.get(uid)
-    if not session:
-        ctx = _user_context.get(uid) or {}
-        if ctx.get("wing") and ctx.get("room") and ctx.get("drawer"):
-            mcp = get_mcp()
-            try:
-                list_raw = await mcp.call_tool("mempalace_list_drawers", {
-                    "wing": ctx["wing"], "room": ctx["room"], "limit": 100, "offset": 0,
-                })
-                list_parsed = json.loads(list_raw) if list_raw else {}
-                drawers = list_parsed.get("drawers", [])
-                drawer_id = ""
-                for d in drawers:
-                    dn = d.get("closet_name") or d.get("title") or d.get("name", "")
-                    if dn == ctx["drawer"]:
-                        drawer_id = d.get("drawer_id", "")
-                        break
-                if drawer_id:
-                    raw = await mcp.call_tool("mempalace_get_drawer", {"drawer_id": drawer_id})
-                    parsed = json.loads(raw) if raw else {}
-                    text = parsed.get("content", "") if isinstance(parsed, dict) else raw or ""
-                    _read_state[uid] = {
-                        "room": ctx["room"], "wing": ctx["wing"], "drawer": ctx["drawer"],
-                        "drawer_id": drawer_id, "source": "", "full_content": text,
-                        "offset": 0,
-                    }
-                    session = _read_state.get(uid)
-            except Exception:
-                pass
-    if not session:
-        await cb.answer("Сессия истекла", show_alert=True)
-        return
-    full_content = session.get("full_content", "")
-    if not full_content:
-        drawer_id = session.get("drawer_id", "")
-        if not drawer_id:
-            await cb.answer("Нет данных", show_alert=True)
-            return
-        try:
-            mcp = get_mcp()
-            raw = await mcp.call_tool("mempalace_get_drawer", {"drawer_id": drawer_id})
-            parsed = json.loads(raw) if raw else {}
-            full_content = parsed.get("content", "") if isinstance(parsed, dict) else raw or ""
-            session["full_content"] = full_content
-        except Exception as e:
-            await cb.answer(f"Ошибка: {e}", show_alert=True)
-            return
-    chunk = full_content[offset:offset + 3500]
-    if not chunk:
-        await cb.answer("Конец", show_alert=True)
-        return
-    _read_state[uid]["offset"] = offset
-    chunk_size = 3500
-    total_len = len(full_content)
-
-    kb = InlineKeyboardBuilder()
-    nav_row = []
-
-    # Previous chunk button
-    prev_offset = max(0, offset - chunk_size)
-    if offset > 0:
-        nav_row.append(types.InlineKeyboardButton(
-            text="◀️ Назад", callback_data=f"p_cr:{prev_offset}",
-        ))
-
-    # Next chunk button
-    if offset + chunk_size < total_len:
-        next_offset = offset + chunk_size
-        nav_row.append(types.InlineKeyboardButton(
-            text="▶️ Далее", callback_data=f"p_cr:{next_offset}",
-        ))
-
-    if nav_row:
-        kb.row(*nav_row)
-
-    # Progress indicator
-    page_num = offset // chunk_size + 1
-    total_pages = (total_len + chunk_size - 1) // chunk_size
-    progress = f"📄 {page_num}/{total_pages}"
-
-    kb.row(types.InlineKeyboardButton(
-        text=progress, callback_data="p_cr_noop",
-    ))
-    kb.row(
-        types.InlineKeyboardButton(text="🤖 Спросить ИИ", callback_data="p_room_ai"),
-        types.InlineKeyboardButton(text="◀️ Назад к списку", callback_data="p_rdb"),
-    )
-
-    await safe_edit_text(
-        cb.message,
-        safe_html_format(chunk),
-        parse_mode="HTML",
-        reply_markup=kb.as_markup() if kb else None,
+    await cb.answer(
+        "Пагинация обновлена: откройте запись заново (◀️/▶️ под ответом).",
+        show_alert=True,
     )
 
 
