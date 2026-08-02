@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import time
 
@@ -12,7 +13,11 @@ def kv():
     db = tempfile.mktemp(suffix=".sqlite")
     store = KVStore(db_path=db)
     yield store
-    os.unlink(db)
+    store.close()
+    for suffix in ("", "-wal", "-shm"):
+        path = db + suffix
+        if os.path.exists(path):
+            os.unlink(path)
 
 
 class TestKVStore:
@@ -52,6 +57,12 @@ class TestKVStore:
         time.sleep(0.01)
         assert kv.get("ephemeral") is None
 
+    def test_expired_value_is_deleted_and_default_returned(self, kv):
+        kv.set("expired", "data", ttl=0)
+        time.sleep(0.01)
+        assert kv.get("expired", default="fallback") == "fallback"
+        assert kv.keys() == []
+
     def test_ttl_not_expired(self, kv):
         kv.set("persistent", "data", ttl=60)
         assert kv.get("persistent") == "data"
@@ -62,6 +73,16 @@ class TestKVStore:
         kv.set("c", "3", namespace="ns2")
         keys = kv.keys("ns1")
         assert sorted(keys) == ["a", "b"]
+
+    def test_keys_default_namespace(self, kv):
+        kv.set("a", "1", namespace="ns1")
+        kv.set("plain", "2")
+        assert kv.keys() == ["plain"]
+
+    def test_evict_expired_removes_rows_on_keys(self, kv):
+        kv.set("ephemeral", "data", ttl=0)
+        time.sleep(0.01)
+        assert kv.keys() == []
 
     def test_clear_all(self, kv):
         kv.set("a", "1")
@@ -82,12 +103,42 @@ class TestKVStore:
         kv.set("complex", data)
         assert kv.get("complex") == data
 
+    def test_unicode_value_round_trip(self, kv):
+        data = {"text": "Привет 🌍", "emoji": "🙂"}
+        kv.set("unicode", data)
+        assert kv.get("unicode") == data
+
     def test_stats(self, kv):
         kv.set("a", "1")
         kv.set("b", "2")
         assert kv.stats["size"] == 2
 
+    def test_close_closes_sqlite_connection(self, kv):
+        conn = kv._get_conn()
+        kv.close()
+        with pytest.raises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")
+
     def test_cleanup(self, kv):
         kv.set("a", "1")
         kv.cleanup()
         assert kv.get("a") == "1"
+
+
+class TestKVStoreMutants:
+    def test_get_conn_reuses_connection(self, kv):
+        conn1 = kv._get_conn()
+        conn2 = kv._get_conn()
+        assert conn1 is conn2
+
+    def test_pop_with_namespace(self, kv):
+        kv.set("key1", "value1", namespace="ns1")
+        assert kv.pop("key1", namespace="ns2") is None
+        assert kv.get("key1", namespace="ns1") == "value1"
+
+    def test_expired_value_deleted_from_db(self, kv):
+        kv.set("k", "v", ttl=0)
+        time.sleep(0.01)
+        assert kv.get("k") is None
+        kv.set("k", "data2")
+        assert kv.get("k") == "data2"

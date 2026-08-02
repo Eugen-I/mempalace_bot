@@ -71,12 +71,14 @@ class TestDegradationManager:
 
     def test_get_status_text(self):
         mgr = DegradationManager()
-        assert "full" in mgr.get_status_text()
+        assert mgr.get_status_text() == "🟢 full"
         mgr.record_failure("memory")
-        assert "medium" in mgr.get_status_text()
+        assert mgr.get_status_text() == "🟡 medium"
         mgr.record_failure("palace_mcp")
         mgr.record_failure("palace_search")
-        assert "basic" in mgr.get_status_text()
+        assert mgr.get_status_text() == "🟠 basic"
+        mgr.level = DegradationLevel.EMERGENCY
+        assert mgr.get_status_text() == "🔴 emergency"
 
     def test_get_available_features_full(self):
         mgr = DegradationManager()
@@ -108,3 +110,58 @@ class TestDegradationManager:
         mgr.record_failure("unknown")
         assert mgr.level == DegradationLevel.FULL
         mgr.record_success("unknown")
+
+
+class TestDegradationManagerMutants:
+    def test_get_status_text_exact(self):
+        mgr = DegradationManager()
+        assert mgr.get_status_text() == "🟢 full"
+
+    def test_features_full_exact(self):
+        mgr = DegradationManager()
+        assert mgr.get_available_features() == [
+            "AI",
+            "Palace Search",
+            "Knowledge Graph",
+            "Memory",
+            "Code Mode",
+            "Voice",
+        ]
+
+    def test_features_medium_exact(self):
+        mgr = DegradationManager()
+        mgr.record_failure("palace_search")
+        assert mgr.get_available_features() == ["AI", "Memory", "Code Mode", "Voice"]
+
+    def test_features_basic_exact(self):
+        mgr = DegradationManager()
+        mgr.record_failure("memory")
+        mgr.record_failure("palace_mcp")
+        mgr.record_failure("palace_search")
+        assert mgr.get_available_features() == ["AI", "Voice (если доступен)"]
+
+    def test_features_emergency_exact(self):
+        mgr = DegradationManager()
+        mgr.level = DegradationLevel.EMERGENCY
+        assert mgr.get_available_features() == ["Emergency responses only"]
+
+    def test_record_success_whisper(self):
+        mgr = DegradationManager()
+        mgr.record_failure("whisper")
+        assert mgr.health.whisper is False
+        mgr.record_success("whisper")
+        assert mgr.health.whisper is True
+
+    def test_memory_and_palace_search_down_is_medium(self):
+        mgr = DegradationManager()
+        mgr.record_failure("memory")
+        mgr.record_failure("palace_search")
+        assert mgr.level == DegradationLevel.MEDIUM
+
+    def test_level_change_logs_exact_message(self, caplog):
+        mgr = DegradationManager()
+        with caplog.at_level("WARNING", logger="GracefulDegradation"):
+            mgr.record_failure("memory")
+        assert caplog.records[-1].getMessage() == (
+            "Degradation level changed: full → medium"
+        )

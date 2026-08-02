@@ -344,6 +344,72 @@ def test_finalize_answer_error_returns_none(monkeypatch):
     assert answer is None
 
 
+def test_finalize_answer_error_logs_exact_message(caplog):
+    import handlers.palace.action_bar as ab
+
+    async def bad_edit(text, **kwargs):
+        raise RuntimeError("boom")
+
+    with caplog.at_level("ERROR", logger="handlers.palace.action_bar"):
+        asyncio.run(ab.finalize_answer(1, bad_edit, "текст"))
+    record = caplog.records[-1]
+    assert record.getMessage() == "[ACTION_BAR] finalize_answer error: boom"
+    assert record.exc_info
+
+
+def test_finalize_answer_default_title_and_html():
+    import handlers.palace.action_bar as ab
+
+    msg = FakeMessage()
+
+    async def edit_func(text, **kwargs):
+        msg.edited.append(text)
+        return msg
+
+    answer = asyncio.run(ab.finalize_answer(1, edit_func, "текст"))
+    assert answer.title == ""
+    assert answer.is_html is False
+
+
+def test_finalize_answer_pages_by_page_limit():
+    import handlers.palace.action_bar as ab
+
+    msg = FakeMessage()
+
+    async def edit_func(text, **kwargs):
+        msg.edited.append(text)
+        return msg
+
+    answer = asyncio.run(ab.finalize_answer(1, edit_func, "т" * 1600, is_html=True))
+    assert len(answer.pages) == 2
+
+
+def test_finalize_answer_empty_text_renders_empty():
+    import handlers.palace.action_bar as ab
+
+    msg = FakeMessage()
+
+    async def edit_func(text, **kwargs):
+        msg.edited.append(text)
+        return msg
+
+    asyncio.run(ab.finalize_answer(1, edit_func, ""))
+    assert msg.edited[-1] == ""
+
+
+def test_finalize_answer_parse_mode_html_for_plain_text():
+    import handlers.palace.action_bar as ab
+
+    captured = {}
+
+    async def edit_func(text, **kwargs):
+        captured["parse_mode"] = kwargs.get("parse_mode")
+        return FakeMessage()
+
+    asyncio.run(ab.finalize_answer(1, edit_func, "текст"))
+    assert captured["parse_mode"] == "HTML"
+
+
 # ─── 🤖 Анализ ИИ ───
 
 
@@ -389,7 +455,7 @@ def test_cb_ab_ai_run_mode_context_with_summary(monkeypatch):
 
     from handlers.palace import shared
 
-    monkeypatch.setattr(shared, "_user_context", {1: {"_room_summary": "саммари"}})
+    monkeypatch.setattr(shared, "_user_context", {TEST_UID: {"_room_summary": "саммари"}})
 
     msg = FakeMessage()
     cb = FakeCallback(f"ab_ai_m:c:{SID}", msg)
@@ -515,6 +581,24 @@ def test_run_web_search_with_query_expired():
     msg = FakeMessage()
     asyncio.run(ab.run_web_search_with_query(1, msg, "unknown", "запрос"))
     assert "истекла" in msg.edited[-1]
+
+
+def test_run_web_search_title_truncated_to_80(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import web_search
+
+    async def fake_search(q):
+        return "web"
+
+    monkeypatch.setattr(web_search, "search_web", fake_search)
+    monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
+    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "Ответ")
+
+    answer = Answer(sid=SID, text="текст", pages=["текст"])
+    answer_store[SID] = answer
+    msg = FakeMessage()
+    asyncio.run(ab.run_web_search_with_query(1, msg, SID, "q" * 81))
+    assert msg.edited[-1].count("q") == 80
 
 
 # ─── 💾 Сохранить ───
@@ -821,10 +905,713 @@ def test_dispatch_parent_calls_real_handler(monkeypatch):
     called = []
 
     async def fake_menu(cb):
-        called.append(1)
+        called.append(cb)
 
     monkeypatch.setattr(navigation, "cb_tunnels_menu", fake_menu)
 
     cb = FakeCallback("ab_back:x")
     assert asyncio.run(ab._dispatch_parent(cb, "p_tun")) is True
-    assert called == [1]
+    assert called == [cb]
+
+
+# ─── Добивание выживших мутантов (мутационное тестирование) ───
+
+
+# _build_ai_context: MCP-ветка и границы
+
+
+def test_build_ai_context_missing_wing_or_room(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return '{"drawers": []}'
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1"})
+    assert asyncio.run(ab._build_ai_context(answer, 1)) == ""
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"room": "r1"})
+    assert asyncio.run(ab._build_ai_context(answer, 1)) == ""
+
+
+def test_build_ai_context_mcp_args_exact(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    captured = {}
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            captured["name"] = name
+            captured["args"] = args
+            return '{"drawers": []}'
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    asyncio.run(ab._build_ai_context(answer, 1))
+    assert captured["name"] == "mempalace_list_drawers"
+    assert captured["args"] == {"wing": "w1", "room": "r1", "limit": 15, "offset": 0}
+
+
+def test_build_ai_context_mcp_name_fallback_chain(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return '{"drawers": [{"title": "Только title", "content_preview": "пр"}]}'
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    result = asyncio.run(ab._build_ai_context(answer, 1))
+    assert "Только title" in result
+
+
+def test_build_ai_context_mcp_name_only_name_field(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return '{"drawers": [{"name": "Имя", "content_preview": "пр"}]}'
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    result = asyncio.run(ab._build_ai_context(answer, 1))
+    assert "Имя" in result
+
+
+def test_build_ai_context_mcp_content_fallback(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    long_content = "с" * 290 + "ХВОСТ-НЕ-ДОЛЖЕН-ПОПАСТЬ"
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return '{"drawers": [{"closet_name": "Зап", "content": "%s"}]}' % long_content
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    result = asyncio.run(ab._build_ai_context(answer, 1))
+    assert long_content[:300] in result
+    assert "ХВОСТ-НЕ-ДОЛЖЕН-ПОПАСТЬ" not in result
+
+
+def test_build_ai_context_mcp_join_separator(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return '{"drawers": [' \
+                   '{"closet_name": "A", "content_preview": "pa"},' \
+                   '{"closet_name": "B", "content_preview": "pb"}]}'
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    result = asyncio.run(ab._build_ai_context(answer, 1))
+    assert "pa\n\n--- B ---" in result
+
+
+def test_build_ai_context_mcp_truncation_12000(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    big = "з" * 12000 + "УНИКАЛЬНЫЙ-ХВОСТ"
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return '{"drawers": [{"closet_name": "Б", "content_preview": "%s"}]}' % big
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    result = asyncio.run(ab._build_ai_context(answer, 1))
+    assert "(сокращено)" in result
+    assert result.endswith("...(сокращено)")
+    assert "УНИКАЛЬНЫЙ-ХВОСТ" not in result
+
+
+def test_build_ai_context_summary_truncation_12000(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from handlers.palace import shared
+
+    summary = "м" * 12000 + "У"
+    monkeypatch.setattr(shared, "_user_context", {
+        TEST_UID: {"_room_summary": summary},
+    })
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    result = asyncio.run(ab._build_ai_context(answer, TEST_UID))
+    assert summary[:12000] in result
+    assert "У" not in result
+
+
+def test_build_ai_context_mcp_drawer_without_name(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return '{"drawers": [{"closet_name": "", "title": "", "content_preview": "p"}]}'
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    result = asyncio.run(ab._build_ai_context(answer, 1))
+    assert "None" not in result
+    assert "XXXX" not in result
+    assert "---  ---\np" in result
+
+
+def test_build_ai_context_mcp_error_logs(caplog):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    class BoomMCP:
+        async def call_tool(self, name, args=None):
+            raise RuntimeError("boom")
+
+    monkeypatch = __import__("pytest").MonkeyPatch()
+    try:
+        monkeypatch.setattr(palace_mcp, "get_mcp", lambda: BoomMCP())
+        answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+        with caplog.at_level("ERROR", logger="handlers.palace.action_bar"):
+            assert asyncio.run(ab._build_ai_context(answer, 1)) == ""
+        assert caplog.records[-1].getMessage() == "[ACTION_BAR] ai context error: boom"
+    finally:
+        monkeypatch.undo()
+
+
+def test_build_ai_context_room_missing_skips_mcp(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    called = []
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            called.append(name)
+            return '{"drawers": [{"closet_name": "A", "content_preview": "pa"}]}'
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1"})
+    assert asyncio.run(ab._build_ai_context(answer, 1)) == ""
+    assert called == []
+
+
+def test_build_ai_context_wing_missing_skips_mcp(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    called = []
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            called.append(name)
+            return '{"drawers": [{"closet_name": "A", "content_preview": "pa"}]}'
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"room": "r1"})
+    assert asyncio.run(ab._build_ai_context(answer, 1)) == ""
+    assert called == []
+
+
+def test_build_ai_context_exact_12000_not_truncated(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    exact = "з" * 11990
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return '{"drawers": [{"closet_name": "Б", "content_preview": "%s"}]}' % exact
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    result = asyncio.run(ab._build_ai_context(answer, 1))
+    assert "(сокращено)" not in result
+
+
+def test_build_ai_context_12001_truncated(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    big = "з" * 11990 + "М"
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return '{"drawers": [{"closet_name": "Б", "content_preview": "%s"}]}' % big
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    result = asyncio.run(ab._build_ai_context(answer, 1))
+    assert "(сокращено)" in result
+    assert "М" not in result
+
+
+def test_find_cut_rfind_last_separator():
+    import handlers.palace.action_bar as ab
+
+    assert ab._find_cut("a\n\nbb cc dd ee", 10) == 9
+
+
+def test_find_cut_separator_at_start_returns_limit():
+    import handlers.palace.action_bar as ab
+
+    assert ab._find_cut("\n\n" + "b" * 1400, 1500) == 1500
+
+
+def test_paginate_exact_limit_with_trailing_space():
+    import handlers.palace.action_bar as ab
+
+    text = "б" * 1499 + " "
+    assert ab.paginate(text, 1500) == [text]
+
+
+def test_paginate_remaining_exactly_limit():
+    import handlers.palace.action_bar as ab
+
+    text = "б" * 1499 + " " + "в" * 1499 + " "
+    assert ab.paginate(text, 1500) == ["б" * 1499, "в" * 1499 + " "]
+
+
+# _run_web_search_finalize
+
+
+def test_run_web_search_finalize_success(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import web_search
+
+    captured = {}
+
+    async def fake_search(q):
+        captured["query"] = q
+        return "web результаты"
+
+    def fake_sync(engine, model, messages):
+        captured["engine"] = engine
+        captured["model"] = model
+        captured["messages"] = messages
+        return "Ответ поиска"
+
+    monkeypatch.setattr(web_search, "search_web", fake_search)
+    monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
+    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+
+    answer = Answer(sid=SID, text="контекст ответа", pages=["к"], ctx={"k": "v"})
+    answer_store[SID] = answer
+
+    msg = FakeMessage()
+    asyncio.run(ab._run_web_search_finalize(TEST_UID, msg.edit_text, answer, "мой запрос"))
+
+    assert captured["query"] == "мой запрос"
+    assert captured["engine"] == "gemini"
+    assert captured["model"] == "m"
+    assert captured["messages"][0]["role"] == "system"
+    assert captured["messages"][0]["content"].startswith(
+        "Ты отвечаешь на запрос пользователя, используя результаты "
+    )
+    assert "результаты поиска" in captured["messages"][0]["content"]
+    assert "поиска в интернете" in captured["messages"][0]["content"]
+    assert "контекст ответа" in captured["messages"][0]["content"]
+    assert captured["messages"][1] == {"role": "user", "content": "мой запрос"}
+    assert "Ответ поиска" in msg.edited[-1]
+
+
+def test_run_web_search_finalize_context_truncated_6000(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import web_search
+
+    captured = {}
+
+    async def fake_search(q):
+        return "web"
+
+    def fake_sync(engine, model, messages):
+        captured["content"] = messages[0]["content"]
+        return "Ответ"
+
+    monkeypatch.setattr(web_search, "search_web", fake_search)
+    monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
+    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+
+    answer = Answer(
+        sid=SID, text="к" * 6000 + "УНИКАЛЬНЫЙ-ХВОСТ", pages=["к"],
+        ctx={},
+    )
+    answer_store[SID] = answer
+    msg = FakeMessage()
+    asyncio.run(ab._run_web_search_finalize(TEST_UID, msg.edit_text, answer, "q"))
+    assert "УНИКАЛЬНЫЙ-ХВОСТ" not in captured["content"]
+    ctx_part = captured["content"].split("Контекст ответа:\n")[1].split("\n\nРезультаты поиска:")[0]
+    assert ctx_part.count("к") == 6000
+
+
+def test_run_web_search_finalize_empty_result_fallback(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import web_search
+
+    async def fake_search(q):
+        return "web"
+
+    monkeypatch.setattr(web_search, "search_web", fake_search)
+    monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
+    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "")
+
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={})
+    answer_store[SID] = answer
+    msg = FakeMessage()
+    asyncio.run(ab._run_web_search_finalize(TEST_UID, msg.edit_text, answer, "q"))
+    assert msg.edited[-1].endswith("❌ Пустой ответ.")
+
+
+def test_run_web_search_finalize_sets_origin_sid(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import web_search
+
+    captured = {}
+
+    async def fake_search(q):
+        return "web"
+
+    def fake_sync(engine, model, messages):
+        return "Ок"
+
+    def fake_finalize(uid, edit_func, text, **kwargs):
+        captured["uid"] = uid
+        captured["kwargs"] = kwargs
+        captured["text"] = text
+
+    monkeypatch.setattr(web_search, "search_web", fake_search)
+    monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
+    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "finalize_answer", fake_finalize)
+
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"k": "v"})
+    asyncio.run(ab._run_web_search_finalize(TEST_UID, lambda *a, **k: None, answer, "q"))
+
+    assert captured["uid"] == TEST_UID
+    assert captured["kwargs"]["ctx"] == {"k": "v", "_origin_sid": SID}
+    assert captured["kwargs"]["title"] == "<b>🌐 Поиск: q</b>"
+    assert captured["kwargs"]["is_html"] is False
+
+
+def test_run_web_search_finalize_title_truncated_80(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import web_search
+
+    captured = {}
+
+    async def fake_search(q):
+        return "web"
+
+    def fake_sync(engine, model, messages):
+        return "Ок"
+
+    def fake_finalize(uid, edit_func, text, **kwargs):
+        captured["title"] = kwargs["title"]
+
+    monkeypatch.setattr(web_search, "search_web", fake_search)
+    monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
+    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "finalize_answer", fake_finalize)
+
+    query = "q" * 80 + "УНИКАЛЬНЫЙ-ХВОСТ"
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={})
+    asyncio.run(ab._run_web_search_finalize(TEST_UID, lambda *a, **k: None, answer, query))
+    assert "УНИКАЛЬНЫЙ-ХВОСТ" not in captured["title"]
+
+
+def test_run_web_search_finalize_search_error(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import web_search
+
+    async def boom(q):
+        raise RuntimeError("search fail")
+
+    monkeypatch.setattr(web_search, "search_web", boom)
+
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={})
+    msg = FakeMessage()
+    asyncio.run(ab._run_web_search_finalize(TEST_UID, msg.edit_text, answer, "q"))
+    assert "❌ Ошибка поиска: search fail" in msg.edited[-1]
+
+
+def test_run_web_search_finalize_double_error_logs(caplog):
+    import handlers.palace.action_bar as ab
+    from services import web_search
+
+    async def boom(q):
+        raise RuntimeError("search fail")
+
+    def bad_edit(text, **kwargs):
+        raise RuntimeError("edit fail")
+
+    monkeypatch = __import__("pytest").MonkeyPatch()
+    try:
+        monkeypatch.setattr(web_search, "search_web", boom)
+        answer = Answer(sid=SID, text="т", pages=["т"], ctx={})
+        asyncio.run(ab._run_web_search_finalize(TEST_UID, bad_edit, answer, "q"))
+        assert any(
+            r.name == "ActionBar"
+            and r.getMessage().startswith("[ACTION_BAR] web search error:")
+            for r in caplog.records
+        )
+        assert "search fail" in caplog.text
+        assert "edit fail" in caplog.text
+    finally:
+        monkeypatch.undo()
+
+
+# _finalize_answer
+
+
+def test_finalize_answer_sid_length_8():
+    import handlers.palace.action_bar as ab
+
+    msg = FakeMessage()
+
+    async def edit_func(text, **kwargs):
+        msg.edited.append(text)
+        return msg
+
+    answer = asyncio.run(ab.finalize_answer(1, edit_func, "текст"))
+    assert len(answer.sid) == 8
+
+
+def test_finalize_answer_preserves_ctx_and_extra_rows():
+    import handlers.palace.action_bar as ab
+    from aiogram import types
+
+    msg = FakeMessage()
+
+    async def edit_func(text, **kwargs):
+        msg.edited.append(text)
+        msg.markups.append(kwargs.get("reply_markup"))
+        return msg
+
+    extra = [[types.InlineKeyboardButton(text="x", callback_data="p_rd:0")]]
+    answer = asyncio.run(ab.finalize_answer(
+        1, edit_func, "текст", ctx={"a": 1}, is_html=True,
+        extra_rows=extra,
+    ))
+    assert answer.text == "текст"
+    assert answer.ctx == {"a": 1}
+    assert answer.is_html is True
+    assert answer.extra_rows == extra
+    assert [b.callback_data for b in msg.markups[-1].inline_keyboard[0]] == ["p_rd:0"]
+
+
+def test_finalize_answer_empty_html_text_has_empty_page():
+    import handlers.palace.action_bar as ab
+
+    msg = FakeMessage()
+
+    async def edit_func(text, **kwargs):
+        msg.edited.append(text)
+        msg.markups.append(kwargs.get("reply_markup"))
+        return msg
+
+    answer = asyncio.run(ab.finalize_answer(1, edit_func, "", is_html=True))
+    assert answer.pages == [""]
+
+
+# _get_parent_handler: все ключи карты
+
+
+def test_get_parent_handler_all_keys():
+    import handlers.palace.action_bar as ab
+
+    for key in [
+        "p_rdb", "p_nav", "p_wing", "p_tax", "p_tun",
+        "p_kg", "p_kgr", "p_kgsr", "palace_back",
+        "palace_status", "palace_admin", "palace_instructions",
+    ]:
+        assert ab._get_parent_handler(key) is not None, key
+
+
+# _dispatch_parent: ошибка обработчика
+
+
+def test_dispatch_parent_handler_error_returns_false(caplog):
+    import handlers.palace.action_bar as ab
+    from handlers.palace import navigation
+
+    async def broken(cb):
+        raise RuntimeError("dispatch fail")
+
+    monkeypatch = __import__("pytest").MonkeyPatch()
+    try:
+        monkeypatch.setattr(navigation, "cb_tunnels_menu", broken)
+        cb = FakeCallback("ab_back:x")
+        with caplog.at_level("ERROR", logger="handlers.palace.action_bar"):
+            assert asyncio.run(ab._dispatch_parent(cb, "p_tun")) is False
+        record = caplog.records[-1]
+        assert record.getMessage() == "[ACTION_BAR] parent dispatch error: dispatch fail"
+        assert record.exc_info
+    finally:
+        monkeypatch.undo()
+
+
+# _build_action_bar: точные тексты кнопок
+
+
+def test_action_bar_exact_button_texts():
+    answer = Answer(sid=SID, text="а" * 3000, pages=["а" * 1500, "а" * 1500])
+    labels0 = _button_labels(answer, 0)
+    assert "▶️ Вперёд" in labels0
+    assert "◀️ Назад" not in labels0
+    labels1 = _button_labels(answer, 1)
+    assert "◀️ Назад" in labels1
+
+
+def test_action_bar_back_button_text():
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"parent_cb": "p_rdb"})
+    labels = _button_labels(answer)
+    assert "🔙 Вернуться к списку" in labels
+
+
+# _run_web_search_with_query: точные строки
+
+
+def test_run_web_search_with_query_exact_expired_message():
+    import handlers.palace.action_bar as ab
+
+    msg = FakeMessage()
+    asyncio.run(ab.run_web_search_with_query(1, msg, "unknown", "запрос"))
+    assert msg.edited[-1] == "❌ Сессия поиска истекла. Начните заново."
+
+
+def test_run_web_search_with_query_status_message(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import web_search
+
+    captured = {}
+
+    async def fake_search(q):
+        return "web"
+
+    async def fake_finalize(uid, edit_func, answer, query):
+        captured["uid"] = uid
+        captured["answer"] = answer
+
+    monkeypatch.setattr(web_search, "search_web", fake_search)
+    monkeypatch.setattr(ab, "_run_web_search_finalize", fake_finalize)
+
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={})
+    answer_store[SID] = answer
+    msg = FakeMessage()
+    asyncio.run(ab.run_web_search_with_query(TEST_UID, msg, SID, "запрос"))
+    assert msg.edited[0] == "🌐 Ищу в интернете..."
+    assert captured["uid"] == TEST_UID
+    assert captured["answer"] is answer
+
+
+def test_run_web_search_with_query_no_session_answer(caplog):
+    import handlers.palace.action_bar as ab
+
+    msg = FakeMessage()
+    asyncio.run(ab.run_web_search_with_query(TEST_UID, msg, "unknown", "запрос"))
+    assert msg.edited[-1] == "❌ Сессия поиска истекла. Начните заново."
+
+
+# __render_page: точный формат заголовка
+
+
+def test_render_page_title_exact_format():
+    answer = Answer(
+        sid=SID, text="текст", pages=["текст"],
+        title="<b>Заголовок</b>",
+    )
+    assert _render_page(answer, 0) == "<b>Заголовок</b>\n\nтекст"
+
+
+# _find_cut: разделитель ровно на половине лимита (граница >= vs >)
+
+
+def test_find_cut_exact_half_limit_boundary():
+    import handlers.palace.action_bar as ab
+
+    assert ab._find_cut("a" * 5 + "\n" + "b" * 10, 10) == 6
+
+
+# _build_ai_context: drawer без content_preview и без content
+
+
+def test_build_ai_context_mcp_drawer_empty_entries(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return '{"drawers": [{"closet_name": "К", "title": "Т", "content_preview": ""}]}'
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    result = asyncio.run(ab._build_ai_context(answer, 1))
+    assert "--- К ---" in result
+    assert "None" not in result
+    assert "XXXX" not in result
+
+
+def test_build_ai_context_mcp_drawer_long_content_truncated(monkeypatch):
+    import handlers.palace.action_bar as ab
+    from services import palace_mcp
+
+    class FakeMCP:
+        async def call_tool(self, name, args=None):
+            return (
+                '{"drawers": [{"closet_name": "К", "title": "Т", '
+                '"content": "' + "с" * 300 + "М" + '"}]}'
+            )
+
+    monkeypatch.setattr(palace_mcp, "get_mcp", lambda: FakeMCP())
+    answer = Answer(sid=SID, text="т", pages=["т"], ctx={"wing": "w1", "room": "r1"})
+    result = asyncio.run(ab._build_ai_context(answer, 1))
+    assert "М" not in result
+    preview_part = result.split("--- К ---")[1]
+    assert preview_part.count("с") == 300
+
+
+# finalize_answer: одна страница — без навигации на первом сообщении
+
+
+def test_finalize_answer_single_page_first_markup_has_no_nav():
+    import handlers.palace.action_bar as ab
+
+    msg = FakeMessage()
+
+    async def edit_func(text, **kwargs):
+        msg.edited.append(text)
+        msg.markups.append(kwargs.get("reply_markup"))
+        return msg
+
+    asyncio.run(ab.finalize_answer(1, edit_func, "текст"))
+    kb = msg.markups[0].inline_keyboard
+    labels = [b.text for row in kb for b in row]
+
+
+def test_finalize_answer_first_markup_uses_page_zero():
+    import handlers.palace.action_bar as ab
+
+    msg = FakeMessage()
+
+    async def edit_func(text, **kwargs):
+        msg.edited.append(text)
+        msg.markups.append(kwargs.get("reply_markup"))
+        return msg
+
+    asyncio.run(ab.finalize_answer(1, edit_func, "а" * (ab.PAGE_LIMIT + 50)))
+    kb = msg.markups[0].inline_keyboard
+    labels = [b.text for row in kb for b in row]
+    assert "◀️ Назад" not in labels
+    assert "📄 1/2" in labels
+
+
+# _find_cut: \n\n во второй половине лимита
+
+
+def test_find_cut_double_newline_in_second_half():
+    import handlers.palace.action_bar as ab
+
+    assert ab._find_cut("aaaaa\n\nb\ncccc", 10) == 7

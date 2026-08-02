@@ -12,7 +12,11 @@ import sys
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 PARENT_DIR = os.path.abspath(os.path.join(REPO_ROOT, ".."))
 
-for path in (REPO_ROOT, PARENT_DIR):
+paths = [REPO_ROOT]
+if os.path.basename(REPO_ROOT) != "mutants":
+    paths.append(PARENT_DIR)
+
+for path in paths:
     if path not in sys.path:
         sys.path.insert(0, path)
 
