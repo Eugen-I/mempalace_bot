@@ -244,19 +244,19 @@ async def cb_pn_reclass(callback: types.CallbackQuery):
         return await callback.message.edit_text("❌ Сессия истекла.")
 
     taxonomy = data.get("taxonomy", {})
+    wings = ["личные_мысли"] + [
+        wing for wing in taxonomy.keys() if wing != "личные_мысли"
+    ]
+    _note_data[uid]["wings"] = wings
+
     kb = InlineKeyboardBuilder()
-    kb.row(
-        types.InlineKeyboardButton(
-            text="💭 личные_мысли", callback_data="pn_wing:личные_мысли",
-        ),
-    )
-    for wing, rooms in taxonomy.items():
-        if wing != "личные_мысли":
-            kb.row(
-                types.InlineKeyboardButton(
-                    text=f"🕸️ {wing}", callback_data=f"pn_wing:{wing}",
-                ),
-            )
+    for i, wing in enumerate(wings):
+        label = "💌 " if i == 0 else "🕸️ "
+        kb.row(
+            types.InlineKeyboardButton(
+                text=f"{label}{wing}", callback_data=f"pn_wing:{i}",
+            ),
+        )
     kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="pn_cancel"))
 
     await callback.message.edit_text(
@@ -271,10 +271,17 @@ async def cb_pn_wing(callback: types.CallbackQuery):
     if not callback.data:
         return
     uid = callback.from_user.id
-    wing = callback.data.split(":", 1)[1]
+    idx_raw = callback.data.split(":", 1)[1]
     data = _note_data.get(uid)
     if not data:
         return await callback.message.edit_text("❌ Сессия истекла.")
+
+    wings = data.get("wings", [])
+    try:
+        idx = int(idx_raw)
+        wing = wings[idx] if 0 <= idx < len(wings) else "личные_мысли"
+    except (ValueError, IndexError):
+        wing = "личные_мысли"
 
     taxonomy = data.get("taxonomy", {})
     rooms = taxonomy.get(wing, {})
