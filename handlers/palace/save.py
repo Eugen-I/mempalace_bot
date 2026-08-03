@@ -256,8 +256,28 @@ async def cb_save_confirm_execute(cb: types.CallbackQuery):
             "wing": wing, "room": room, "content": content,
         })
         await cb.message.edit_text(
-            f"✅ Сохранено в <b>{wing}/{room}</b>!\n\n{raw or ''}",
+            _format_save_result(raw, wing, room),
             parse_mode="HTML",
         )
     except Exception as e:
         await cb.message.edit_text(f"❌ Ошибка сохранения: {e}")
+
+
+def _format_save_result(raw: str, wing: str, room: str) -> str:
+    """Превращает сырой JSON-ответ mempalace_add_drawer в человекочитаемое сообщение."""
+    header = f"✅ Сохранено в <b>{safe_html_format(wing)}/{safe_html_format(room)}</b>!"
+    try:
+        data = json.loads(raw or "")
+    except (json.JSONDecodeError, ValueError):
+        return header
+    if isinstance(data, dict) and data.get("success") is False:
+        detail = data.get("error") or "не удалось сохранить"
+        failed = (
+            f"❌ Ошибка сохранения в "
+            f"<b>{safe_html_format(wing)}/{safe_html_format(room)}</b>: "
+            f"{safe_html_format(str(detail))}"
+        )
+        return failed
+    if isinstance(data, dict) and data.get("drawer_id"):
+        return f"{header}\n📎 <code>{safe_html_format(data['drawer_id'])}</code>"
+    return header
