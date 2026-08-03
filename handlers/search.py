@@ -8,7 +8,7 @@ from aiogram import F
 
 from config import allowed_only, allowed_callback
 from services.bot_setup import pending_wing_search as _pending_wing_search
-from services.palace_bridge import search_palace_context
+from services.palace_bridge import search_palace_with_sources
 from services.palace_mcp import get_mcp
 from services.sender import send_text_only
 from services.text_formatter import split_message
@@ -146,11 +146,37 @@ async def cmd_search(message: types.Message):
     wing_info = f" (крыло: {wing})" if wing else ""
     st = await message.answer(f"🔍 Ищу в MemPalace{wing_info}...")
     try:
-        res = await search_palace_context(search_text, limit=5, wing=wing)
+        result_text, sources = await search_palace_with_sources(
+            search_text, limit=5, wing=wing,
+        )
         await st.delete()
-        # Разбиваем длинный результат на части
-        parts = split_message(res or "Ничего не найдено.")
-        for p in parts:
+        if not result_text:
+            await send_text_only(message, "Ничего не найдено.")
+            return None
+
+        # Сохраняем источники для кнопок «📄 Читать [N]»
+        uid = message.from_user.id
+        search_result_cache[uid] = sources
+
+        kb = InlineKeyboardBuilder()
+        for s in sources:
+            loc = f"{s['wing']}/{s['room']}" if s["wing"] or s["room"] else s["file"]
+            kb.row(types.InlineKeyboardButton(
+                text=f"📄 Читать [{s['id']}] {loc}",
+                callback_data=f"p_src:{s['id']}",
+            ))
+        if sources:
+            kb.row(types.InlineKeyboardButton(
+                text="🔍 Новый поиск", callback_data="search:wing",
+            ))
+
+        # Разбиваем длинный результат на части, кнопки — в первую
+        parts = split_message(result_text)
+        await message.answer(
+            parts[0], parse_mode="HTML",
+            reply_markup=kb.as_markup() if kb else None,
+        )
+        for p in parts[1:]:
             await send_text_only(message, p)
     except Exception as e:
         await st.edit_text(f"❌ Ошибка поиска: {str(e)[:100]}")

@@ -118,6 +118,44 @@ async def _search_palace_context_impl(
     return await _search_via_cli(safe_query, limit, wing, room)
 
 
+def _rank_hits(hits: list[dict]) -> list[dict]:
+    """Rank hits by relevance.
+
+    Combines lexical (BM25) and semantic (vector distance) signals.
+    distance: lower is better (cosine distance in [0, 1]).
+    bm25_score: higher is better (log-scaled count, unbounded).
+
+    Ranking: score = 0.5 * (1 - distance) + 0.5 * bm25_norm, where bm25_norm
+    is BM25 normalised against the max value within this result set. Both
+    signals weigh equally, so an exact lexical hit beats a merely close
+    vector neighbour and vice versa.
+    """
+    if not hits:
+        return []
+
+    bm25_vals: list[float] = []
+    for h in hits:
+        v = h.get("bm25_score")
+        if v is not None:
+            bm25_vals.append(float(v))
+    bm25_max_f = max(bm25_vals) if bm25_vals else 0.0
+
+    def _score(h: dict) -> float:
+        dist = h.get("distance")
+        bm25 = h.get("bm25_score")
+        bm25_norm = 0.0
+        if bm25 is not None and bm25_max_f:
+            bm25_norm = bm25 / bm25_max_f
+        elif bm25 is not None:
+            bm25_norm = 1.0
+        return (
+            (0.5 * (1.0 - dist) if dist is not None else 0.0)
+            + 0.5 * bm25_norm
+        )
+
+    return sorted(hits, key=_score, reverse=True)
+
+
 async def _search_via_api(
     query: str, limit: int = 5, wing: str = "", room: str = "",
 ) -> dict:
@@ -166,7 +204,7 @@ async def _search_via_api(
         if not filtered:
             return {"text": "", "sources": []}
 
-        filtered = filtered[:limit]
+        filtered = _rank_hits(filtered)[:limit]
 
         lines = []
         sources = []
