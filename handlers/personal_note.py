@@ -7,6 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from faster_whisper import WhisperModel
 
 from config import allowed_callback, allowed_only
+from services.menu import go_main_menu
 from services.ttl_dict import TtlDict
 from services.ai_engine import get_ai_response_async, get_current_ai
 from services.palace_mcp import get_mcp
@@ -371,11 +372,7 @@ async def cmd_cancel_note(message: types.Message):
     uid = message.from_user.id
     _waiting_for_note.pop(uid, None)
     _note_data.pop(uid, None)
-    import sys
-
-    mod = sys.modules.get("__main__") or sys.modules.get("main")
-    if mod and hasattr(mod, "cmd_start"):
-        await mod.cmd_start(message)
+    await go_main_menu(message)
 
 
 # ─── LIST PERSONAL NOTES ───
@@ -483,11 +480,7 @@ async def cb_pn_list_back(callback: types.CallbackQuery):
     await callback.answer()
     _list_state.pop(callback.from_user.id, None)
     _active_drawer.pop(callback.from_user.id, None)
-    import sys
-
-    mod = sys.modules.get("__main__") or sys.modules.get("main")
-    if mod and hasattr(mod, "cmd_start"):
-        await mod.cmd_start(callback.message)
+    await go_main_menu(callback.message)
 
 
 @router.callback_query(F.data.startswith("pn_v:"))
