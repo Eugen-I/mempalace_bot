@@ -20,6 +20,7 @@ import json
 from handlers.personal_note import (
     _waiting_for_note, process_note_input, _quote_waiting, _save_quote_to_palace,
 )
+from handlers.transkript import _tr_ai_waiting, handle_tr_ai_question
 from handlers.reminder import handle_reminder_text
 from handlers.search import search_result_cache as _search_result_cache
 from services.ai_cache import cache_ai_response
@@ -184,6 +185,12 @@ async def process_user_message(message: types.Message):
     # 0b. Ожидание цитаты из личной заметки
     if uid in _quote_waiting:
         return await _save_quote_to_palace(uid, text, lambda t: message.answer(t))
+
+    # 0bb. Ожидание вопроса по транскрипту
+    if uid in _tr_ai_waiting:
+        state = _tr_ai_waiting.pop(uid)
+        await handle_tr_ai_question(uid, message, state["fname"], text)
+        return None
 
     # 0c. Ожидание личной заметки (текст)
     if uid in _waiting_for_note:
