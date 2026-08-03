@@ -340,7 +340,8 @@ async def cb_cross_ai_article(cb: types.CallbackQuery):
         )
         prompt = (
             f"Составь связную статью на основе следующих записей "
-            f"из комнаты {wing}/{room}:\n\n{content}"
+            f"из комнаты {wing}/{room}. "
+            f"Отвечай на русском языке.\n\n{content}"
         )
         result = _sync_ai_call_wrapper("gemini", "gemini-2.0-flash", prompt)
         from .action_bar import finalize_answer
@@ -852,7 +853,8 @@ async def _answer_room_ai(
             system = (
                 f"Ты отвечаешь на вопрос пользователя, используя:\n"
                 f"1) Структурированную саммари записей из комнаты {wing}/{room}\n"
-                f"2) Результаты поиска в интернете\n\n"
+                f"2) Результаты поиска в интернете\n"
+                f"Отвечай на русском языке.\n\n"
                 f"Структурированная саммари комнаты:\n{combined_summary}\n\n"
                 f"Результаты поиска:\n{web_results}"
             )
@@ -920,7 +922,13 @@ async def _answer_room_ai(
         f"Записи комнаты:\n{ctx_text}"
     )
     combined_summary = _sync_ai_call(engine, model, [
-        {"role": "system", "content": "Ты — аналитик. Составляешь саммари по заметкам."},
+        {
+            "role": "system",
+            "content": (
+                "Ты — аналитик. Составляешь саммари по заметкам. "
+                "Отвечай на русском языке."
+            ),
+        },
         {"role": "user", "content": step1_prompt},
     ])
     if not combined_summary:
@@ -934,7 +942,8 @@ async def _answer_room_ai(
     system = (
         f"Ты отвечаешь на вопрос пользователя ИСКЛЮЧИТЕЛЬНО на основе "
         f"структурированной саммари записей из комнаты {wing}/{room}. "
-        f"Если в саммари нет нужной информации — так и скажи."
+        f"Если в саммари нет нужной информации — так и скажи. "
+        f"Отвечай на русском языке."
         f"\n\nСтруктурированная саммари комнаты:\n{combined_summary}"
     )
 
@@ -1265,7 +1274,8 @@ async def cb_tunnels_ai(cb: types.CallbackQuery):
         prompt = (
             "Проанализируй эти туннели (связи между комнатами знаний). "
             "Выдели сильные связи, неожиданные пересечения, "
-            "и предложи новые темы для туннелей.\n\n"
+            "и предложи новые темы для туннелей. "
+            "Отвечай на русском языке.\n\n"
             + json.dumps(tunnels, ensure_ascii=False, indent=2)
         )
         engine, model = get_current_ai()
