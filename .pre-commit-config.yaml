@@ -24,3 +24,13 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-push]
+
+  - repo: local
+    hooks:
+      - id: no-secrets
+        name: no-secrets
+        entry: python3 .git-hooks/check_no_secrets.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        verbose: true
