@@ -27,6 +27,7 @@ PAGE_SIZE = 5
 _drawer_list_state: TtlDict = TtlDict()
 _active_drawer: TtlDict = TtlDict()
 _room_callback_map: TtlDict = TtlDict()
+_wing_callback_map: TtlDict = TtlDict()
 
 
 def _encode_callback_part(value: str) -> str:
@@ -56,6 +57,20 @@ def _build_room_callback_data(wing: str, room: str) -> str:
     key = secrets.token_hex(4)
     _room_callback_map[key] = (wing, room)
     return f"p_rd_room:{key}"
+
+
+def _build_wing_callback_data(wing: str) -> str:
+    key = secrets.token_hex(4)
+    _wing_callback_map[key] = wing
+    return f"p_rs_:{key}"
+
+
+def _decode_wing_callback_data(data: str) -> str:
+    key = data[len("p_rs_:"):]
+    wing = _wing_callback_map.get(key)
+    if wing:
+        return wing
+    return _decode_callback_part(key)
 
 
 def _decode_room_callback_data(data: str):
@@ -136,7 +151,7 @@ async def cb_list_wings(cb: types.CallbackQuery):
         kb = InlineKeyboardBuilder()
         for w in wing_names:
             kb.row(types.InlineKeyboardButton(
-                text=f"🪪 {w}", callback_data=f"p_rs_:{_encode_callback_part(w)}",
+                text=f"🪪 {w}", callback_data=_build_wing_callback_data(w),
             ))
         kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_nav"))
 
@@ -199,7 +214,7 @@ async def cb_rooms_select(cb: types.CallbackQuery):
     if not cb.data or len(cb.data) < 7:
         return
     uid = cb.from_user.id
-    wing = _decode_callback_part(cb.data[6:])
+    wing = _decode_wing_callback_data(cb.data)
     try:
         mcp = get_mcp()
         raw = await mcp.call_tool("mempalace_list_rooms", {"wing": wing})

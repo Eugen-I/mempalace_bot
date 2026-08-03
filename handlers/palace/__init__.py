@@ -148,7 +148,7 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                     extra_rows.append([
                         types.InlineKeyboardButton(
                             text=f"🪪 {w}",
-                            callback_data=f"p_rs_:{navigation._encode_callback_part(w)}",
+                            callback_data=navigation._build_wing_callback_data(w),
                         ),
                     ])
                 _wing_cache[uid] = wing_names
