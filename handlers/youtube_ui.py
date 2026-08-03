@@ -71,11 +71,38 @@ async def _handle_audio_file(message: types.Message, file_id: str, file_name: st
             os.remove(local)
             return await st.edit_text("❌ Аудио пустое.")
         if size > FILE_LIMIT:
-            os.remove(local)
-            return await st.edit_text(
-                f"❌ Аудио слишком большое ({size // 1024 // 1024} MB). "
-                f"Лимит Telegram — 50 MB."
+            from services.youtube import compress_audio, split_media
+
+            await st.edit_text(
+                f"📦 Аудио {size // 1024 // 1024} MB, сжимаю (моно 96k)..."
             )
+            local = await compress_audio(local)
+            size = os.path.getsize(local)
+            if size > FILE_LIMIT:
+                await st.edit_text(
+                    f"📦 После сжатия {size // 1024 // 1024} MB, режу на части..."
+                )
+                parts = await split_media(local)
+            else:
+                parts = [local]
+        else:
+            parts = [local]
+
+        if len(parts) > 1:
+            await st.delete()
+            base_title = os.path.splitext(file_name)[0]
+            for i, p in enumerate(parts, 1):
+                await message.answer_audio(
+                    types.FSInputFile(p),
+                    caption=f"🎵 {base_title} (часть {i}/{len(parts)})",
+                )
+            for p in parts:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            return
+
         await st.delete()
         await message.answer_audio(types.FSInputFile(local))
         sid = secrets.token_hex(4)
@@ -123,12 +150,24 @@ async def cb_yt_quality(callback: types.CallbackQuery):
             compressed = await _compress_video(path)
             size = os.path.getsize(compressed)
             if size > FILE_LIMIT:
-                os.remove(compressed)
-                return await st.edit_text(
-                    f"❌ Видео слишком большое даже после сжатия "
-                    f"({size // 1024 // 1024} MB). "
-                    f"Лимит Telegram — 50 MB."
+                from services.youtube import split_media
+
+                await st.edit_text(
+                    f"📦 После сжатия {size // 1024 // 1024} MB, режу на части..."
                 )
+                parts = await split_media(compressed)
+                await st.delete()
+                for i, p in enumerate(parts, 1):
+                    await callback.message.answer_video(
+                        types.FSInputFile(p),
+                        caption=f"🎬 Часть {i}/{len(parts)}",
+                    )
+                for p in parts:
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+                return
             path = compressed
             await st.delete()
         await callback.message.answer_video(types.FSInputFile(path))

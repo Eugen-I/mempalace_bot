@@ -147,11 +147,37 @@ async def process_user_message(message: types.Message):
                     "требуется обновление yt-dlp (pip install -U yt-dlp)."
                 )
             if size > FILE_LIMIT:
-                os.remove(path)
-                return await st.edit_text(
-                    f"❌ Аудио слишком большое ({size // 1024 // 1024} MB). "
-                    f"Лимит Telegram — 50 MB."
+                from services.youtube import compress_audio, split_media
+
+                await st.edit_text(
+                    f"📦 Аудио {size // 1024 // 1024} MB, сжимаю (моно 96k)..."
                 )
+                path = await compress_audio(path)
+                size = os.path.getsize(path)
+                if size > FILE_LIMIT:
+                    await st.edit_text(
+                        f"📦 После сжатия {size // 1024 // 1024} MB, режу на части..."
+                    )
+                    parts = await split_media(path)
+                else:
+                    parts = [path]
+            else:
+                parts = [path]
+
+            if len(parts) > 1:
+                await st.delete()
+                for i, p in enumerate(parts, 1):
+                    await message.answer_audio(
+                        types.FSInputFile(p),
+                        caption=f"🎵 {raw_title} (часть {i}/{len(parts)})",
+                    )
+                for p in parts:
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+                return None
+
             await st.edit_text("✅ Аудио готово. Отправляю...")
             await message.answer_audio(types.FSInputFile(path))
             sid = secrets.token_hex(4)

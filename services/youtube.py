@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import os
 import re
 import subprocess
@@ -10,6 +11,8 @@ import yt_dlp
 logger = logging.getLogger("YouTubeService")
 yt_logger = logging.getLogger("yt_dlp")
 yt_logger.setLevel(logging.ERROR)
+
+FILE_LIMIT = 50 * 1024 * 1024
 
 
 _YT_HEADERS = {
@@ -180,3 +183,81 @@ async def _compress_video(path: str) -> str:
         os.remove(path)
         return compressed
     return path
+
+
+async def compress_audio(path: str) -> str:
+    """Сжимает аудио: моно + 96 kbps MP3 (вариант A лимита 50 МБ)."""
+    base, _ext = os.path.splitext(path)
+    compressed = f"{base}_compressed.mp3"
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", "-i", path,
+        "-ac", "1", "-b:a", "96k",
+        "-c:a", "libmp3lame",
+        compressed,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    await proc.wait()
+    if os.path.exists(compressed):
+        os.remove(path)
+        return compressed
+    return path
+
+
+async def _media_duration(path: str) -> float:
+    """Длительность медиа в секундах через ffprobe (0 при ошибке)."""
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", path,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    stdout, _ = await proc.communicate()
+    try:
+        return float(stdout.decode("utf-8").strip())
+    except (ValueError, UnicodeDecodeError):
+        return 0.0
+
+
+async def split_media(path: str, limit: int = FILE_LIMIT) -> list[str]:
+    """Режет медиа на части до лимита (вариант B). Возвращает список путей.
+
+    Использует ffmpeg segment muxer: каждая часть не длиннее
+    duration / ceil(size / limit) секунд — гарантирует, что часть
+    уложится в limit байт при постоянном битрейте.
+    """
+    size = os.path.getsize(path)
+    if size <= limit:
+        return [path]
+
+    duration = await _media_duration(path)
+    if duration <= 0:
+        return [path]
+
+    n_parts = math.ceil(size / limit)
+    seg_time = max(1.0, duration / n_parts)
+
+    base, ext = os.path.splitext(path)
+    pattern = os.path.join(os.path.dirname(path), f"{os.path.basename(base)}_part_%03d{ext}")
+
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", "-i", path,
+        "-f", "segment", "-segment_time", f"{seg_time:.1f}",
+        "-c", "copy",
+        "-reset_timestamps", "1",
+        pattern,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    await proc.wait()
+
+    parts = sorted(
+        f for f in os.listdir(os.path.dirname(path))
+        if f.startswith(os.path.basename(base) + "_part_")
+    )
+    if not parts:
+        return [path]
+
+    result = [os.path.join(os.path.dirname(path), f) for f in parts]
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    return result
