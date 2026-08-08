@@ -190,6 +190,34 @@ def step_script_mp_search(context, query, text):
     ]
 
 
+@given('the Apple Notes index contains the note "{name}" with id "{note_id}"')
+def step_notes_index(context, name, note_id):
+    from services import agent_notes_tools as ant
+
+    context.notes_orig_search = ant.search_notes
+    context.notes_orig_read = ant.read_note
+    context.notes_read_calls = []
+
+    def fake_search(query, limit=10, force_refresh=False):
+        return [{"id": note_id, "name": name, "folder": "Философия", "updated": ""}]
+
+    def fake_read(nid):
+        context.notes_read_calls.append(nid)
+        return {"name": name, "body": f"Содержимое: {name}"}
+
+    ant.search_notes = fake_search
+    ant.read_note = fake_read
+
+
+@given('the model script calls "notes_search" and then "notes_read" and then returns "{text}"')
+def step_script_notes(context, text):
+    context.script = [
+        _tool_call("notes_search", json.dumps({"query": "воля"}, ensure_ascii=False)),
+        _tool_call("notes_read", json.dumps({"note_id": "note1"})),
+        _text_reply(text),
+    ]
+
+
 @given('a tool "mp_kg_stats" is registered that returns "{output}"')
 def step_register_stats_tool(context, output):
     from services import agent_tools as at
@@ -233,6 +261,12 @@ def step_run_agent(context, prompt):
 
         amt.get_mcp = context.agent_mcp_orig
         context.agent_mcp_orig = None
+    if getattr(context, "notes_orig_search", None):
+        from services import agent_notes_tools as ant
+
+        ant.search_notes = context.notes_orig_search
+        ant.read_note = context.notes_orig_read
+        context.notes_orig_search = None
 
 
 @when('I ask the routing gate about the message "{text}"')
@@ -314,6 +348,11 @@ def step_no_crash(context):
 @then("the MCP tool \"{name}\" was called with the query \"{query}\"")
 def step_mcp_called(context, name, query):
     assert context.mcp_client.calls == [(name, {"query": query})]
+
+
+@then('the tool "notes_read" was called with the id "{note_id}"')
+def step_notes_read_called(context, note_id):
+    assert context.notes_read_calls == [note_id]
 
 
 @then('the result error contains the word "лимит"')

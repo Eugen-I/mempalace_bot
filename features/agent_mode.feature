@@ -72,3 +72,13 @@ Feature: Agent Mode (qwen2.5 with tools)
     Then I see the step status "🔧 Шаг 1/5: mp_search…"
     And the MCP tool "mempalace_search" was called with the query "шопенгауэре"
     And the final answer contains the text "шопенгауэре"
+
+  @agent @smoke
+  Scenario: Happy path — agent searches and reads an Apple Note
+    Given the agent is enabled in my settings
+    And the Apple Notes index contains the note "Философия воли" with id "note1"
+    And the model script calls "notes_search" and then "notes_read" and then returns "идея из заметки: воля"
+    When I run the agent with the user prompt "что в заметке про волю"
+    Then I see the step status "🔧 Шаг 1/5: notes_search…"
+    And the tool "notes_read" was called with the id "note1"
+    And the final answer contains the text "воля"

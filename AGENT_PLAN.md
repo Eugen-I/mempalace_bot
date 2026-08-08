@@ -47,12 +47,16 @@
       покрытие agent_mcp_tools 100%)
 
 ## Фаза 2 — Apple Notes (чтение)
-- [ ] 2.1 `services/apple_notes.py`: JXA list_folders/list_notes/read_note/search + кэш-индекс
-      ~/Documents/mempalace/notes_index.json (валидность/инвалидация)
-- [ ] 2.2 Инструменты notes_search/notes_read/notes_list + схемы
-- [ ] 2.3 Живая проверка TCC (первый вызов через бота)
-- [ ] 2.4 Тесты (мок subprocess, кэш hit/miss/stale), Gherkin
-- [ ] 2.5 `make qa`
+- [x] 2.1 `services/apple_notes.py`: JXA list/read через osascript (bulk-свойства —
+      fast даже на папках с тяжёлыми заметками) + кэш-индекс DATA_DIR/notes_index.json
+      (TTL 1ч, атомарная запись, invalidate, пропуск «Recently Deleted»)
+- [x] 2.2 Инструменты notes_search/notes_read/notes_list + схемы (CAT_NOTES)
+- [x] 2.3 Живая проверка TCC: OK — 427 заметок, чтение тела, поиск (реальный вызов)
+- [x] 2.4 Тесты: test_apple_notes.py 30 (мок osascript, кэш hit/miss/stale/повреждённый,
+      TCC/таймаут, BVA search), test_agent_notes_tools.py 15; Gherkin: сценарий
+      notes_search→notes_read (9/9)
+- [x] 2.5 `make qa` (2787 passed, flake8/mypy 0, покрытие 100%/100%, bandit: +3 Low
+      B404/B603/B607 — та же конвенция, что у ollama_process.py, Medium/High нет)
 
 ## Фаза 3 — 🧠 Штурм
 - [ ] 3.1 `/штурм <тема>` + кнопка
@@ -75,10 +79,10 @@
 - [ ] Reflection-вопрос после штурма
 
 ## Точка возобновления (обновлять в конце КАЖДОГО шага)
-- Текущая фаза/шаг: Фаза 1 ЗАВЕРШЕНА. Следующая: Фаза 2, шаг 2.1 (apple_notes JXA)
-- Последний завершённый шаг: 1.4 — QA Фазы 1 (2742 passed, agent_mcp_tools 100%)
-- Следующий шаг: 2.1 services/apple_notes.py + notes_index.json
-- Статус QA: 2742 passed (было 2631), 8/8 BDD-сценариев
+- Текущая фаза/шаг: Фаза 2 ЗАВЕРШЕНА. Следующая: Фаза 3, шаг 3.1 (/штурм)
+- Последний завершённый шаг: 2.5 — QA Фазы 2 (2787 passed, живой TCC OK)
+- Следующий шаг: 3.1 handlers/brainstorm.py — /штурм <тема> + кнопка
+- Статус QA: 2787 passed (было 2631), 9/9 BDD-сценариев
 
 ## Чек-лист завершения
 - [ ] make lint / typecheck / test / security — зелёные

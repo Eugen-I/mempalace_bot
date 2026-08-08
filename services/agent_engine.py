@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable
 
 from services import agent_tools as atools
 from services import agent_mcp_tools  # noqa: F401 — регистрация инструментов дворца
+from services import agent_notes_tools  # noqa: F401 — регистрация инструментов заметок
 from services.ai_engine import (
     _OLLAMA_UNREACHABLE_MSG,
     _is_ollama_unavailable,
