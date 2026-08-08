@@ -38,11 +38,13 @@
       agent.py 100%)
 
 ## Фаза 1 — Инструменты mempalace (read-only, обёртки MCP)
-- [ ] 1.1 mp_search, mp_kg_query, mp_kg_timeline, mp_kg_stats, mp_drawer_read, mp_diary_read, mp_check_duplicate
-      (через services.palace_mcp / palace_bridge)
-- [ ] 1.2 Схемы + русские описания в agent_tools
-- [ ] 1.3 Тесты (мок mcp), Gherkin-дополнение
-- [ ] 1.4 `make qa`
+- [x] 1.1 mp_search, mp_kg_query, mp_kg_timeline, mp_kg_stats, mp_drawer_read,
+      mp_diary_read, mp_check_duplicate (services/agent_mcp_tools.py → get_mcp().call_tool)
+- [x] 1.2 Схемы + русские описания в agent_tools (категория palace, read-only)
+- [x] 1.3 Тесты: test_agent_mcp_tools.py (21: happy/негативы/BVA схем) + интеграция
+      с run_agent; Gherkin: сценарий mp_search в agent_mode.feature (8/8)
+- [x] 1.4 `make qa` (2742 passed, mypy 0, flake8 0, bandit 67 pre-existing,
+      покрытие agent_mcp_tools 100%)
 
 ## Фаза 2 — Apple Notes (чтение)
 - [ ] 2.1 `services/apple_notes.py`: JXA list_folders/list_notes/read_note/search + кэш-индекс
@@ -73,11 +75,10 @@
 - [ ] Reflection-вопрос после штурма
 
 ## Точка возобновления (обновлять в конце КАЖДОГО шага)
-- Текущая фаза/шаг: Фаза 0 ЗАВЕРШЕНА. Следующая: Фаза 1, шаг 1.1 (mp_search, mp_kg_query,
-  mp_kg_timeline, mp_kg_stats, mp_drawer_read, mp_diary_read, mp_check_duplicate)
-- Последний завершённый шаг: 0.8 — полный QA Фазы 0 (2721 passed, cov 99% total)
-- Следующий шаг: 1.1 инструменты mempalace через services.palace_mcp
-- Статус QA: 2721 passed (было 2631), 7/7 BDD-сценариев agent_mode
+- Текущая фаза/шаг: Фаза 1 ЗАВЕРШЕНА. Следующая: Фаза 2, шаг 2.1 (apple_notes JXA)
+- Последний завершённый шаг: 1.4 — QA Фазы 1 (2742 passed, agent_mcp_tools 100%)
+- Следующий шаг: 2.1 services/apple_notes.py + notes_index.json
+- Статус QA: 2742 passed (было 2631), 8/8 BDD-сценариев
 
 ## Чек-лист завершения
 - [ ] make lint / typecheck / test / security — зелёные

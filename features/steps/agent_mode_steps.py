@@ -5,6 +5,7 @@ services/agent_tools, handlers/agent) с фейковым OpenAI-клиенто�
 и временным каталогом настроек.
 """
 import asyncio
+import json
 
 from behave import given, then, when
 
@@ -50,6 +51,18 @@ def _tool_call(name, arguments="{}", call_id="call_1"):
 
 def _text_reply(text):
     return FakeResponse(FakeMessage(text))
+
+
+class FakeMCP:
+    """Фейковый MCP-клиент: отдаёт фиксированный ответ и записывает вызовы."""
+
+    def __init__(self, output):
+        self.output = output
+        self.calls = []
+
+    async def call_tool(self, name, arguments=None):
+        self.calls.append((name, arguments or {}))
+        return self.output
 
 
 def _register_fake_model(context):
@@ -133,6 +146,7 @@ def step_script_unknown_tool(context):
 @given('a tool "mp_boom" is registered that raises an exception')
 def step_register_raising_tool(context):
     from services import agent_tools as at
+    import services.agent_engine  # noqa: F401 — сначала регистрируются реальные mp-инструменты
 
     at.unregister_tool("mp_boom")
 
@@ -158,9 +172,28 @@ def step_script_loop(context):
     ]
 
 
+@given('the MCP server returns "{output}"')
+def step_mcp_returns(context, output):
+    from services import agent_mcp_tools as amt
+
+    client = FakeMCP(output)
+    context.agent_mcp_orig = amt.get_mcp
+    amt.get_mcp = lambda: client
+    context.mcp_client = client
+
+
+@given('the model script calls "mp_search" with the query "{query}" and then returns "{text}"')
+def step_script_mp_search(context, query, text):
+    context.script = [
+        _tool_call("mp_search", json.dumps({"query": query}, ensure_ascii=False)),
+        _text_reply(text),
+    ]
+
+
 @given('a tool "mp_kg_stats" is registered that returns "{output}"')
 def step_register_stats_tool(context, output):
     from services import agent_tools as at
+    import services.agent_engine  # noqa: F401 — сначала регистрируются реальные mp-инструменты
 
     at.unregister_tool("mp_kg_stats")
 
@@ -195,6 +228,11 @@ def step_run_agent(context, prompt):
         status_cb=status_cb,
     ))
     _restore_fake_model(context)
+    if getattr(context, "agent_mcp_orig", None):
+        from services import agent_mcp_tools as amt
+
+        amt.get_mcp = context.agent_mcp_orig
+        context.agent_mcp_orig = None
 
 
 @when('I ask the routing gate about the message "{text}"')
@@ -256,9 +294,9 @@ def step_finished_answer(context):
     assert context.result.error is None
 
 
-@then('the final answer contains the text "не существует"')
-def step_answer_unknown_tool(context):
-    assert "не существует" in context.result.final_answer
+@then('the final answer contains the text "{text}"')
+def step_answer_contains_text(context, text):
+    assert text in context.result.final_answer
 
 
 @then("the agent finished in 2 iterations without crash")
@@ -273,9 +311,9 @@ def step_no_crash(context):
     assert context.result.error is None
 
 
-@then('the final answer contains the text "Ошибка"')
-def step_answer_error(context):
-    assert "Ошибка" in context.result.final_answer
+@then("the MCP tool \"{name}\" was called with the query \"{query}\"")
+def step_mcp_called(context, name, query):
+    assert context.mcp_client.calls == [(name, {"query": query})]
 
 
 @then('the result error contains the word "лимит"')

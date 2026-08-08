@@ -62,3 +62,13 @@ Feature: Agent Mode (qwen2.5 with tools)
     When I run the agent with the user prompt "продолжай работать"
     Then I see the step status "🔧 Шаг 5/5: mp_kg_stats…"
     And the result error contains the word "лимит"
+
+  @agent @smoke @regression
+  Scenario: Happy path — agent answers from the palace via mp_search
+    Given the agent is enabled in my settings
+    And the MCP server returns "Ящик 1: размышления о шопенгауэре"
+    And the model script calls "mp_search" with the query "шопенгауэре" and then returns "найдено: шопенгауэре"
+    When I run the agent with the user prompt "что я думал о шопенгауэре"
+    Then I see the step status "🔧 Шаг 1/5: mp_search…"
+    And the MCP tool "mempalace_search" was called with the query "шопенгауэре"
+    And the final answer contains the text "шопенгауэре"
