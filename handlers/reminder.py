@@ -147,6 +147,40 @@ async def detect_reminder(msg: types.Message):
 async def cb_remind_confirm(cb: types.CallbackQuery):
     await cb.answer()
     uid = cb.from_user.id
+    data = _remind_pending.get(uid)
+    if not data:
+        return await cb.message.edit_text("❌ Сессия истекла.")
+    text = data.get("text", "")
+    ts = data.get("ts", 0)
+    if not text or not ts:
+        return await cb.message.edit_text("❌ Ошибка: не хватает данных.")
+
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(text="⏰ В бот", callback_data="rem_tgt:bot"),
+        types.InlineKeyboardButton(text="📅 Apple Calendar", callback_data="rem_tgt:cal"),
+    )
+    kb.row(types.InlineKeyboardButton(text="⚡ В оба", callback_data="rem_tgt:both"))
+    kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="rem_no"))
+    dt = datetime.fromtimestamp(ts)
+    await cb.message.edit_text(
+        f"📅 <b>Напомнить:</b>\n🕐 {dt.strftime('%d.%m.%Y %H:%M')}\n"
+        f"{safe_html_format(text)}\n\n"
+        "Где сохранить напоминание?",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("rem_tgt:"))
+@allowed_callback
+async def cb_remind_target(cb: types.CallbackQuery):
+    """Сохраняет напоминание: в бот, в Apple Calendar или в оба."""
+    await cb.answer()
+    if not cb.data:
+        return
+    target = cb.data.split(":", 1)[1]
+    uid = cb.from_user.id
     data = _remind_pending.pop(uid, None)
     if not data:
         return await cb.message.edit_text("❌ Сессия истекла.")
@@ -154,27 +188,54 @@ async def cb_remind_confirm(cb: types.CallbackQuery):
     ts = data.get("ts", 0)
     if not text or not ts:
         return await cb.message.edit_text("❌ Ошибка: не хватает данных.")
-    kv = get_kv_store()
-    key = f"rem{int(ts)}_{uid}_{int(time.time())}"
-    kv.set(
-        key,
-        {
-            "user_id": uid,
-            "chat_id": cb.message.chat.id,
-            "text": text,
-            "remind_at": ts,
-            "created_at": time.time(),
-        },
-        namespace=REMINDER_NS,
-        ttl=None,
-    )
+
+    await cb.message.edit_text("⏳ Сохраняю…")
+    parts: list[str] = []
+
+    if target in ("bot", "both"):
+        try:
+            kv = get_kv_store()
+            key = f"rem{int(ts)}_{uid}_{int(time.time())}"
+            kv.set(
+                key,
+                {
+                    "user_id": uid,
+                    "chat_id": cb.message.chat.id,
+                    "text": text,
+                    "remind_at": ts,
+                    "created_at": time.time(),
+                },
+                namespace=REMINDER_NS,
+                ttl=None,
+            )
+            parts.append("⏰ <b>Бот:</b> ✅")
+        except Exception as e:  # noqa: BLE001
+            logger.error("[REM] kv save failed: %s", e)
+            parts.append(f"⏰ <b>Бот:</b> ❌ {safe_html_format(str(e)[:100])}")
+
+    if target in ("cal", "both"):
+        try:
+            from services.apple_calendar import create_calendar_event
+
+            ev_id = create_calendar_event(
+                title=text[:200],
+                start_ts=ts,
+                duration_minutes=15,
+                notes=f"Напоминание из MemPalace (uid={uid})",
+            )
+            parts.append(f"📅 <b>Apple Calendar:</b> ✅ <code>{safe_html_format(ev_id[:8])}…</code>")
+        except Exception as e:  # noqa: BLE001
+            logger.error("[REM] calendar save failed: %s", e)
+            parts.append(f"📅 <b>Apple Calendar:</b> ❌ {safe_html_format(str(e)[:100])}")
+
     dt = datetime.fromtimestamp(ts)
-    await cb.message.edit_text(
+    summary = (
         f"✅ <b>Напоминание сохранено!</b>\n"
         f"🕐 {dt.strftime('%d.%m.%Y %H:%M')}\n"
-        f"{safe_html_format(text)}",
-        parse_mode="HTML",
+        f"{safe_html_format(text)}\n\n"
+        + "\n".join(parts)
     )
+    await cb.message.edit_text(summary, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "rem_no")
