@@ -1,0 +1,64 @@
+Feature: Agent Mode (qwen2.5 with tools)
+  As a user of the bot
+  I want an agent mode that can use tools in a loop
+  So that I get answers grounded in my mempalace data
+
+  @agent @smoke @regression
+  Scenario: Happy path — agent answers using a tool
+    Given the agent is enabled in my settings
+    And a tool "mp_kg_stats" is registered that returns "Комнат в дворце: 7"
+    And the model script returns a tool call "mp_kg_stats" and then a final text
+    When I run the agent with the user prompt "сколько у меня комнат"
+    Then I see the step status "🔧 Шаг 1/5: mp_kg_stats…"
+    And the tool "mp_kg_stats" is executed with valid arguments
+    And the final answer contains the tool output
+    And the agent finished in 2 iterations without error
+
+  @agent @negative
+  Scenario: Agent disabled — routing sends the message to ordinary AI
+    Given the agent is disabled in my settings
+    When I ask the routing gate about the message "обычный вопрос"
+    Then the routing gate returns False
+    And the agent is not started
+
+  @agent @negative
+  Scenario: Command bypasses the agent
+    Given the agent is enabled in my settings
+    When I ask the routing gate about the message "/unknowncmd something"
+    Then the routing gate returns False
+    And the agent is not started
+
+  @agent @negative
+  Scenario: Model never calls a tool — fallback answer
+    Given the agent is enabled in my settings
+    And the model script returns only a plain text without tool calls
+    When I run the agent with the user prompt "привет"
+    Then the final answer equals the model text
+    And the agent finished with reason "answer" without error
+
+  @agent @negative
+  Scenario: Unknown tool name — agent continues and reports it
+    Given the agent is enabled in my settings
+    And the model script calls the unknown tool "no_such_tool"
+    When I run the agent with the user prompt "что-нибудь"
+    Then the final answer contains the text "не существует"
+    And the agent finished without crash
+
+  @agent @edge
+  Scenario: Tool failure — error is visible and loop continues
+    Given the agent is enabled in my settings
+    And a tool "mp_boom" is registered that raises an exception
+    And the model script calls "mp_boom" and then returns a final text
+    When I run the agent with the user prompt "найди факты"
+    Then I see the step status "🔧 Шаг 1/5: mp_boom…"
+    And the final answer contains the text "Ошибка"
+    And the agent finished in 2 iterations without crash
+
+  @agent @edge
+  Scenario: Iteration limit reached
+    Given the agent is enabled in my settings
+    And a tool "mp_kg_stats" is registered that returns "Комнат в дворце: 7"
+    And the model script requests a tool on every iteration
+    When I run the agent with the user prompt "продолжай работать"
+    Then I see the step status "🔧 Шаг 5/5: mp_kg_stats…"
+    And the result error contains the word "лимит"

@@ -312,10 +312,11 @@ async def cmd_context(message: types.Message):
     # 1. Проверяем, есть ли уже сохраненное саммари
     if existing_summary and len(existing_summary.strip()) > 20:
         # Показываем существующее саммари
+        final_summary = existing_summary
         preview = (
-            existing_summary[:500] + "..."
-            if len(existing_summary) > 500
-            else existing_summary
+            final_summary[:500] + "..."
+            if len(final_summary) > 500
+            else final_summary
         )
     else:
         # 2. Если саммари нет, генерируем новое прямо сейчас

@@ -143,7 +143,7 @@ async def cb_web_search(callback: types.CallbackQuery):
     for chunk in [text[i:i + 4000] for i in range(0, len(text), 4000)]:
         await callback.message.answer(
             chunk, parse_mode="HTML", disable_web_page_preview=True,
-            reply_markup=kb.as_markup() if len(kb.buttons) > 0 else None,
+            reply_markup=kb.as_markup() if any(kb.export()) else None,
         )
         kb = InlineKeyboardBuilder()
 

@@ -11,6 +11,7 @@ from aiogram import F, Router, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import CONFIG_AI_FILE, MODELS_CONFIG_PATH, allowed_callback, allowed_only
+from services.agent_settings import get_agent_enabled, toggle_agent_enabled
 from services.ai_engine import invalidate_ai_cache
 from services.tts_processor import get_voice_settings, set_voice_setting
 
@@ -46,6 +47,14 @@ def build_settings_kb(user_id: int):
         types.InlineKeyboardButton(text="🐢 -10", callback_data="spd:-10"),
         types.InlineKeyboardButton(text=f"⚙️ {vs['speed']} wpm", callback_data="ignore"),
         types.InlineKeyboardButton(text="🐇 +10", callback_data="spd:+10"),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text=(
+                "🤖 Агент: ВКЛ" if get_agent_enabled(user_id) else "🤖 Агент: ВЫКЛ"
+            ),
+            callback_data="agent_toggle",
+        ),
     )
     kb.row(
         types.InlineKeyboardButton(text="🔌 MCP", callback_data="palace_mcp"),
@@ -303,6 +312,19 @@ async def cb_speed(cb: types.CallbackQuery):
         f"🤖 Модель: <code>{curr}</code>", reply_markup=kb, parse_mode="HTML",
     )
     await cb.answer()
+
+
+@router.callback_query(F.data == "agent_toggle")
+@allowed_callback
+async def cb_agent_toggle(cb: types.CallbackQuery):
+    new_value = toggle_agent_enabled(cb.from_user.id)
+    kb, curr = build_settings_kb(cb.from_user.id)
+    await cb.message.edit_text(
+        f"🤖 Модель: <code>{curr}</code>", reply_markup=kb, parse_mode="HTML",
+    )
+    await cb.answer(
+        "🤖 Агентный режим: ВКЛ" if new_value else "🤖 Агентный режим: ВЫКЛ",
+    )
 
 
 @router.callback_query(F.data == "list_ollama")

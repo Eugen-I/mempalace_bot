@@ -120,6 +120,9 @@ def build_action_bar(answer: Answer, page_idx: int) -> InlineKeyboardBuilder:
         ),
         types.InlineKeyboardButton(text="💾 Сохранить", callback_data=f"ab_sv:{answer.sid}"),
     )
+    kb.row(types.InlineKeyboardButton(
+        text="🤖 Агент", callback_data=f"ab_agent:{answer.sid}",
+    ))
     if answer.total_pages > 1:
         nav_row = []
         if page_idx > 0:
@@ -199,6 +202,7 @@ def _get_parent_handler(parent_cb: str) -> Callable | None:
         "p_tax": navigation.cb_taxonomy,
         "p_tun": navigation.cb_tunnels_menu,
         "p_kg": kg.cb_kg_menu,
+        "p_kgf": kg.cb_kg_facts,
         "p_kgr": kg.cb_kg_read,
         "p_kgsr": kg.cb_kg_back_to_search,
         "palace_back": _palace_back_cb,

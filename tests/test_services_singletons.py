@@ -10,12 +10,16 @@ from tests.test_action_bar import TEST_UID
 
 
 class TestSingletonFunctions:
-    def test_get_kv_store_singleton(self):
-        from services.kv_store import get_kv_store
+    def test_get_kv_store_singleton(self, monkeypatch, tmp_path):
+        import services.kv_store as kv_mod
+        from services.kv_store import KVStore, get_kv_store
 
+        monkeypatch.setattr(kv_mod, "_DB_PATH", str(tmp_path / "kv_singleton.sqlite"))
+        monkeypatch.setattr(KVStore, "_instance", None)
         store1 = get_kv_store()
         store2 = get_kv_store()
         assert store1 is store2
+        monkeypatch.setattr(KVStore, "_instance", None)
 
     def test_get_bus_singleton(self):
         from services.event_bus import get_bus

@@ -92,6 +92,14 @@ class TestPromptConstants:
 
 
 class TestGetSmartPromptEdgeCases:
+    def test_no_active_rule_fallback(self, monkeypatch):
+        import services.prompts.mixing_rules as mr
+
+        monkeypatch.setattr(mr, "PROMPT_MIXING_RULES", [])
+        result = mr.get_smart_prompt(query="anything", context="")
+        assert "MemPalace" in result
+        assert BASE_RULES in result
+
     def test_query_similar_to_multiple_rules(self):
         result = get_smart_prompt(query="сон анализ фото психология")
         # First matching rule wins: "Pure Dream Analysis" (because of "сон")

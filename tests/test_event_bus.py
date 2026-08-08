@@ -129,3 +129,16 @@ class TestEventBusMutants:
             await bus.publish(Event.AI_RESPONSE_START, msg="x")
         assert received == ["x"]
         assert caplog.records[-1].getMessage() == "Publishing ai_response_start to 1 handlers"
+
+
+class TestUnsubscribeNoSubscribers:
+    async def test_unsubscribe_unknown_event_noop(self):
+        from services.event_bus import EventBus, Event
+
+        bus = EventBus()
+
+        async def handler():
+            pass
+
+        bus.unsubscribe(Event.CHAT_SYNCED, handler)
+        assert Event.CHAT_SYNCED not in bus._subscribers

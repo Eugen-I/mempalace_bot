@@ -160,8 +160,8 @@ make qa
 - Если задача касается кнопок или меню, использовать руководство как краткий reference, а не как общий источник для всех изменений.
 
 ## 10. Напоминание на завтра
-- Продолжить устранение SQLite ResourceWarning.
-- Приоритет: services/kv_store.py и любые другие места, где создаются sqlite3.Connection без явного закрытия.
+- **Тестирование завершено**: 2631 passed, общее покрытие 99% (см. TESTING_PROGRESS.md). Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
+- **SQLite/файловые ResourceWarning — устранено**: `pytest -W error::ResourceWarning` даёт 0 предупреждений. Фикс: `services/logging_setup.py` закрывает FileHandler'ы при замене; тесты с `open(...).read()` переведены на `with`; синхронные моки для `save_bot_photo`; `coro.close()` в fake_create. Остались только 6 DeprecationWarning из библиотек (google/genai, swig) — не наш код.
 - Проверить после изменений:
-  - pytest -q tests/test_kv_store.py
-  - pytest -q
+  - pytest -q tests/test_logging_setup.py
+  - pytest -q -W error::ResourceWarning

@@ -195,6 +195,37 @@ def test_split_media_no_parts_created(tmp_media):
     assert os.path.exists(tmp_media["big"])
 
 
+def test_split_media_remove_failure_keeps_original(tmp_media):
+    """os.remove исходника падает — исключение глотается, части возвращаются."""
+    import services.youtube as yt
+
+    async def fake_exec(*args, **kwargs):
+        if args[0] == "ffprobe":
+            return FakeProc(stdout=b"1000.0\n")
+        pattern = args[-1]
+        for i in range(2):
+            part = pattern % i
+            if not os.path.exists(part):
+                with open(part, "wb") as f:
+                    f.write(b"part")
+        return FakeProc()
+
+    async def main():
+        orig_exec = yt.asyncio.create_subprocess_exec
+        orig_remove = os.remove
+        yt.asyncio.create_subprocess_exec = fake_exec
+        os.remove = lambda p: (_ for _ in ()).throw(OSError("locked"))
+        try:
+            return await yt.split_media(tmp_media["big"])
+        finally:
+            yt.asyncio.create_subprocess_exec = orig_exec
+            os.remove = orig_remove
+
+    result = asyncio.run(main())
+    assert len(result) == 2
+    assert os.path.exists(tmp_media["big"])
+
+
 def test_split_media_exact_limit_untouched(tmp_media):
     """Граница: файл ровно = лимиту не разбивается."""
     import services.youtube as yt

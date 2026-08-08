@@ -12,6 +12,7 @@ from services.ttl_dict import TtlDict
 from services.ai_engine import get_ai_response_async, get_current_ai
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
+from handlers.palace.shared import _pending_mcp_input
 
 logger = logging.getLogger("PersonalNote")
 router = Router()
@@ -258,10 +259,81 @@ async def cb_pn_reclass(callback: types.CallbackQuery):
                 text=f"{label}{wing}", callback_data=f"pn_wing:{i}",
             ),
         )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="➕ Новое крыло", callback_data="pn_wing_new",
+        ),
+    )
     kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="pn_cancel"))
 
     await callback.message.edit_text(
         "<b>Выберите крыло:</b>", parse_mode="HTML", reply_markup=kb.as_markup(),
+    )
+
+
+async def _show_pn_rooms(uid: int, edit_func):
+    """Показывает выбор комнаты для текущего крыла (после выбора или создания крыла)."""
+    data = _note_data.get(uid)
+    if not data:
+        await edit_func("❌ Сессия истекла.")
+        return
+    wing = data.get("wing", "личные_мысли")
+    taxonomy = data.get("taxonomy", {})
+    rooms = taxonomy.get(wing, {})
+    room_list = sorted(rooms.keys()) if isinstance(rooms, dict) else []
+    if not room_list:
+        room_list = ["inbox"]
+    data["room_list"] = room_list
+
+    kb = InlineKeyboardBuilder()
+    for i, room in enumerate(room_list[:15]):
+        kb.row(
+            types.InlineKeyboardButton(text=f"🪪 {room}", callback_data=f"pn_room:{i}"),
+        )
+    kb.row(types.InlineKeyboardButton(text="🆕 inbox", callback_data="pn_room:-1"))
+    kb.row(
+        types.InlineKeyboardButton(
+            text="➕ Новая комната", callback_data="pn_room_new",
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="\u25c0\ufe0f Назад", callback_data="pn_reclass",
+        ),
+    )
+    await edit_func(
+        f"<b>Крыло:</b> {safe_html_format(wing)}\n<b>Выберите комнату:</b>",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
+
+
+async def _show_pn_confirm(uid: int, edit_func):
+    """Показывает подтверждение сохранения заметки в выбранные крыло/комнату."""
+    data = _note_data.get(uid)
+    if not data:
+        await edit_func("❌ Сессия истекла.")
+        return
+    wing = data.get("wing", "личные_мысли")
+    room = data.get("room", "inbox")
+    text = data["text"]
+
+    preview = (
+        f"<b>📝 Заметка:</b>\n\n"
+        f"{safe_html_format(text)}\n\n"
+        f"<b>🏛 Куда:</b> <code>{safe_html_format(wing)}/{safe_html_format(room)}</code>\n\n"
+        f"Сохранить?"
+    )
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="✅ Сохранить", callback_data="pn_cf"))
+    kb.row(
+        types.InlineKeyboardButton(
+            text="\u25c0\ufe0f К выбору крыла", callback_data="pn_reclass",
+        ),
+    )
+    kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="pn_cancel"))
+    await edit_func(
+        preview, parse_mode="HTML", reply_markup=kb.as_markup(),
     )
 
 
@@ -284,31 +356,37 @@ async def cb_pn_wing(callback: types.CallbackQuery):
     except (ValueError, IndexError):
         wing = "личные_мысли"
 
-    taxonomy = data.get("taxonomy", {})
-    rooms = taxonomy.get(wing, {})
-    room_list = sorted(rooms.keys()) if isinstance(rooms, dict) else []
-    if not room_list:
-        room_list = ["inbox"]
+    data["wing"] = wing
+    await _show_pn_rooms(uid, callback.message.edit_text)
 
-    _note_data[uid]["room_list"] = room_list
 
-    kb = InlineKeyboardBuilder()
-    for i, room in enumerate(room_list[:15]):
-        kb.row(
-            types.InlineKeyboardButton(text=f"🪪 {room}", callback_data=f"pn_room:{i}"),
-        )
-    kb.row(types.InlineKeyboardButton(text="🆕 inbox", callback_data="pn_room:-1"))
-    kb.row(
-        types.InlineKeyboardButton(
-            text="\u25c0\ufe0f Назад", callback_data="pn_reclass",
-        ),
+@router.callback_query(F.data == "pn_wing_new")
+@allowed_callback
+async def cb_pn_wing_new(callback: types.CallbackQuery):
+    await callback.answer()
+    uid = callback.from_user.id
+    data = _note_data.get(uid)
+    if not data:
+        return await callback.message.edit_text("❌ Сессия истекла.")
+    data["creating"] = True
+    _pending_mcp_input[uid] = "pn_new_wing"
+    await callback.message.edit_text(
+        "🕸️ Введите название нового крыла (латиницей, без пробелов):",
     )
 
-    _note_data[uid]["wing"] = wing
+
+@router.callback_query(F.data == "pn_room_new")
+@allowed_callback
+async def cb_pn_room_new(callback: types.CallbackQuery):
+    await callback.answer()
+    uid = callback.from_user.id
+    data = _note_data.get(uid)
+    if not data:
+        return await callback.message.edit_text("❌ Сессия истекла.")
+    data["creating"] = True
+    _pending_mcp_input[uid] = "pn_new_room"
     await callback.message.edit_text(
-        f"<b>Крыло:</b> {safe_html_format(wing)}\n<b>Выберите комнату:</b>",
-        parse_mode="HTML",
-        reply_markup=kb.as_markup(),
+        "📁 Введите название новой комнаты (можно с пробелами):",
     )
 
 
@@ -334,27 +412,8 @@ async def cb_pn_room(callback: types.CallbackQuery):
         except (ValueError, IndexError):
             room = "inbox"
 
-    wing = data.get("wing", "личные_мысли")
     data["room"] = room
-    text = data["text"]
-
-    preview = (
-        f"<b>📝 Заметка:</b>\n\n"
-        f"{safe_html_format(text)}\n\n"
-        f"<b>🏛 Куда:</b> <code>{safe_html_format(wing)}/{safe_html_format(room)}</code>\n\n"
-        f"Сохранить?"
-    )
-    kb = InlineKeyboardBuilder()
-    kb.row(types.InlineKeyboardButton(text="✅ Сохранить", callback_data="pn_cf"))
-    kb.row(
-        types.InlineKeyboardButton(
-            text="\u25c0\ufe0f К выбору крыла", callback_data="pn_reclass",
-        ),
-    )
-    kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="pn_cancel"))
-    await callback.message.edit_text(
-        preview, parse_mode="HTML", reply_markup=kb.as_markup(),
-    )
+    await _show_pn_confirm(uid, callback.message.edit_text)
 
 
 @router.callback_query(F.data == "pn_cancel")
@@ -478,9 +537,21 @@ async def cb_pn_page(callback: types.CallbackQuery):
 @allowed_callback
 async def cb_pn_list_back(callback: types.CallbackQuery):
     await callback.answer()
-    _list_state.pop(callback.from_user.id, None)
-    _active_drawer.pop(callback.from_user.id, None)
+    uid = callback.from_user.id
     await go_main_menu(callback.message)
+    _list_state.pop(uid, None)
+    _active_drawer.pop(uid, None)
+
+
+async def _reopen_pn_list(callback: types.CallbackQuery):
+    """Graceful recovery: переоткрывает список личных заметок, когда сессионное
+    состояние потеряно (рестарт бота, TTL, очистка state)."""
+    try:
+        await _show_pn_page(
+            callback, callback.message.edit_text, "личные_мысли", "inbox", 0,
+        )
+    except Exception:
+        await callback.message.edit_text("❌ Не удалось открыть список.")
 
 
 @router.callback_query(F.data.startswith("pn_v:"))
@@ -493,7 +564,8 @@ async def cb_pn_view(callback: types.CallbackQuery):
     idx = int(callback.data.split(":", 1)[1])
     state = _list_state.get(uid)
     if not state or idx >= len(state.get("drawers", [])):
-        return await callback.message.edit_text("❌ Сессия истекла.")
+        await _reopen_pn_list(callback)
+        return
 
     drawer_id = state["drawers"][idx]["drawer_id"]
     _active_drawer[uid] = drawer_id
@@ -543,7 +615,8 @@ async def cb_pn_read_full(callback: types.CallbackQuery):
     uid = callback.from_user.id
     drawer_id = _active_drawer.get(uid)
     if not drawer_id:
-        return await callback.message.edit_text("❌ Сессия истекла.")
+        await _reopen_pn_list(callback)
+        return
 
     try:
         mcp = get_mcp()
@@ -628,7 +701,8 @@ async def cb_pn_to_palace(callback: types.CallbackQuery):
     uid = callback.from_user.id
     drawer_id = _active_drawer.get(uid)
     if not drawer_id:
-        return await callback.message.edit_text("❌ Сессия истекла.")
+        await _reopen_pn_list(callback)
+        return
 
     try:
         mcp = get_mcp()
@@ -665,7 +739,8 @@ async def cb_pn_quote_prompt(callback: types.CallbackQuery):
     uid = callback.from_user.id
     drawer_id = _active_drawer.get(uid)
     if not drawer_id:
-        return await callback.message.edit_text("❌ Сессия истекла.")
+        await _reopen_pn_list(callback)
+        return
 
     try:
         mcp = get_mcp()
@@ -695,7 +770,8 @@ async def cb_pn_delete_confirm(callback: types.CallbackQuery):
     uid = callback.from_user.id
     drawer_id = _active_drawer.get(uid)
     if not drawer_id:
-        return await callback.message.edit_text("❌ Сессия истекла.")
+        await _reopen_pn_list(callback)
+        return
 
     kb = InlineKeyboardBuilder()
     kb.row(
@@ -716,7 +792,8 @@ async def cb_pn_delete_execute(callback: types.CallbackQuery):
     uid = callback.from_user.id
     drawer_id = _active_drawer.pop(uid, None)
     if not drawer_id:
-        return await callback.message.edit_text("❌ Сессия истекла.")
+        await _reopen_pn_list(callback)
+        return
 
     await callback.message.edit_text("🗑️ Удаляю...")
     try:

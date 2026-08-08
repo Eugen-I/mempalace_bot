@@ -5,6 +5,7 @@ from aiogram import F, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import allowed_callback
+from services import interpreter
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
@@ -74,7 +75,7 @@ async def cb_kg_stats(cb: types.CallbackQuery):
                 if isinstance(v, dict):
                     lines.append(f"\n<b>{k}:</b>")
                     for sk, sv in v.items():
-                        lines.append(f"  • {sk}: {sv}")
+                        lines.append(f"  • {interpreter.display_name(str(sk))}: {sv}")
                 else:
                     lines.append(f"\n<b>{k}:</b> {v}")
         else:
@@ -92,7 +93,9 @@ async def cb_kg_stats(cb: types.CallbackQuery):
 @allowed_callback
 async def cb_kg_add_start(cb: types.CallbackQuery):
     await cb.answer()
-    _pending_mcp_input[cb.from_user.id] = "kg_add_subject"
+    uid = cb.from_user.id
+    _kg_add_state[uid] = {"subject": "", "predicate": "", "object": ""}
+    _pending_mcp_input[uid] = "kg_add_subject"
     await cb.message.edit_text(
         "🧠 <b>Добавление факта в граф знаний</b>\n\n"
         "Шаг 1/3: введите <b>субъект</b> (о ком или о чём факт):",
@@ -114,7 +117,9 @@ async def cb_kg_add_cancel(cb: types.CallbackQuery):
 @allowed_callback
 async def cb_kg_add_subject_prompt(cb: types.CallbackQuery):
     await cb.answer()
-    _pending_mcp_input[cb.from_user.id] = "kg_add_subject"
+    uid = cb.from_user.id
+    _kg_add_state[uid] = {"subject": "", "predicate": "", "object": ""}
+    _pending_mcp_input[uid] = "kg_add_subject"
     await cb.message.edit_text("🧠 Введите субъект факта:")
 
 
@@ -147,7 +152,7 @@ async def cb_kg_add_predicate_menu(cb: types.CallbackQuery):
 async def cb_kg_add_predicate_chosen(cb: types.CallbackQuery):
     await cb.answer()
     uid = cb.from_user.id
-    pred = cb.data[10:]
+    pred = cb.data[len("p_kga_pr:"):]
     state = _kg_add_state.get(uid)
     if state:
         state["predicate"] = pred
@@ -183,13 +188,40 @@ async def cb_kg_add_confirm(cb: types.CallbackQuery):
             "predicate": state["predicate"],
             "object": state["object"],
         })
+        ru_label = None
+        for pred, label in KG_PREDICATES:
+            if pred == state["predicate"]:
+                ru_label = label.split(" ", 1)[-1] if " " in label else label
+                interpreter.register(pred, ru_label)
+                break
         from .action_bar import finalize_answer
         await finalize_answer(
-            uid, cb.message.edit_text, raw or "✅ Факт сохранён!",
+            uid, cb.message.edit_text, _format_kg_add_result(raw, state["predicate"], ru_label),
             ctx={"parent_cb": "p_kg"},
         )
     except Exception as e:
         await cb.message.edit_text(f"❌ Ошибка: {e}")
+
+
+def _format_kg_add_result(raw, predicate: str, ru_label) -> str:
+    """Читаемый вывод результата mempalace_kg_add вместо сырого JSON."""
+    if not raw:
+        return "✅ Факт сохранён!"
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return raw
+    if not isinstance(parsed, dict):
+        return raw
+    if parsed.get("success") is False:
+        err = parsed.get("error") or parsed.get("detail") or parsed.get("message") or ""
+        return f"❌ Не удалось сохранить факт.{(' ' + err) if err else ''}"
+    fact = parsed.get("fact")
+    if not fact:
+        return "✅ Факт сохранён!"
+    if ru_label and predicate and f"→ {predicate} →" in fact:
+        fact = fact.replace(f"→ {predicate} →", f"→ {ru_label} →")
+    return f"✅ Факт сохранён в графе знаний!\n\n{fact}"
 
 
 @router.callback_query(F.data == "p_kgq")
@@ -233,8 +265,19 @@ async def cb_kg_read(cb: types.CallbackQuery):
     if not data:
         await cb.message.edit_text("❌ Нет данных для чтения.")
         return
-    entity = data.get("entity", "")
-    await _kg_search_and_show(uid, cb.message.edit_text, entity, None)
+    await _kg_read_sources(uid, cb.message.edit_text)
+
+
+@router.callback_query(F.data == "p_kgf")
+@allowed_callback
+async def cb_kg_facts(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    data = _kg_page_data.get(uid)
+    if not data:
+        await cb.message.edit_text("❌ Сессия истекла. Откройте заново.")
+        return
+    await _send_kg_page(uid, cb.message.edit_text)
 
 
 @router.callback_query(F.data == "p_kgsr")
@@ -254,7 +297,7 @@ async def cb_kg_back_to_search(cb: types.CallbackQuery):
 async def cb_kg_read_search(cb: types.CallbackQuery):
     await cb.answer()
     uid = cb.from_user.id
-    entity = cb.data[8:]
+    entity = cb.data[len("p_kgrs:"):]
     await _kg_search_and_show(uid, cb.message.edit_text, entity, cb.message)
 
 
@@ -262,7 +305,16 @@ async def _kg_search_and_show(uid: int, edit_func, entity: str, original_msg):
     mcp = get_mcp()
     try:
         search_raw = await mcp.call_tool("mempalace_search", {"query": entity, "limit": 10})
-        search_results = json.loads(search_raw) if search_raw else []
+        try:
+            search_parsed = json.loads(search_raw) if search_raw else None
+        except (TypeError, ValueError):
+            search_parsed = None
+        if isinstance(search_parsed, dict):
+            search_results = search_parsed.get("results", [])
+        elif isinstance(search_parsed, list):
+            search_results = search_parsed
+        else:
+            search_results = []
     except Exception:
         search_results = []
     if not search_results:
@@ -270,6 +322,59 @@ async def _kg_search_and_show(uid: int, edit_func, entity: str, original_msg):
         return
     _kg_search_data[uid] = {"entity": entity, "results": search_results, "page": 0}
     await _send_kg_search_page(uid, edit_func)
+
+
+async def _kg_read_sources(uid: int, edit_func) -> bool:
+    """Показывает записи, привязанные к фактам сущности в графе знаний.
+
+    Читает ТОЛЬКО файлы из source_closet фактов (каждый файл — одна запись
+    с полным текстом), а не семантический поиск по всей базе.
+    Returns True, если список записей показан.
+    """
+    data = _kg_page_data.get(uid)
+    if not data:
+        await edit_func("❌ Сессия истекла. Начните заново.")
+        return False
+    facts = data.get("facts", [])
+    sources = []
+    seen = set()
+    for f in facts:
+        src = f.get("source_closet", "") if isinstance(f, dict) else ""
+        if src and src not in seen:
+            seen.add(src)
+            sources.append(src)
+    if not sources:
+        kb = InlineKeyboardBuilder()
+        kb.row(types.InlineKeyboardButton(
+            text="🔍 Поискать в заметках",
+            callback_data=f"p_kgrs:{data.get('entity', '')}",
+        ))
+        await edit_func(
+            "📄 Факты об этой сущности не привязаны к файлам в Дворце.\n\n"
+            "Поискать записи по всей базе?",
+            parse_mode="HTML", reply_markup=kb.as_markup(),
+        )
+        return False
+    results = []
+    for src in sources:
+        full_text = _get_full_text_from_chroma(src)
+        if not full_text:
+            continue
+        parts = src.split("/")
+        results.append({
+            "content": full_text,
+            "source_file": src.rsplit("/", 1)[-1],
+            "wing": parts[0] if parts else "",
+            "room": parts[1] if len(parts) > 2 else "",
+        })
+    if not results:
+        await edit_func("❌ Файлы из фактов не найдены в Дворце.")
+        return False
+    _kg_search_data[uid] = {
+        "entity": data["entity"], "results": results, "page": 0, "mode": "kg",
+    }
+    await _send_kg_search_page(uid, edit_func)
+    return True
 
 
 async def _send_kg_search_page(uid: int, edit_func):
@@ -281,14 +386,17 @@ async def _send_kg_search_page(uid: int, edit_func):
     start = page * KG_PAGE_SIZE
     end = min(start + KG_PAGE_SIZE, len(results))
     page_results = results[start:end]
-    lines = [
-        f"<b>🔍 Результаты поиска: {data['entity']}</b>  "
-        f"({len(results)} всего)\n",
-    ]
+    if data.get("mode") == "kg":
+        header = f"<b>📚 Записи графа знаний: {data['entity']}</b>"
+        parent_cb = "p_kgf"
+    else:
+        header = f"<b>🔍 Результаты поиска: {data['entity']}</b>"
+        parent_cb = "p_kg"
+    lines = [f"{header}  ({len(results)} всего)\n"]
     for i, r in enumerate(page_results, start + 1):
         if isinstance(r, dict):
             content = (r.get("content", r.get("text", str(r))) or "")[:200]
-            source = r.get("source", r.get("closet", ""))
+            source = r.get("source_file", r.get("source", r.get("closet", "")))
             line = f"  {i}. {safe_html_format(content)}"
             if source:
                 line += f"\n     📄 {safe_html_format(source)}"
@@ -317,7 +425,7 @@ async def _send_kg_search_page(uid: int, edit_func):
     from .action_bar import finalize_answer
     await finalize_answer(
         uid, edit_func, "\n".join(lines), is_html=True,
-        ctx={"entity": data["entity"], "parent_cb": "p_kg"},
+        ctx={"entity": data["entity"], "parent_cb": parent_cb},
         extra_rows=extra_rows,
     )
 
@@ -350,7 +458,7 @@ async def cb_kg_read_result(cb: types.CallbackQuery):
     r = results[idx]
     if isinstance(r, dict):
         content = r.get("content", r.get("text", str(r))) or ""
-        source = r.get("source", r.get("closet", ""))
+        source = r.get("source_file", r.get("source", r.get("closet", "")))
         wing = r.get("wing", "")
         room = r.get("room", "")
     else:

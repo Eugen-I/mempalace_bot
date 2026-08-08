@@ -561,6 +561,10 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
         extra_rows.append([types.InlineKeyboardButton(
             text="🤖 Спросить ИИ по комнате", callback_data="p_room_ai",
         )])
+        from handlers.agent import build_room_agent_callback
+        extra_rows.append([types.InlineKeyboardButton(
+            text="🤖 Агент", callback_data=build_room_agent_callback(wing, room),
+        )])
 
         from .action_bar import finalize_answer
         await finalize_answer(

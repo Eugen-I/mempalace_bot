@@ -20,6 +20,8 @@ class JSONFormatter(logging.Formatter):
 def setup_logging(data_dir: str) -> logging.Logger:
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
+        if isinstance(handler, logging.FileHandler):
+            handler.close()
 
     _console_handler = logging.StreamHandler(sys.stdout)
     _console_handler.setFormatter(

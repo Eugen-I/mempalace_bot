@@ -465,6 +465,20 @@ async def process_user_message(message: types.Message):
             await st.edit_text(f"❌ Ошибка: {e}")
         return None
 
+    # === 🤖 АГЕНТНЫЙ РЕЖИМ (включён в /settings → «🤖 Агент: ВКЛ») ===
+    from handlers.agent import should_route_to_agent
+
+    if should_route_to_agent(uid, clean_q):
+        from handlers.agent import AGENT_SYSTEM_PROMPT, _build_scope_prompt, _run_agent_reply
+
+        status = await message.answer("🤖 Запускаю агента…")
+        ctx = dict(_user_context.get(uid) or {})
+        wing = ctx.get("wing", "")
+        room = ctx.get("room", "")
+        prompt = _build_scope_prompt(wing, room) if wing and room else AGENT_SYSTEM_PROMPT
+        await _run_agent_reply(uid, status, prompt, clean_q, ctx=ctx)
+        return None
+
     # === 🧠 ЯДРО ИИ (со стримингом) ===
     status = await message.answer(
         f"⏳ <code>{get_current_ai()[1]}</code> думает...", parse_mode="HTML",

@@ -26,7 +26,7 @@ logger = setup_logging(DATA_DIR)
 init_bot(logger)
 
 from handlers import (  # noqa: E402
-    chat, notes, palace, pdf, personal_note,
+    agent, chat, notes, palace, pdf, personal_note,
     reminder, settings, search,
 )
 from handlers import photos, reactions, transkript, voice, web_search_btn, youtube_ui  # noqa: E402
@@ -42,6 +42,7 @@ def _safe_include(router):
 
 _safe_include(chat.router)
 _safe_include(settings.router)
+_safe_include(agent.router)
 _safe_include(photos.router)
 _safe_include(notes.router)
 _safe_include(pdf.router)
@@ -152,6 +153,9 @@ fallback_router.message()(allowed_only(process_user_message))
 
 
 async def main():
+    from services.interpreter import seed_known_pairs
+
+    seed_known_pairs()
     await bot.delete_webhook(drop_pending_updates=True)
     try:
         mcp = get_mcp()
@@ -168,18 +172,49 @@ async def main():
     except Exception as e:
         logger.warning(f"Whisper pre-warm failed: {e}")
 
+    try:
+        from services.ai_engine import get_current_ai
+
+        engine, _ = get_current_ai()
+        if engine == "qwen":
+            import threading
+
+            def _prewarm_ollama():
+                try:
+                    from services.ollama_process import ensure_ollama_running
+
+                    ensure_ollama_running()
+                    logger.info("Ollama server is ready.")
+                except Exception as exc:
+                    logger.warning(f"Ollama pre-warm failed: {exc}")
+
+            threading.Thread(target=_prewarm_ollama, daemon=True).start()
+    except Exception as e:
+        logger.warning(f"Ollama pre-warm setup failed: {e}")
+
     logger.info("Bot polling started.")
 
     from services.reminder_scheduler import start_scheduler
 
     start_scheduler(bot)
 
-    await dp.start_polling(
-        bot, allowed_updates=["message", "callback_query", "message_reaction"],
-    )
+    try:
+        await dp.start_polling(
+            bot, allowed_updates=["message", "callback_query", "message_reaction"],
+        )
+    finally:
+        from services.ollama_process import stop_all
+
+        stop_all()
 
 
 if __name__ == "__main__":
+    import signal
+
+    def _on_term(signum, frame):
+        raise SystemExit("SIGTERM received")
+
+    signal.signal(signal.SIGTERM, _on_term)
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

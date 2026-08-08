@@ -11,6 +11,7 @@ from ._utils import (  # noqa: F401
 
 import asyncio
 import json
+import logging
 import sys
 
 from aiogram import F, types
@@ -34,6 +35,8 @@ from .shared import (
 )
 
 router.include_router(action_bar.router)
+
+logger = logging.getLogger("PalaceInit")
 
 # ─── MAIN PALACE MENU ───
 
@@ -262,11 +265,54 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             await _save_confirm(msg.edit_text, uid)
             return True
 
+        elif action == "pn_new_wing":
+            from handlers.personal_note import _note_data, _show_pn_rooms
+            wing = text.strip().lower().replace(" ", "_")
+            if not wing:
+                await msg.edit_text(
+                    "❌ Название не может быть пустым. "
+                    "Введите название крыла (латиницей, без пробелов):",
+                )
+                return True
+            data = _note_data.get(uid)
+            if data:
+                data["wing"] = wing
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-m", "mempalace", "init", wing,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=DATA_DIR,
+                )
+                await proc.communicate()
+            except Exception as e:
+                logger.warning("Не удалось создать крыло %s: %s", wing, e)
+            await _show_pn_rooms(uid, msg.edit_text)
+            return True
+
+        elif action == "pn_new_room":
+            from handlers.personal_note import _note_data, _show_pn_confirm
+            room = text.strip()
+            if not room:
+                await msg.edit_text(
+                    "❌ Название не может быть пустым. "
+                    "Введите название комнаты:",
+                )
+                return True
+            data = _note_data.get(uid)
+            if data:
+                data["room"] = room
+            await _show_pn_confirm(uid, msg.edit_text)
+            return True
+
         elif action == "kg_add_subject":
             entity = text.strip()
-            state = _kg_add_state.get(uid)
-            if state:
-                state["subject"] = entity
+            kg_state = _kg_add_state.get(uid)
+            if not kg_state:
+                kg_state = {"subject": "", "predicate": "", "object": ""}
+                _kg_add_state[uid] = kg_state
+            kg_state["subject"] = entity
             kb = InlineKeyboardBuilder()
             for pred, label in KG_PREDICATES:
                 kb.row(
@@ -446,6 +492,10 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                 _, wing, room = parts
                 from .navigation import _answer_room_ai
                 await _answer_room_ai(msg, uid, wing, room, text.strip())
+
+        elif action and action.startswith("agent_room:"):
+            from handlers.agent import run_room_agent
+            await run_room_agent(uid, msg, action[len("agent_room:"):], text.strip())
 
         elif action == "tunnel_discuss":
             ctx = _user_context.get(uid, {})

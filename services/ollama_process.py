@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+import atexit
+import shutil
+import subprocess
+import threading
+import time
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class OllamaProcessManager:
+    model: str = "qwen2.5:7b"
+    host: str = "http://127.0.0.1:11434"
+    startup_timeout: int = 30
+    _proc: Optional[subprocess.Popen] = None
+
+    def is_server_available(self) -> bool:
+        try:
+            result = subprocess.run(
+                ["ollama", "list"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return False
+
+    def is_model_available(self) -> bool:
+        try:
+            result = subprocess.run(
+                ["ollama", "list"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return False
+            return self.model.split(":", 1)[0] in result.stdout or self.model in result.stdout
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return False
+
+    def wait_for_server(self, timeout: int | None = None) -> bool:
+        deadline = time.time() + (timeout if timeout is not None else self.startup_timeout)
+        while time.time() < deadline:
+            if self.is_server_available():
+                return True
+            time.sleep(0.5)
+        return False
+
+    def ensure_running(self):
+        if self._proc is not None and self._proc.poll() is None:
+            return self._proc
+
+        if self.is_server_available():
+            return None
+
+        if shutil.which("ollama") is None:
+            raise RuntimeError("Ollama CLI not found")
+
+        self._proc = subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        if self.wait_for_server(timeout=self.startup_timeout) is False:
+            self.stop()
+            raise RuntimeError("Ollama server did not start in time")
+
+        if not self.is_model_available():
+            subprocess.run(
+                ["ollama", "pull", self.model],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+        _track(self)
+        return self._proc
+
+    def stop(self) -> None:
+        proc = self._proc
+        self._proc = None
+        if proc is None:
+            return
+        if proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=2)
+            except Exception:
+                pass
+
+
+_SPAWNED: list[OllamaProcessManager] = []
+_LOCK = threading.Lock()
+
+
+def _track(manager: "OllamaProcessManager") -> None:
+    """Регистрирует менеджера, который реально поднял свой `ollama serve`."""
+    with _LOCK:
+        if manager not in _SPAWNED:
+            _SPAWNED.append(manager)
+
+
+def stop_all() -> None:
+    """Останавливает все Ollama-серверы, запущенные этим процессом (бота)."""
+    with _LOCK:
+        managers = list(_SPAWNED)
+        _SPAWNED.clear()
+    for manager in managers:
+        manager.stop()
+
+
+atexit.register(stop_all)
+
+
+def ensure_ollama_running(model: str = "qwen2.5:7b") -> OllamaProcessManager:
+    manager = OllamaProcessManager(model=model)
+    manager.ensure_running()
+    return manager

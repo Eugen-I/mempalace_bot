@@ -80,6 +80,20 @@ def invalidate_ai_cache():
     logger.info("AI Config cache invalidated.")
 
 
+_OLLAMA_UNREACHABLE_MSG = "Не удалось подключиться к Ollama (localhost:11434)"
+
+
+def _is_ollama_unavailable(exc: Exception) -> bool:
+    """True, если исключение связано с недоступностью локального Ollama."""
+    if isinstance(exc, RuntimeError) and "Ollama" in str(exc):
+        return True
+    return type(exc).__name__ in {
+        "APIConnectionError",
+        "ConnectError",
+        "ConnectTimeout",
+    }
+
+
 def _sync_ai_call(
     engine: str,
     model: str,
@@ -149,6 +163,15 @@ def _sync_ai_call(
 
     try:
         if engine == "qwen":  # Ollama через OpenAI совместимый API
+            from services.ollama_process import ensure_ollama_running
+
+            try:
+                ensure_ollama_running(model)
+            except RuntimeError as err:
+                raise RuntimeError(
+                    f"{_OLLAMA_UNREACHABLE_MSG}. {err}",
+                ) from err
+
             if OpenAI is None:
                 raise ImportError("Библиотека openai не установлена.")
 
@@ -280,7 +303,13 @@ def _sync_ai_call(
 
     except Exception as e:
         elapsed = time.time() - start_time
-        error_msg = f"❌ Ошибка ИИ ({engine}) после {elapsed:.2f}s: {e!s}"
+        if engine == "qwen" and _is_ollama_unavailable(e):
+            error_msg = (
+                f"🧠 {_OLLAMA_UNREACHABLE_MSG}. "
+                "Запустите Ollama или переключите модель в /settings."
+            )
+        else:
+            error_msg = f"❌ Ошибка ИИ ({engine}) после {elapsed:.2f}s: {e!s}"
         logger.error(f"[AI_ERROR] {error_msg}", exc_info=True)
         return error_msg
 
@@ -377,6 +406,15 @@ async def stream_ai_response_async(
     def _run_stream():
         try:
             if engine == "qwen":
+                from services.ollama_process import ensure_ollama_running
+
+                try:
+                    ensure_ollama_running(model)
+                except RuntimeError as err:
+                    raise RuntimeError(
+                        f"{_OLLAMA_UNREACHABLE_MSG}. {err}",
+                    ) from err
+
                 if OpenAI is None:
                     raise ImportError("Библиотека openai не установлена.")
                 client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
@@ -458,7 +496,13 @@ async def stream_ai_response_async(
                         loop.call_soon_threadsafe(queue.put_nowait, chunk.text)
 
         except Exception as e:
-            error_msg = f"\n❌ Ошибка стриминга: {e!s}"
+            if engine == "qwen" and _is_ollama_unavailable(e):
+                error_msg = (
+                    f"\n🧠 {_OLLAMA_UNREACHABLE_MSG}. "
+                    "Запустите Ollama или переключите модель в /settings."
+                )
+            else:
+                error_msg = f"\n❌ Ошибка стриминга: {e!s}"
             logger.error(f"[STREAM_ERROR] {error_msg}", exc_info=True)
             loop.call_soon_threadsafe(queue.put_nowait, error_msg)
         finally:

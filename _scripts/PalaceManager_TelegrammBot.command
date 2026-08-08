@@ -71,7 +71,7 @@ stop_bot() {
         fi
         rm -f "$PID_FILE"
     fi
-    
+
     # Fallback: always try to find and kill any remaining processes
     echo "ℹ️ Проверяю оставшиеся процессы..."
     pids=$(pgrep -f "main.py" 2>/dev/null)
@@ -91,7 +91,23 @@ stop_bot() {
         echo "✅ Все связанные процессы остановлены."
         killed_any=true
     fi
-    
+
+    # Ollama запускается ботом как дочерний процесс — останавливаем вместе с ним
+    ollama_pids=$(pgrep -f "ollama serve" 2>/dev/null)
+    if [ -n "$ollama_pids" ]; then
+        echo "$ollama_pids" | xargs kill 2>/dev/null
+        sleep 1
+        remaining_ollama=$(echo "$ollama_pids" | while read pid; do
+            ps -p "$pid" >/dev/null 2>&1 && echo "$pid"
+        done)
+        if [ -n "$remaining_ollama" ]; then
+            echo -e "${YELLOW}⚠️ Ollama не завершилась мягко, применяем SIGKILL${NC}"
+            echo "$remaining_ollama" | xargs kill -9 2>/dev/null
+        fi
+        echo "✅ Ollama остановлена вместе с ботом."
+        killed_any=true
+    fi
+
     if [ "$killed_any" = false ]; then
         echo "ℹ️ Активных процессов бота не найдено."
     fi
@@ -106,6 +122,12 @@ force_kill() {
         echo -e "${GREEN}✅ Все связанные процессы уничтожены.${NC}"
     else
         echo "Зависших процессов не обнаружено."
+    fi
+    ollama_pids=$(pgrep -f "ollama serve" 2>/dev/null)
+    if [ -n "$ollama_pids" ]; then
+        echo "Останавливаю Ollama: $ollama_pids"
+        echo "$ollama_pids" | xargs kill -9 2>/dev/null
+        echo -e "${GREEN}✅ Ollama уничтожена.${NC}"
     fi
     rm -f "$PID_FILE"
 }
@@ -145,10 +167,10 @@ while true; do
                 if [ -x "$PYTHON_BIN" ]; then
                     echo "🚀 Запуск: $FULL_BOT_PATH"
                     echo -e " СТАТУС: ${GREEN}🟢 РАБОТАЕТ (ИНТЕРАКТИВНЫЙ РЕЖИМ)${NC}"
-                    
+
                     # Активация venv и проверка Ollama
                     source "$VENV_DIR/bin/activate"
-                    
+
                     # Проверка наличия активной модели в .current_ai
                     CURRENT_MODEL=$(cat "$DATA_DIR/.current_ai" 2>/dev/null || echo "none")
                     if [ "$CURRENT_MODEL" != "none" ]; then
@@ -158,7 +180,7 @@ while true; do
                             ollama pull "$CURRENT_MODEL"
                         fi
                     fi
-                    
+
                     # Запуск бота в фоновом режиме, записываем PID, затем ждем завершения
                     "$PYTHON_BIN" "$FULL_BOT_PATH" &
                     BPID=$!
@@ -191,7 +213,7 @@ while true; do
                 else
                     echo -e "${RED}❌ ОШИБКА: Python не найден или не исполняем: $PYTHON_BIN${NC}"
                 fi
-            else 
+            else
                 echo -e "${RED}❌ ОШИБКА: Файл не найден.${NC}"
             fi
             sleep 2

@@ -1424,7 +1424,7 @@ def test_get_parent_handler_all_keys():
 
     for key in [
         "p_rdb", "p_nav", "p_wing", "p_tax", "p_tun",
-        "p_kg", "p_kgr", "p_kgsr", "palace_back",
+        "p_kg", "p_kgf", "p_kgr", "p_kgsr", "palace_back",
         "palace_status", "palace_admin", "palace_instructions",
     ]:
         assert ab._get_parent_handler(key) is not None, key

@@ -62,6 +62,37 @@ def test_setup_logging(tmp_path):
     assert "test message" in content
 
 
+def test_setup_logging_replaces_and_closes_old_file_handler(tmp_path):
+    first_dir = tmp_path / "first"
+    first_dir.mkdir()
+    second_dir = tmp_path / "second"
+    second_dir.mkdir()
+    logger = setup_logging(str(first_dir))
+    old_file_handlers = [
+        h for h in logging.root.handlers if isinstance(h, logging.FileHandler)
+    ]
+    assert len(old_file_handlers) == 1
+    old = old_file_handlers[0]
+    logger.info("write to the log")
+    stream = old.stream
+    assert stream is not None
+
+    setup_logging(str(second_dir))
+    file_handlers = [
+        h for h in logging.root.handlers if isinstance(h, logging.FileHandler)
+    ]
+    assert len(file_handlers) == 1
+    assert file_handlers[0] is not old
+    assert stream.closed
+
+
+def test_setup_logging_does_not_close_stream_handlers(tmp_path):
+    dummy = logging.StreamHandler()
+    logging.root.addHandler(dummy)
+    setup_logging(str(tmp_path))
+    assert not dummy.stream.closed
+
+
 def test_json_formatter_empty_msg():
     fmt = JSONFormatter()
     record = logging.LogRecord(

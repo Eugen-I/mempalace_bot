@@ -23,8 +23,8 @@ class KVStore:
     _instance: "KVStore | None" = None
     _lock = threading.Lock()
 
-    def __init__(self, db_path: str = _DB_PATH):
-        self.db_path = db_path
+    def __init__(self, db_path: str | None = None):
+        self.db_path = db_path or _DB_PATH
         self._local = threading.local()
         self._init_db()
 

@@ -142,3 +142,28 @@ class TestKVStoreMutants:
         assert kv.get("k") is None
         kv.set("k", "data2")
         assert kv.get("k") == "data2"
+
+    def test_get_deletes_row_expiring_between_evict_and_check(self, monkeypatch, kv):
+        con = kv._get_conn()
+        con.execute(
+            "INSERT OR REPLACE INTO kv_store (key, value, namespace, expires_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("k", '"v"', "default", 100.5),
+        )
+        con.commit()
+        import unittest.mock as mock
+
+        monkeypatch.setattr(
+            "services.kv_store.time.time",
+            mock.Mock(side_effect=[100.0, 101.0]),
+        )
+        assert kv.get("k", default="fallback") == "fallback"
+
+    def test_get_non_json_value_returns_raw(self, kv):
+        con = kv._get_conn()
+        con.execute(
+            "INSERT OR REPLACE INTO kv_store (key, value, namespace) VALUES (?, ?, ?)",
+            ("raw", "not-json", "default"),
+        )
+        con.commit()
+        assert kv.get("raw") == "not-json"
