@@ -26,7 +26,7 @@ logger = setup_logging(DATA_DIR)
 init_bot(logger)
 
 from handlers import (  # noqa: E402
-    agent, brainstorm, chat, notes, palace, pdf, personal_note,
+    agent, brainstorm, chat, digest, notes, palace, pdf, personal_note,
     reminder, settings, search,
 )
 from handlers import photos, reactions, transkript, voice, web_search_btn, youtube_ui  # noqa: E402
@@ -50,6 +50,7 @@ _safe_include(voice.router)
 _safe_include(palace.router)
 _safe_include(personal_note.router)
 _safe_include(brainstorm.router)
+_safe_include(digest.router)
 _safe_include(reminder.router)
 _safe_include(youtube_ui.router)
 _safe_include(search.router)

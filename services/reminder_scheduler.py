@@ -8,11 +8,13 @@ logger = logging.getLogger("ReminderScheduler")
 REMINDER_NS = "reminders"
 
 _scheduler_task: asyncio.Task | None = None
+_DIGEST_EVERY_CYCLES = 10
 
 
 async def _run_scheduler(bot):
     logger.info("[REMINDER] Scheduler started")
     kv = get_kv_store()
+    cycle = 0
     while True:
         try:
             now = time.time()
@@ -38,6 +40,14 @@ async def _run_scheduler(bot):
                     except Exception as e:
                         logger.warning(f"[REMINDER] Send failed for {user_id}: {e}")
                     kv.delete(key, namespace=REMINDER_NS)
+            cycle += 1
+            if cycle % _DIGEST_EVERY_CYCLES == 0:
+                try:
+                    from services.digest import maybe_send_daily_digest
+
+                    await maybe_send_daily_digest(bot)
+                except Exception as e:
+                    logger.warning(f"[DIGEST] daily check failed: {e}")
         except Exception as e:
             logger.error(f"[REMINDER] Scheduler error: {e}", exc_info=True)
         await asyncio.sleep(30)
