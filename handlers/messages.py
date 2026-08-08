@@ -20,6 +20,7 @@ import json
 from handlers.personal_note import (
     _waiting_for_note, process_note_input, _quote_waiting, _save_quote_to_palace,
 )
+from handlers.brainstorm import _storm_waiting  # noqa: F401 — используется в 0cc
 from handlers.transkript import _tr_ai_waiting, handle_tr_ai_question
 from handlers.reminder import handle_reminder_text
 from handlers.search import search_result_cache as _search_result_cache
@@ -221,6 +222,14 @@ async def process_user_message(message: types.Message):
     # 0c. Ожидание личной заметки (текст)
     if uid in _waiting_for_note:
         return await process_note_input(uid, text, lambda t: message.answer(t))
+
+    # 0cc. Ожидание темы штурма
+    if uid in _storm_waiting:
+        from handlers.brainstorm import run_storm
+
+        _storm_waiting.pop(uid, None)
+        status = await message.answer("🧠 Запускаю штурм…")
+        return await run_storm(uid, status, text)
 
     # 0d. Ожидание текста для поиска по крылу
     if uid in _pending_wing_search:
