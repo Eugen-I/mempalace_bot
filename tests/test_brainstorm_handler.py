@@ -83,6 +83,8 @@ def mock_ai(monkeypatch):
     monkeypatch.setattr(bs, "collect_context", _fake_context)
     h._storm_data.clear()
     h._storm_waiting.clear()
+    h._reflection_data.clear()
+    h._reflection_waiting.clear()
 
 
 # ─── run_storm: happy path ───
@@ -315,3 +317,59 @@ async def test_run_storm_single_idea_no_save_all_button(monkeypatch):
     texts = [b.text for r in markup.inline_keyboard for b in r]
     assert "💡 1" in texts
     assert "💾 Сохранить все" not in texts
+
+
+# ─── Рефлексия после штурма ───
+
+async def test_maybe_ask_reflection_asks_question():
+    h._reflection_data[4242] = {"theme": "Сны", "ideas_count": 3}
+    msg = FakeMessage()
+    assert await h.maybe_ask_reflection(4242, msg.answer) is True
+    assert "Рефлексия" in msg.answers[0]
+    assert "Сны" in msg.answers[0]
+    assert "самой сильной" in msg.answers[0]
+    assert 4242 in h._reflection_waiting
+    assert h._reflection_waiting[4242]["ideas_count"] == 3
+    assert 4242 not in h._reflection_data
+
+
+async def test_maybe_ask_reflection_no_pending():
+    h._reflection_data.clear()
+    msg = FakeMessage()
+    assert await h.maybe_ask_reflection(4242, msg.answer) is False
+    assert msg.answers == []
+    assert 4242 not in h._reflection_waiting
+
+
+async def test_cb_reflect_skip_clears_waiting():
+    h._reflection_waiting[4242] = {"theme": "Сны", "ideas_count": 1}
+    h._reflection_data[4242] = {"theme": "Сны", "ideas_count": 1}
+    cb = FakeCb(data="bs_reflect_skip")
+    await h.cb_reflect_skip(cb)
+    assert 4242 not in h._reflection_waiting
+    assert 4242 not in h._reflection_data
+    assert "Рефлексия пропущена" in cb.message.edits[-1]
+
+
+async def test_cb_reflect_skip_without_pending():
+    h._reflection_waiting.clear()
+    cb = FakeCb(data="bs_reflect_skip")
+    await h.cb_reflect_skip(cb)
+    assert "Рефлексия пропущена" in cb.message.edits[-1]
+
+
+async def test_cb_confirm_save_sets_reflection_pending(monkeypatch):
+    await h.run_storm(4242, FakeStatus(), "Тема про сны")
+    cb = FakeCb(data="bs_pick:1")
+    await h.cb_pick_idea(cb)
+
+    async def fake_show_save_wings(edit_func, uid):
+        pass
+
+    monkeypatch.setattr("handlers.palace._show_save_wings", fake_show_save_wings)
+    cb2 = FakeCb(data="bs_save")
+    await h.cb_confirm_save(cb2)
+    pending = h._reflection_data.get(4242)
+    assert pending is not None
+    assert pending["theme"] == "Тема про сны"
+    assert pending["ideas_count"] == 5

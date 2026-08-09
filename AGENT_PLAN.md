@@ -85,15 +85,21 @@
       + auto_categorize_notes (лимит, kv-отметки "categorized", факты topic→mempalace_kg_add,
       толерантность: index/kg/kv не роняют цикл, отметка только при успехе);
       подключение в reminder_scheduler раз в 720 циклов (~6ч)
-- [ ] Reflection-вопрос после штурма
+- [x] Reflection-вопрос после штурма
+      services/reflection.py (build_reflection_question, save_reflection_answer,
+      kv-журнал "reflection"); после успешного сохранения идеи в Дворец
+      (handlers/palace/save.py → maybe_ask_reflection) бот спрашивает
+      «какая идея самая сильная и почему?», ответ перехватывается в
+      messages.py (хук 0ccb), кнопка «⏭ Пропустить» (bs_reflect_skip)
 - [ ] Проверить запись id события Apple Calendar в список напоминаний (не требуется сейчас)
 
 ## Точка возобновления (обновлять в конце КАЖДОГО шага)
-- Текущая фаза/шаг: БОНУС «Авто-категоризация Apple Notes → KG» ЗАВЕРШЁН. Следующий: «Reflection-вопрос после штурма»
-- Последний завершённый шаг: Авто-категоризация (auto_categorize 94% unit + scheduler 3 теста,
-  BDD 6/6)
-- Следующий шаг: «Reflection-вопрос после штурма» ИЛИ любой оставшийся бонус
-- Статус QA: 2922 passed, BDD: 16/16 features + 6 pre-existing errors (ai_caching,
+- Текущая фаза/шаг: БОНУС «Reflection-вопрос после штурма» ЗАВЕРШЁН. Следующий:
+  «Проверить запись id события Apple Calendar» (отмечен «не требуется сейчас»)
+- Последний завершённый шаг: Reflection-вопрос (reflection 100%, save.py 100%,
+  brainstorm 94%, BDD 6/6)
+- Следующий шаг: проверить с пользователем остаток плана; далее — Agent_guide.md
+- Статус QA: 2943 passed, BDD: 17/17 features + 6 pre-existing errors (ai_caching,
   clear_memory — англ. шаги без реализаций, не наши)
 
 ## Чек-лист завершения

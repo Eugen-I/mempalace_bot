@@ -21,6 +21,7 @@ from handlers.personal_note import (
     _waiting_for_note, process_note_input, _quote_waiting, _save_quote_to_palace,
 )
 from handlers.brainstorm import _storm_waiting  # noqa: F401 — используется в 0cc
+from handlers.brainstorm import _reflection_waiting  # noqa: F401 — используется в 0ccb
 from handlers.transkript import _tr_ai_waiting, handle_tr_ai_question
 from handlers.reminder import handle_reminder_text
 from handlers.search import search_result_cache as _search_result_cache
@@ -230,6 +231,17 @@ async def process_user_message(message: types.Message):
         _storm_waiting.pop(uid, None)
         status = await message.answer("🧠 Запускаю штурм…")
         return await run_storm(uid, status, text)
+
+    # 0ccb. Ожидание ответа на рефлексию после штурма
+    if uid in _reflection_waiting:
+        from services.kv_store import get_kv_store
+        from services.reflection import save_reflection_answer
+
+        data = _reflection_waiting.pop(uid, None)
+        reply = save_reflection_answer(
+            get_kv_store(), uid, (data or {}).get("theme", ""), text,
+        )
+        return await message.answer(reply)
 
     # 0d. Ожидание текста для поиска по крылу
     if uid in _pending_wing_search:

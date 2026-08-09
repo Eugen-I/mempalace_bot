@@ -20,6 +20,7 @@ from services.bot_setup import (
 )
 from handlers.chat import user_sessions, waiting_for_name
 from handlers.palace.shared import _user_context
+from services.reflection import REFLECTION_NS
 
 
 class FakeUser:
@@ -170,6 +171,7 @@ def _enable(monkeypatch, tmp_path=None):
         "messages": [], "summary": "", "summaries": [],
     })
     monkeypatch.setattr(messages, "stream_ai_response_async", _stream_factory(["ответ"]))
+
     async def fake_send(msg, answer, mode):
         return SimpleNamespace(message_id=1)
 
@@ -348,6 +350,45 @@ def test_process_user_message_no_text(monkeypatch):
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
     assert msg.answers == []
+
+
+# ---------- 💭 Рефлексия после штурма (0ccb) ----------
+
+
+def test_process_user_message_reflection_answer(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from services.kv_store import KVStore
+
+    kv = KVStore(db_path=str(tmp_path / "reflection.sqlite"))
+    monkeypatch.setattr("services.kv_store.get_kv_store", lambda: kv)
+    from handlers import brainstorm as h
+
+    h._reflection_waiting[4242] = {"theme": "Сны", "ideas_count": 3}
+    msg = FakeMessage(text="Самая сильная — идея про полёт")
+    asyncio.run(messages.process_user_message(msg))
+    assert any("рефлексия записана" in a[0].lower() for a in msg.answers)
+    assert 4242 not in h._reflection_waiting
+    keys = kv.keys(namespace=REFLECTION_NS)
+    assert len(keys) == 1
+    saved = kv.get(keys[0], namespace=REFLECTION_NS)
+    assert saved["theme"] == "Сны"
+    assert "полёт" in saved["answer"]
+
+
+def test_process_user_message_reflection_empty_answer(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from services.kv_store import KVStore
+
+    kv = KVStore(db_path=str(tmp_path / "reflection.sqlite"))
+    monkeypatch.setattr("services.kv_store.get_kv_store", lambda: kv)
+    from handlers import brainstorm as h
+
+    h._reflection_waiting[4242] = {"theme": "Сны", "ideas_count": 1}
+    msg = FakeMessage(text="   ")
+    asyncio.run(messages.process_user_message(msg))
+    assert any("не записана" in a[0] for a in msg.answers)
+    assert kv.keys(namespace=REFLECTION_NS) == []
+    assert 4242 not in h._reflection_waiting
 
 
 # ---------- 🤖 Агентный режим (agent_enabled) ----------
@@ -906,7 +947,7 @@ def test_auto_activate_existing_chat(monkeypatch, tmp_path):
     os.utime(old, (1000, 1000))
     os.utime(new, (2000, 2000))
     msg = FakeMessage(uid=999, text="привет")
-    result = asyncio.run(messages.process_user_message(msg))
+    asyncio.run(messages.process_user_message(msg))
     assert user_sessions[999] == "ch_new.json"
     assert any("🔄 Активирован" in a[0] for a in msg.answers)
 
@@ -914,7 +955,7 @@ def test_auto_activate_existing_chat(monkeypatch, tmp_path):
 def test_auto_create_chat(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     msg = FakeMessage(uid=999, text="привет")
-    result = asyncio.run(messages.process_user_message(msg))
+    asyncio.run(messages.process_user_message(msg))
     assert user_sessions[999].startswith("ch_auto_")
     assert any("🆕 Создан чат" in a[0] for a in msg.answers)
 
@@ -955,10 +996,9 @@ def _prefix_setup(monkeypatch, tmp_path, msgs=None):
 
 
 def test_prefix_insight(monkeypatch, tmp_path):
-    data = _prefix_setup(monkeypatch, tmp_path)
+    _prefix_setup(monkeypatch, tmp_path)
     msg = FakeMessage(text="!! что тут важного")
-    result = asyncio.run(messages.process_user_message(msg))
-    assert result is None
+    asyncio.run(messages.process_user_message(msg))
     files = os.listdir(str(tmp_path))
     assert any(f.startswith("ext_") for f in files)
     with open(os.path.join(str(tmp_path), files[0]), encoding="utf-8") as f:
@@ -969,7 +1009,7 @@ def test_prefix_insight(monkeypatch, tmp_path):
 
 
 def test_prefix_research(monkeypatch, tmp_path):
-    data = _prefix_setup(monkeypatch, tmp_path)
+    _prefix_setup(monkeypatch, tmp_path)
     msg = FakeMessage(text="??? вопрос для исследования")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
@@ -979,7 +1019,7 @@ def test_prefix_research(monkeypatch, tmp_path):
 
 
 def test_prefix_no_clean_query(monkeypatch, tmp_path):
-    data = _prefix_setup(monkeypatch, tmp_path)
+    _prefix_setup(monkeypatch, tmp_path)
     msg = FakeMessage(text="!!")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
@@ -988,7 +1028,7 @@ def test_prefix_no_clean_query(monkeypatch, tmp_path):
 
 
 def test_prefix_ai_error(monkeypatch, tmp_path):
-    data = _prefix_setup(monkeypatch, tmp_path)
+    _prefix_setup(monkeypatch, tmp_path)
 
     def boom(*a, **k):
         raise RuntimeError("ai down")
@@ -1004,7 +1044,7 @@ def test_prefix_ai_error(monkeypatch, tmp_path):
 
 
 def test_web_command_usage(monkeypatch, tmp_path):
-    data = _prefix_setup(monkeypatch, tmp_path)
+    _prefix_setup(monkeypatch, tmp_path)
     msg = FakeMessage(text="/web")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is not None
@@ -1012,7 +1052,7 @@ def test_web_command_usage(monkeypatch, tmp_path):
 
 
 def test_web_command_success(monkeypatch, tmp_path):
-    data = _prefix_setup(monkeypatch, tmp_path)
+    _prefix_setup(monkeypatch, tmp_path)
     sent = []
 
     async def fake_search(query):
@@ -1031,7 +1071,7 @@ def test_web_command_success(monkeypatch, tmp_path):
 
 
 def test_web_command_error(monkeypatch, tmp_path):
-    data = _prefix_setup(monkeypatch, tmp_path)
+    _prefix_setup(monkeypatch, tmp_path)
 
     async def boom(query):
         raise RuntimeError("net down")
@@ -1055,7 +1095,10 @@ class FakeTime:
         return self.val
 
 
-def _ai_setup(monkeypatch, tmp_path, msgs=None, data_extra=None, stream_chunks=("x" * 40, "y" * 40)):
+def _ai_setup(
+    monkeypatch, tmp_path, msgs=None, data_extra=None,
+    stream_chunks=("x" * 40, "y" * 40),
+):
     _enable(monkeypatch, tmp_path)
     user_sessions[4242] = "ch_test.json"
     data = {

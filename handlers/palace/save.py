@@ -259,6 +259,9 @@ async def cb_save_confirm_execute(cb: types.CallbackQuery):
             _format_save_result(raw, wing, room),
             parse_mode="HTML",
         )
+        from handlers.brainstorm import maybe_ask_reflection
+
+        await maybe_ask_reflection(uid, cb.message.answer)
     except Exception as e:
         await cb.message.edit_text(f"❌ Ошибка сохранения: {e}")
 

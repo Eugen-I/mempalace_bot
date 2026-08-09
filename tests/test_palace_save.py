@@ -1,7 +1,5 @@
 """Unit tests for handlers.palace.save."""
 
-from types import SimpleNamespace
-
 import pytest
 
 from handlers.palace import save as s
@@ -133,8 +131,6 @@ def test_cb_save_start_from_ai_cache(monkeypatch):
         shown.append((edit_func, uid))
 
     monkeypatch.setattr(s, "_show_save_wings", fake_show_wings)
-    from services.ai_cache import _ai_msg_cache
-
     monkeypatch.setattr(s, "_ai_msg_cache", {100: {5: "кэшированный ответ"}})
     msg = FakeMessage(html_text="", text="", reply_to_message=None)
     cb = FakeCb(data="p_sv", message=msg)
@@ -152,8 +148,6 @@ def test_cb_save_start_from_ai_cache_empty(monkeypatch):
         shown.append((edit_func, uid))
 
     monkeypatch.setattr(s, "_show_save_wings", fake_show_wings)
-    from services.ai_cache import _ai_msg_cache
-
     monkeypatch.setattr(s, "_ai_msg_cache", {100: {}, 200: {3: "хвост"}})
     msg = FakeMessage(html_text="", text="", reply_to_message=None)
     cb = FakeCb(data="p_sv", message=msg)
@@ -171,8 +165,6 @@ def test_cb_save_start_ai_cache_all_empty(monkeypatch):
         shown.append((edit_func, uid))
 
     monkeypatch.setattr(s, "_show_save_wings", fake_show_wings)
-    from services.ai_cache import _ai_msg_cache
-
     monkeypatch.setattr(s, "_ai_msg_cache", {100: {}, 200: {}})
     msg = FakeMessage(html_text="", text="", reply_to_message=None)
     cb = FakeCb(data="p_sv", message=msg)
@@ -191,8 +183,6 @@ def test_cb_save_start_no_text(monkeypatch):
         shown.append((edit_func, uid))
 
     monkeypatch.setattr(s, "_show_save_wings", fake_show_wings)
-    from services.ai_cache import _ai_msg_cache
-
     monkeypatch.setattr(s, "_ai_msg_cache", {})
     msg = FakeMessage(html_text="", text="", reply_to_message=None)
     cb = FakeCb(data="p_sv", message=msg)
@@ -680,6 +670,65 @@ def test_cb_save_confirm_execute_error(monkeypatch):
 
     asyncio.run(s.cb_save_confirm_execute(cb))
     assert "❌ Ошибка сохранения: mcp упал" in cb.message.edits[-1][0]
+
+
+def test_cb_save_confirm_execute_asks_reflection_after_success(monkeypatch):
+    _enable(monkeypatch)
+    s._save_state[4242] = {
+        "text": "идея", "wing": "крыло", "room": "комната", "mode": "full",
+    }
+    mcp = FakeMCP('{"drawer_id": "d3"}')
+    monkeypatch.setattr(s, "get_mcp", lambda: mcp)
+    from handlers import brainstorm as h
+
+    h._reflection_data[4242] = {"theme": "Сны", "ideas_count": 3}
+    h._reflection_waiting.clear()
+    cb = FakeCb(data="p_sv_c")
+    import asyncio
+
+    asyncio.run(s.cb_save_confirm_execute(cb))
+    assert "Сохранено в" in cb.message.edits[-1][0]
+    assert cb.message.answers, "вопрос рефлексии не задан"
+    text = cb.message.answers[0][0]
+    assert "Рефлексия" in text and "Сны" in text
+    assert h._reflection_waiting.get(4242)["ideas_count"] == 3
+    assert 4242 not in h._reflection_data
+
+
+def test_cb_save_confirm_execute_no_reflection_without_storm(monkeypatch):
+    _enable(monkeypatch)
+    s._save_state[4242] = {
+        "text": "идея", "wing": "крыло", "room": "комната", "mode": "full",
+    }
+    mcp = FakeMCP('{"drawer_id": "d4"}')
+    monkeypatch.setattr(s, "get_mcp", lambda: mcp)
+    from handlers import brainstorm as h
+
+    h._reflection_data.clear()
+    h._reflection_waiting.clear()
+    cb = FakeCb(data="p_sv_c")
+    import asyncio
+
+    asyncio.run(s.cb_save_confirm_execute(cb))
+    assert "Сохранено в" in cb.message.edits[-1][0]
+    assert cb.message.answers == []
+
+
+def test_cb_save_confirm_execute_error_no_reflection_question(monkeypatch):
+    _enable(monkeypatch)
+    s._save_state[4242] = {"text": "x", "mode": "full"}
+    mcp = FakeMCP(fail_on="mcp упал")
+    monkeypatch.setattr(s, "get_mcp", lambda: mcp)
+    from handlers import brainstorm as h
+
+    h._reflection_data[4242] = {"theme": "Сны", "ideas_count": 1}
+    cb = FakeCb(data="p_sv_c")
+    import asyncio
+
+    asyncio.run(s.cb_save_confirm_execute(cb))
+    assert "Ошибка сохранения" in cb.message.edits[-1][0]
+    assert cb.message.answers == []
+    assert 4242 in h._reflection_data
 
 
 # ---------- _format_save_result ----------

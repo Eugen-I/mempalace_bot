@@ -27,6 +27,8 @@ router = Router()
 
 _storm_waiting: TtlDict = TtlDict()
 _storm_data: TtlDict = TtlDict()
+_reflection_data: TtlDict = TtlDict(ttl=600)
+_reflection_waiting: TtlDict = TtlDict(ttl=3600)
 
 
 async def _status_edit(status_msg, text: str):
@@ -226,6 +228,10 @@ async def cb_confirm_save(cb: types.CallbackQuery):
         return await cb.message.edit_text("❌ Сессия истекла. Начните /штурм заново.")
     _storm_data.pop(uid, None)
     _storm_waiting.pop(uid, None)
+    _reflection_data[uid] = {
+        "theme": (data.get("topic") or "")[:80],
+        "ideas_count": len(data.get("ideas", [])),
+    }
 
     from handlers.palace import _save_state, _show_save_wings
 
@@ -251,3 +257,45 @@ async def cb_cancel(cb: types.CallbackQuery):
         await cb.message.edit_text("❌ Отменено.")
     except Exception:  # noqa: BLE001 — сообщение может быть удалено
         pass
+
+
+# ─── Рефлексия после сохранения идей ───
+
+
+async def maybe_ask_reflection(uid: int, answer_func) -> bool:
+    """Задаёт вопрос рефлексии после успешного сохранения идей штурма.
+
+    Возвращает True, если вопрос задан (для юзера был активный штурм).
+    """
+    data = _reflection_data.pop(uid, None)
+    if not data:
+        return False
+    from services.reflection import build_reflection_question
+
+    _reflection_waiting[uid] = {
+        "theme": data.get("theme", ""),
+        "ideas_count": data.get("ideas_count", 0),
+    }
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(
+        text="⏭ Пропустить", callback_data="bs_reflect_skip",
+    ))
+    await answer_func(
+        build_reflection_question(data.get("theme", "")),
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
+    return True
+
+
+@router.callback_query(F.data == "bs_reflect_skip")
+@allowed_callback
+async def cb_reflect_skip(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    _reflection_data.pop(uid, None)
+    _reflection_waiting.pop(uid, None)
+    try:
+        await cb.message.edit_text("⏭ Рефлексия пропущена.")
+    except Exception as exc:  # noqa: BLE001 — сообщение может быть удалено
+        logger.warning("[STORM] reflect skip edit failed: %s", exc)
