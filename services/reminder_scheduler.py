@@ -9,6 +9,7 @@ REMINDER_NS = "reminders"
 
 _scheduler_task: asyncio.Task | None = None
 _DIGEST_EVERY_CYCLES = 10
+_CATEGORIZE_EVERY_CYCLES = 720
 
 
 async def _run_scheduler(bot):
@@ -48,6 +49,13 @@ async def _run_scheduler(bot):
                     await maybe_send_daily_digest(bot)
                 except Exception as e:
                     logger.warning(f"[DIGEST] daily check failed: {e}")
+            if cycle % _CATEGORIZE_EVERY_CYCLES == 0:
+                try:
+                    from services.auto_categorize import auto_categorize_notes
+
+                    await auto_categorize_notes(limit=20)
+                except Exception as e:
+                    logger.warning(f"[CATEGORIZE] auto run failed: {e}")
         except Exception as e:
             logger.error(f"[REMINDER] Scheduler error: {e}", exc_info=True)
         await asyncio.sleep(30)

@@ -135,6 +135,50 @@ def test_scheduler_due_zero_remind_at(kv):
     assert len(bot.sent) == 1
 
 
+def test_scheduler_runs_auto_categorize_every_n_cycles(kv, monkeypatch):
+    calls = []
+
+    async def fake_categorize(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "services.auto_categorize.auto_categorize_notes", fake_categorize,
+    )
+    monkeypatch.setattr(rs, "_CATEGORIZE_EVERY_CYCLES", 1)
+    bot = FakeBot()
+    asyncio.run(_run_one_cycle(rs._run_scheduler, bot, iterations=2))
+    assert len(calls) == 2
+    assert all(c["limit"] == 20 for c in calls)
+
+
+def test_scheduler_auto_categorize_error_logged(kv, caplog, monkeypatch):
+    async def fake_categorize(**kwargs):
+        raise RuntimeError("categorize boom")
+
+    monkeypatch.setattr(
+        "services.auto_categorize.auto_categorize_notes", fake_categorize,
+    )
+    monkeypatch.setattr(rs, "_CATEGORIZE_EVERY_CYCLES", 1)
+    bot = FakeBot()
+    asyncio.run(_run_one_cycle(rs._run_scheduler, bot, iterations=1))
+    assert "[CATEGORIZE] auto run failed: categorize boom" in caplog.text
+
+
+def test_scheduler_auto_categorize_not_called_before_interval(kv, monkeypatch):
+    calls = []
+
+    async def fake_categorize(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "services.auto_categorize.auto_categorize_notes", fake_categorize,
+    )
+    monkeypatch.setattr(rs, "_CATEGORIZE_EVERY_CYCLES", 100)
+    bot = FakeBot()
+    asyncio.run(_run_one_cycle(rs._run_scheduler, bot, iterations=3))
+    assert calls == []
+
+
 def test_start_scheduler_creates_task(kv):
     bot = FakeBot()
 
