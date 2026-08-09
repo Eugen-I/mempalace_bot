@@ -120,3 +120,26 @@ def test_no_sync_io_in_async_functions():
                     assert name not in blocked, (
                         f"sync IO {name} в async {node.name} (строка {child.lineno})"
                     )
+
+
+# ─── Control chars (реальный баг: qwen2.5 возвращает неэкранированные
+#     \n внутри JSON-строк; строгий json.loads падает) ───
+
+def test_raw_newline_inside_string_parses_with_strict_false():
+    text = '{"ideas": [{"title": "A", "reason": "строка 1\nстрока 2"}]}'
+    result = safe_parse_llm_json(text, expected_type=dict)
+    assert result == {"ideas": [{"title": "A", "reason": "строка 1\nстрока 2"}]}
+
+
+def test_raw_tab_inside_string():
+    text = '["a\tb"]'
+    assert safe_parse_llm_json(text, expected_type=list) == ["a\tb"]
+
+
+def test_raw_newline_inside_fenced_json():
+    text = '```json\n{"x": "a\nb"}\n```'
+    assert safe_parse_llm_json(text, expected_type=dict) == {"x": "a\nb"}
+
+
+def test_invalid_json_still_returns_none():
+    assert safe_parse_llm_json('{"a": ', expected_type=dict) is None

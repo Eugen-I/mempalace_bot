@@ -13,11 +13,11 @@
 Хендлер (handlers/brainstorm.py) — тонкий: только Telegram-обвязка.
 """
 
-import json
 import logging
 import re
 
 from services.apple_notes import AppleNotesError, search_notes
+from services.json_parser import safe_parse_llm_json
 from services.palace_mcp import get_mcp
 
 logger = logging.getLogger("Brainstorm")
@@ -131,10 +131,9 @@ def parse_ideas(raw: str) -> list[dict]:
     cleaned = _clean_raw(raw)
     if not cleaned:
         raise ValueError("Пустой ответ модели.")
-    try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Ответ модели не является JSON: {str(exc)[:80]}") from exc
+    data = safe_parse_llm_json(cleaned, expected_type=dict)
+    if data is None:
+        raise ValueError("Ответ модели не является JSON.")
     if not isinstance(data, dict) or not isinstance(data.get("ideas"), list):
         raise ValueError("В ответе нет массива ideas.")
     ideas = [

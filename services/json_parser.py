@@ -13,6 +13,15 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 _OBJECT_RE = re.compile(r"(\{[\s\S]*\}|\[[\s\S]*\])")
 
 
+def _loads(text: str):
+    """json.loads со strict=False: допускает неэкранированные control chars
+    внутри строк (частая ошибка локальных LLM, например qwen2.5)."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return json.loads(text, strict=False)
+
+
 def extract_json_from_text(text: str):
     """Извлекает JSON (dict/list) из текста LLM; None — если не найден."""
     if not text:
@@ -20,21 +29,21 @@ def extract_json_from_text(text: str):
     text = text.strip()
 
     try:
-        return json.loads(text)
+        return _loads(text)
     except json.JSONDecodeError:
         pass
 
     fence = _FENCE_RE.search(text)
     if fence:
         try:
-            return json.loads(fence.group(1).strip())
+            return _loads(fence.group(1).strip())
         except json.JSONDecodeError:
             pass
 
     obj = _OBJECT_RE.search(text)
     if obj:
         try:
-            return json.loads(obj.group(1))
+            return _loads(obj.group(1))
         except json.JSONDecodeError:
             pass
 
