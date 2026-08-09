@@ -33,10 +33,13 @@ def fake_notes(monkeypatch):
     """Заменяет живой список заметок детерминированным JSON."""
 
     def _make(notes):
-        payload = json.dumps([
-            {"id": f"id{i}", "name": name, "folder": folder, "updated": ""}
-            for i, (name, folder) in enumerate(notes)
-        ])
+        items = []
+        for i, entry in enumerate(notes):
+            items.append({
+                "id": f"id{i}", "name": entry[0], "folder": entry[1],
+                "preview": entry[2] if len(entry) > 2 else "", "updated": "",
+            })
+        payload = json.dumps(items)
         monkeypatch.setattr(an, "run_osascript", lambda script, timeout=30.0: payload)
         return payload
 
@@ -253,9 +256,65 @@ def test_search_matches_folder(tmp_index, fake_notes):
 
 
 def test_search_all_words_required(tmp_index, fake_notes):
-    fake_notes([("Идеи для проекта", "Работа"), ("Идеи для отпуска", "Личное")])
+    fake_notes([("Идеи для проекта", "Работа", ""), ("Идеи для отпуска", "Личное", "")])
     found = an.search_notes("идеи отпуск")
-    assert [n["name"] for n in found] == ["Идеи для отпуска"]
+    assert [n["name"] for n in found] == ["Идеи для отпуска", "Идеи для проекта"]
+
+
+def test_search_matches_body_text(tmp_index, fake_notes):
+    fake_notes([
+        ("Покупки", "Быт", "Вчера купил Шопенгауэра в букинистике"),
+        ("Список дел", "Быт", ""),
+    ])
+    found = an.search_notes("шопенгауэра")
+    assert [n["name"] for n in found] == ["Покупки"]
+
+
+def test_search_ranks_name_higher_than_body(tmp_index, fake_notes):
+    fake_notes([
+        ("Шопенгауэр и воля", "Философия", "Разные мысли"),
+        ("Заметка 1", "Философия", "Пишу о Шопенгауэре каждый день"),
+    ])
+    found = an.search_notes("шопенгауэр")
+    assert [n["name"] for n in found] == ["Шопенгауэр и воля", "Заметка 1"]
+
+
+def test_search_more_word_hits_first(tmp_index, fake_notes):
+    fake_notes([
+        ("Идеи", "Личное", "Планирую отпуск в горах"),
+        ("Идеи для отпуска", "Личное", ""),
+    ])
+    found = an.search_notes("идеи отпуск")
+    assert [n["name"] for n in found] == ["Идеи для отпуска", "Идеи"]
+
+
+def test_search_snippet_around_match(tmp_index, fake_notes):
+    body = ("Сегодня читал про " + "очень длинное предложение о философии " * 5
+            + "Шопенгауэр был прав")
+    fake_notes([("Заметка", "Ф", body)])
+    found = an.search_notes("шопенгауэр")
+    snippet = found[0]["snippet"]
+    assert "шопенгауэр" in snippet.lower()
+    assert len(snippet) <= an.SNIPPET_MAX_CHARS + 2
+
+
+def test_search_snippet_short_body_not_trimmed(tmp_index, fake_notes):
+    fake_notes([("Заметка", "Ф", "Короткий текст про шопенгауэра")])
+    found = an.search_notes("шопенгауэра")
+    assert found[0]["snippet"] == "Короткий текст про шопенгауэра"
+
+
+def test_search_snippet_missing_preview(tmp_index, fake_notes):
+    fake_notes([("Шопенгауэр", "Ф", "")])
+    found = an.search_notes("шопенгауэр")
+    assert found[0]["snippet"] == ""
+
+
+def test_search_preview_trimmed_to_limit(tmp_index, fake_notes):
+    long_body = "слово " * 1000
+    fake_notes([("Заметка", "Ф", long_body)])
+    index = an.get_index()
+    assert len(index["notes"][0]["preview"]) <= an.PREVIEW_MAX_CHARS
 
 
 def test_search_limit(tmp_index, fake_notes):
@@ -323,3 +382,40 @@ def _set_mtime(path, ts):
         os.utime(path, (ts, ts))
     apply()
     return lambda: None
+
+
+# ─── Graceful: превью тел не должно ломать индекс ───
+
+
+def test_preview_timeout_falls_back_to_basic(tmp_index, monkeypatch):
+    """Если листинг с превью упал — повторяем без превью, поиск работает."""
+    scripts = []
+
+    def fake(script, timeout=30.0):
+        scripts.append(script)
+        if an._JXA_LIST_NOTES in script:
+            raise an.AppleNotesError("osascript превысил таймаут")
+        return json.dumps([
+            {"id": "id1", "name": "Шопенгауэр", "folder": "Ф", "preview": "", "updated": ""},
+        ])
+
+    monkeypatch.setattr(an, "run_osascript", fake)
+    index = an.get_index()
+    assert index["notes"][0]["preview"] == ""
+    assert an._JXA_LIST_NOTES_BASIC in scripts[1]
+    assert an.search_notes("шопенгауэр")[0]["name"] == "Шопенгауэр"
+
+
+def test_fetch_skips_non_dict_items(tmp_index, monkeypatch):
+    monkeypatch.setattr(an, "run_osascript", lambda *a, **k: json.dumps(
+        ["мусор", {"id": "id1", "name": "Н", "folder": "Ф", "preview": "", "updated": ""}],
+    ))
+    index = an.get_index()
+    assert [n["id"] for n in index["notes"]] == ["id1"]
+
+
+def test_search_snippet_trimmed_both_sides(tmp_index, fake_notes):
+    body = "начало " + "x" * 500 + " Шопенгауэр " + "y" * 500 + " конец"
+    fake_notes([("Заметка", "Ф", body)])
+    snippet = an.search_notes("шопенгауэр")[0]["snippet"]
+    assert snippet.startswith("…") and snippet.endswith("…")

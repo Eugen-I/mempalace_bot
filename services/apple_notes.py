@@ -24,8 +24,37 @@ logger = logging.getLogger("AppleNotes")
 INDEX_FILE = os.path.join(DATA_DIR, "notes_index.json")
 INDEX_TTL_SECONDS = 3600
 OSASCRIPT_TIMEOUT = 30.0
+OSASCRIPT_LIST_TIMEOUT = 120.0  # листинг с превью тел — тяжелее
+PREVIEW_MAX_CHARS = 1500
+SNIPPET_MAX_CHARS = 120
 
 _JXA_LIST_NOTES = """
+const app = Application("Notes");
+const out = [];
+for (const f of app.folders()) {
+  try {
+    if (String(f.name()) === "Recently Deleted") continue;
+    const names = f.notes.name();
+    const ids = f.notes.id();
+    const texts = f.notes.plaintext();
+    const fname = String(f.name());
+    for (let i = 0; i < names.length; i++) {
+      out.push({
+        id: String(ids[i]),
+        name: String(names[i]),
+        folder: fname,
+        preview: String(texts[i] || ""),
+        updated: ""
+      });
+    }
+  } catch (e) {
+    out.push({error: String(e)});
+  }
+}
+JSON.stringify(out);
+"""
+
+_JXA_LIST_NOTES_BASIC = """
 const app = Application("Notes");
 const out = [];
 for (const f of app.folders()) {
@@ -39,6 +68,7 @@ for (const f of app.folders()) {
         id: String(ids[i]),
         name: String(names[i]),
         folder: fname,
+        preview: "",
         updated: ""
       });
     }
@@ -109,14 +139,37 @@ def _parse_json_out(stdout: str) -> Any:
 
 
 def _fetch_note_list() -> list[dict]:
-    """Живой запрос списка заметок у Apple Notes (без кэша)."""
-    data = _parse_json_out(run_osascript(_JXA_LIST_NOTES))
+    """Живой запрос списка заметок у Apple Notes (без кэша).
+
+    Тяжёлое чтение превью тел (bulk plaintext) идёт первым вызовом с
+    увеличенным таймаутом; если оно падает — повторяем без превью,
+    чтобы поиск по названиям продолжал работать.
+    """
+    try:
+        data = _parse_json_out(
+            run_osascript(_JXA_LIST_NOTES, timeout=OSASCRIPT_LIST_TIMEOUT),
+        )
+    except AppleNotesError:
+        data = _parse_json_out(run_osascript(_JXA_LIST_NOTES_BASIC))
+        logger.warning("[NOTES] previews skipped — index without bodies")
     if not isinstance(data, list):
         raise AppleNotesError(f"Неожиданный формат ответа Notes: {data!r}")
     for item in data:
         if isinstance(item, dict) and "error" in item:
             raise AppleNotesError(f"Apple Notes вернул ошибку: {item['error']}")
-    return [item for item in data if isinstance(item, dict) and item.get("id")]
+    notes = []
+    for item in data:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        preview = (item.get("preview") or "").strip()
+        notes.append({
+            "id": item["id"],
+            "name": item.get("name", ""),
+            "folder": item.get("folder", ""),
+            "preview": preview[:PREVIEW_MAX_CHARS],
+            "updated": item.get("updated", ""),
+        })
+    return notes
 
 
 # ─── Кэш-индекс ───
@@ -203,10 +256,32 @@ def read_note(note_id: str) -> dict:
     return data
 
 
-def search_notes(query: str, limit: int = 10, force_refresh: bool = False) -> list[dict]:
-    """Поиск по индексу (name/folder, без учёта регистра).
+def _make_snippet(note: dict, words: list[str]) -> str:
+    """Фрагмент текста вокруг первого совпадения (~SNIPPET_MAX_CHARS)."""
+    preview = note.get("preview") or ""
+    if not preview or not words:
+        return ""
+    low = preview.lower()
+    pos = min((low.find(w) for w in words if low.find(w) >= 0), default=-1)
+    if pos < 0:
+        return preview[:SNIPPET_MAX_CHARS]
+    start = max(0, pos - SNIPPET_MAX_CHARS // 3)
+    end = min(len(preview), start + SNIPPET_MAX_CHARS)
+    snippet = preview[start:end].strip()
+    if start > 0:
+        snippet = "…" + snippet
+    if end < len(preview):
+        snippet = snippet + "…"
+    return snippet
 
-    Строгий подзапрос по всем словам запроса. limit — максимум результатов.
+
+def search_notes(query: str, limit: int = 10, force_refresh: bool = False) -> list[dict]:
+    """Поиск по индексу (name/folder/preview, без учёта регистра).
+
+    Совпадение слов ищется в названии, папке и тексте заметки. Результаты
+    ранжируются: слово в названии важнее, чем в тексте; заметки с большим
+    числом совпавших слов — выше. Каждая запись дополняется snippet —
+    фрагментом текста вокруг первого совпадения. limit — максимум результатов.
     """
     if limit < 1:
         raise AppleNotesError("limit должен быть ≥ 1.")
@@ -214,11 +289,24 @@ def search_notes(query: str, limit: int = 10, force_refresh: bool = False) -> li
     if not words:
         raise AppleNotesError("Пустой поисковый запрос.")
     notes = list_notes(force_refresh=force_refresh)
-    found = []
+    scored = []
     for note in notes:
-        haystack = f"{note.get('name', '')} {note.get('folder', '')}".lower()
-        if all(w in haystack for w in words):
-            found.append(note)
-            if len(found) >= limit:
-                break
+        name = (note.get("name", "") or "").lower()
+        folder = (note.get("folder", "") or "").lower()
+        preview = (note.get("preview") or "").lower()
+        name_hits = sum(1 for w in words if w in name)
+        folder_hits = sum(1 for w in words if w in folder)
+        preview_hits = sum(1 for w in words if w in preview)
+        score = 3 * name_hits + 1 * folder_hits + 1 * preview_hits
+        if score > 0:
+            scored.append((score, note))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    found = []
+    for score, note in scored:
+        result = dict(note)
+        result["snippet"] = _make_snippet(note, words)
+        result["_score"] = score
+        found.append(result)
+        if len(found) >= limit:
+            break
     return found

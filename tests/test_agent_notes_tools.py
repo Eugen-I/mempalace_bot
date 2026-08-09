@@ -114,6 +114,25 @@ def test_notes_search_ok(mock_apple_notes):
     assert "id1" in out
 
 
+def test_notes_search_shows_snippet(mock_apple_notes):
+    mock_apple_notes(search_result=[
+        {"id": "id2", "name": "Покупки", "folder": "Быт", "updated": "",
+         "snippet": "…купил Шопенгауэра…"},
+    ])
+    out = ant._notes_search({"query": "шопенгауэр"})
+    assert "Шопенгауэр" in out
+    assert "…купил Шопенгауэра…" in out
+
+
+def test_notes_search_no_snippet_plain_line(mock_apple_notes):
+    mock_apple_notes(search_result=[
+        {"id": "id3", "name": "Имя", "folder": "Ф", "updated": "", "snippet": ""},
+    ])
+    out = ant._notes_search({"query": "имя"})
+    assert "id3" in out
+    assert "…" not in out
+
+
 def test_notes_search_no_results(mock_apple_notes):
     mock_apple_notes(search_result=[])
     assert "ничего не найдено" in ant._notes_search({"query": "zzz"})

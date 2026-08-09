@@ -82,3 +82,13 @@ Feature: Agent Mode (qwen2.5 with tools)
     Then I see the step status "🔧 Шаг 1/5: notes_search…"
     And the tool "notes_read" was called with the id "note1"
     And the final answer contains the text "воля"
+
+  @agent @smoke
+  Scenario: Agent finds a note by a word from its text and cites it
+    Given the agent is enabled in my settings
+    And a note "Философия воли" with id "note1" and text "Размышления о воле и представлении" is in the Apple Notes index
+    And the model script calls "notes_search" and then "notes_read" and then returns "Цитата из заметки «Философия воли»: «Размышления о воле»"
+    When I run the agent with the user prompt "что в заметках про волю"
+    Then I see the step status "🔧 Шаг 1/5: notes_search…"
+    And the tool "notes_read" was called with the id "note1"
+    And the final answer contains the text "Философия воли"

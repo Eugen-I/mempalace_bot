@@ -57,8 +57,10 @@ def _notes_list(args: dict) -> str:
 
 @register_tool(
     "notes_search",
-    "Поиск заметок Apple Notes по названию и папке (без учёта регистра, "
-    "все слова запроса). Возвращает ID — их можно передать в notes_read.",
+    "Поиск заметок Apple Notes по названию, папке И ТЕКСТУ заметки "
+    "(без учёта регистра, ранжирование по релевантности). Возвращает ID, "
+    "название и фрагмент текста, где найдено совпадение. Передай ID в "
+    "notes_read, чтобы прочитать заметку целиком, затем цитируй фрагменты.",
     schema={
         "type": "object",
         "properties": {
@@ -84,8 +86,11 @@ def _notes_search(args: dict) -> str:
         return _error_text(exc) if isinstance(exc, AppleNotesError) else f"Ошибка: {exc}"
     if not found:
         return "По запросу ничего не найдено."
-    lines = [f"- {n.get('name', '?')} [id={n.get('id')}] (папка: {n.get('folder', '?')})"
-             for n in found]
+    lines = []
+    for n in found:
+        head = f"- {n.get('name', '?')} [id={n.get('id')}] (папка: {n.get('folder', '?')})"
+        snippet = n.get("snippet") or ""
+        lines.append(head if not snippet else f"{head}\n  {snippet}")
     return "\n".join(lines)
 
 

@@ -209,6 +209,33 @@ def step_notes_index(context, name, note_id):
     ant.read_note = fake_read
 
 
+@given('a note "{name}" with id "{note_id}" and text "{body}" is in the Apple Notes index')
+def step_notes_index_with_body(context, name, note_id, body):
+    """Заметка с текстом: поиск находит слово из текста и возвращает сниппет."""
+    from services import agent_notes_tools as ant
+
+    context.notes_orig_search = ant.search_notes
+    context.notes_orig_read = ant.read_note
+    context.notes_read_calls = []
+
+    def fake_search(query, limit=10, force_refresh=False):
+        words = [w.lower() for w in query.split()]
+        low = body.lower()
+        if not all(w in low for w in words):
+            return []
+        return [{
+            "id": note_id, "name": name, "folder": "Философия",
+            "updated": "", "snippet": f"…{body[:60]}…",
+        }]
+
+    def fake_read(nid):
+        context.notes_read_calls.append(nid)
+        return {"name": name, "body": body}
+
+    ant.search_notes = fake_search
+    ant.read_note = fake_read
+
+
 @given('the model script calls "notes_search" and then "notes_read" and then returns "{text}"')
 def step_script_notes(context, text):
     context.script = [

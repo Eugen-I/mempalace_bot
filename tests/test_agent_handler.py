@@ -290,3 +290,12 @@ async def test_cb_room_agent_no_data_returns():
     cb = FakeCb(4242, data=None)
     await h.cb_room_agent(cb)
     assert cb.answers == [(None, None)]
+
+
+# ─── Промпт агента: обязательное цитирование заметок ───
+
+
+def test_agent_system_prompt_requires_citations():
+    from handlers.agent import AGENT_SYSTEM_PROMPT
+    assert "цитируй" in AGENT_SYSTEM_PROMPT
+    assert "название заметки" in AGENT_SYSTEM_PROMPT
