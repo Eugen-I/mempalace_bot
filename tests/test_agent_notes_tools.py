@@ -4,6 +4,8 @@
 apple_notes замокана; проверяются форматирование результата и обработка ошибок.
 """
 
+import asyncio
+
 import pytest
 
 from services import agent_notes_tools as ant
@@ -26,7 +28,7 @@ def mock_apple_notes(monkeypatch):
             _maybe("list", list_result or []),
         )
         monkeypatch.setattr(
-            "services.agent_notes_tools.search_notes",
+            "services.agent_notes_tools.search_notes_hybrid",
             _maybe("search", search_result or []),
         )
         monkeypatch.setattr(
@@ -109,7 +111,7 @@ def test_notes_search_ok(mock_apple_notes):
     mock_apple_notes(search_result=[
         {"id": "id1", "name": "Шопенгауэр", "folder": "Ф", "updated": ""},
     ])
-    out = ant._notes_search({"query": "шопенгауэр", "limit": 5})
+    out = asyncio.run(ant._notes_search({"query": "шопенгауэр", "limit": 5}))
     assert "Шопенгауэр" in out
     assert "id1" in out
 
@@ -119,7 +121,7 @@ def test_notes_search_shows_snippet(mock_apple_notes):
         {"id": "id2", "name": "Покупки", "folder": "Быт", "updated": "",
          "snippet": "…купил Шопенгауэра…"},
     ])
-    out = ant._notes_search({"query": "шопенгауэр"})
+    out = asyncio.run(ant._notes_search({"query": "шопенгауэр"}))
     assert "Шопенгауэр" in out
     assert "…купил Шопенгауэра…" in out
 
@@ -128,19 +130,21 @@ def test_notes_search_no_snippet_plain_line(mock_apple_notes):
     mock_apple_notes(search_result=[
         {"id": "id3", "name": "Имя", "folder": "Ф", "updated": "", "snippet": ""},
     ])
-    out = ant._notes_search({"query": "имя"})
+    out = asyncio.run(ant._notes_search({"query": "имя"}))
     assert "id3" in out
     assert "…" not in out
 
 
 def test_notes_search_no_results(mock_apple_notes):
     mock_apple_notes(search_result=[])
-    assert "ничего не найдено" in ant._notes_search({"query": "zzz"})
+    out = asyncio.run(ant._notes_search({"query": "zzz"}))
+    assert "ничего не найдено" in out
 
 
 def test_notes_search_error(mock_apple_notes):
     mock_apple_notes(raise_error={"search"})
-    assert "Ошибка Apple Notes" in ant._notes_search({"query": "q"})
+    out = asyncio.run(ant._notes_search({"query": "q"}))
+    assert "Ошибка Apple Notes" in out
 
 
 def test_notes_search_validate_arguments():

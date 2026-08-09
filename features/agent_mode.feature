@@ -92,3 +92,22 @@ Feature: Agent Mode (qwen2.5 with tools)
     Then I see the step status "🔧 Шаг 1/5: notes_search…"
     And the tool "notes_read" was called with the id "note1"
     And the final answer contains the text "Философия воли"
+
+  @agent @smoke @semantic
+  Scenario: Semantic search finds a note by meaning even if the query word is absent from the title
+    Given the agent is enabled in my settings
+    And semantic search returns the note "Идеи по отпуску" with id "note7" for the query "хочу отдохнуть"
+    And the model script calls "notes_search" with the query "хочу отдохнуть" and then "notes_read" with id "note7" and then returns "Цитата из заметки «Идеи по отпуску»: «поехать на море»"
+    When I run the agent with the user prompt "что я писал про отдых"
+    Then I see the step status "🔧 Шаг 1/5: notes_search…"
+    And the tool "notes_read" was called with the id "note7"
+    And the final answer contains the text "поехать на море"
+
+  @agent @negative @semantic
+  Scenario: Semantic search unavailable — agent answers without crash
+    Given the agent is enabled in my settings
+    And the semantic search is unavailable
+    And the model script returns only a plain text without tool calls
+    When I run the agent with the user prompt "что я писал про отпуск"
+    Then the final answer equals the model text
+    And the agent finished without crash

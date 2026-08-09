@@ -162,3 +162,14 @@
 - **agent.py**: `AGENT_SYSTEM_PROMPT` — правило обязательного цитирования дословных фрагментов с названием заметки.
 - **Тесты**: apple_notes 100% (38→40), agent_notes_tools 100%; BDD: agent_mode.feature 9→10 сценариев (поиск по слову из текста + цитата).
 - **Итог**: 2978 passed, flake8/mypy 0, bandit без новых (3 преэкзистирующих Low в apple_notes, задокументированы).
+
+## 2026-08-09 — Семантический поиск по Apple Notes (bge-m3, гибрид)
+
+- **Задача**: агент не находит заметки «по смыслу» (синонимы, перефразировки) — только точные совпадения слов.
+- **services/notes_embeddings.py** (новый модуль): клиент эмбеддингов Ollama (`/api/embed`, bge-m3, 1024 dim, urllib — `requests` нет в requirements), SQLite-хранилище `DATA_DIR/notes_embeddings.sqlite` (note_id/name/folder/preview/vector/model), `build_index` (батчи по 40, `INSERT OR REPLACE`, пересборка при расхождении count), `_cosine`, `search_semantic` (score>0, сортировка по близости), `search_notes_hybrid` (полнотекст → семантические дополнения с дедупом по id, fallback `[]` при недоступности модели/ошибке).
+- **agent_notes_tools.py**: `_notes_search` → async (`asyncio.to_thread`), гибрид вместо чистого полнотекста.
+- **Найденный баг в живой проверке**: Ollama `/api/show` с `{"model": ...}` отвечает `model: None` (заполнен `model_info`) → `is_model_available()` ложно возвращал False. Фикс: проверка `model or model_info`.
+- **QA**: 3013 passed (+16 тестов notes_embeddings → 34); notes_embeddings **99%**, apple_notes/agent_notes_tools 100%; flake8/mypy 0; bandit без новых (2×B310 закрыты `# nosec` с пояснением — URL фиксированный localhost); BDD 97 сценариев (agent_mode 10→12: семантический happy path + недоступность модели).
+- **Недостижимый guard (задокументировано)**: `search_notes_hybrid` строка ~221 — ветка цикла без break: если fulltext не срезан лимитом, все семантические записи уже в нём (seen); если срезан — первое же добавление даёт `len >= limit` → break.
+- **mutmut**: сломан на Python 3.14 (coverage crash `KeyError: '__main__'`) — pre-existing, воспроизводится на чистом baseline; попутно починены `also_copy` (main.py, cli_ask.py) и добавлен notes_embeddings в source_paths, чтобы мутации были готовы к запуску после фикса окружения.
+- **Живая проверка**: bge-m3 скачана в Ollama; `search_notes_hybrid("шопенгауэр")` вернул заметку «HP» (`_score: 0.4721`) без слова «шопенгауэр» в тексте — семантическое дополнение работает.

@@ -11,8 +11,8 @@ from services.apple_notes import (
     AppleNotesError,
     list_notes,
     read_note,
-    search_notes,
 )
+from services.notes_embeddings import search_notes_hybrid
 
 logger = logging.getLogger("AgentNotesTools")
 
@@ -57,16 +57,16 @@ def _notes_list(args: dict) -> str:
 
 @register_tool(
     "notes_search",
-    "Поиск заметок Apple Notes по названию, папке И ТЕКСТУ заметки "
-    "(без учёта регистра, ранжирование по релевантности). Возвращает ID, "
-    "название и фрагмент текста, где найдено совпадение. Передай ID в "
+    "Поиск заметок Apple Notes: полнотекстовый по названию, папке и тексту "
+    "ПЛЮС семантический (по смыслу, локальная модель эмбеддингов). Возвращает "
+    "ID, название и фрагмент текста, где найдено совпадение. Передай ID в "
     "notes_read, чтобы прочитать заметку целиком, затем цитируй фрагменты.",
     schema={
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Поисковый запрос — слова для поиска",
+                "description": "Поисковый запрос — слова или смысл для поиска",
             },
             "limit": {
                 "type": "integer",
@@ -77,9 +77,12 @@ def _notes_list(args: dict) -> str:
     },
     category=CAT_NOTES,
 )
-def _notes_search(args: dict) -> str:
+async def _notes_search(args: dict) -> str:
+    import asyncio
+
     try:
-        found = search_notes(
+        found = await asyncio.to_thread(
+            search_notes_hybrid,
             args["query"], limit=int(args.get("limit") or 10),
         )
     except (AppleNotesError, ValueError) as exc:

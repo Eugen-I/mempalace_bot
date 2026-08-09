@@ -194,7 +194,7 @@ def step_script_mp_search(context, query, text):
 def step_notes_index(context, name, note_id):
     from services import agent_notes_tools as ant
 
-    context.notes_orig_search = ant.search_notes
+    context.notes_orig_search = ant.search_notes_hybrid
     context.notes_orig_read = ant.read_note
     context.notes_read_calls = []
 
@@ -205,7 +205,7 @@ def step_notes_index(context, name, note_id):
         context.notes_read_calls.append(nid)
         return {"name": name, "body": f"Содержимое: {name}"}
 
-    ant.search_notes = fake_search
+    ant.search_notes_hybrid = fake_search
     ant.read_note = fake_read
 
 
@@ -214,7 +214,7 @@ def step_notes_index_with_body(context, name, note_id, body):
     """Заметка с текстом: поиск находит слово из текста и возвращает сниппет."""
     from services import agent_notes_tools as ant
 
-    context.notes_orig_search = ant.search_notes
+    context.notes_orig_search = ant.search_notes_hybrid
     context.notes_orig_read = ant.read_note
     context.notes_read_calls = []
 
@@ -232,7 +232,51 @@ def step_notes_index_with_body(context, name, note_id, body):
         context.notes_read_calls.append(nid)
         return {"name": name, "body": body}
 
-    ant.search_notes = fake_search
+    ant.search_notes_hybrid = fake_search
+    ant.read_note = fake_read
+
+
+@given('semantic search returns the note "{name}" with id "{note_id}" for the query "{query}"')
+def step_semantic_notes_index(context, name, note_id, query):
+    """Семантика находит заметку по смыслу: слово запроса отсутствует
+    в названии, но заметка найдена (эмуляция семантического дополнения)."""
+    from services import agent_notes_tools as ant
+
+    context.notes_orig_search = ant.search_notes_hybrid
+    context.notes_orig_read = ant.read_note
+    context.notes_read_calls = []
+
+    def fake_search(q, limit=10, force_refresh=False):
+        if q != query:
+            return []
+        return [{
+            "id": note_id, "name": name, "folder": "Личное",
+            "updated": "", "snippet": f"…{name}: по смыслу…",
+        }]
+
+    def fake_read(nid):
+        context.notes_read_calls.append(nid)
+        return {"name": name, "body": "поехать на море"}
+
+    ant.search_notes_hybrid = fake_search
+    ant.read_note = fake_read
+
+
+@given('the semantic search is unavailable')
+def step_semantic_unavailable(context):
+    """Семантическая модель недоступна — гибрид возвращает пусто."""
+    from services import agent_notes_tools as ant
+
+    context.notes_orig_search = ant.search_notes_hybrid
+    context.notes_orig_read = ant.read_note
+
+    def fake_search(q, limit=10, force_refresh=False):
+        return []
+
+    def fake_read(nid):
+        return {"name": "?", "body": ""}
+
+    ant.search_notes_hybrid = fake_search
     ant.read_note = fake_read
 
 
@@ -241,6 +285,18 @@ def step_script_notes(context, text):
     context.script = [
         _tool_call("notes_search", json.dumps({"query": "воля"}, ensure_ascii=False)),
         _tool_call("notes_read", json.dumps({"note_id": "note1"})),
+        _text_reply(text),
+    ]
+
+
+@given(
+    'the model script calls "notes_search" with the query "{query}" and then '
+    '"notes_read" with id "{note_id}" and then returns "{text}"',
+)
+def step_script_notes_with_ids(context, query, note_id, text):
+    context.script = [
+        _tool_call("notes_search", json.dumps({"query": query}, ensure_ascii=False)),
+        _tool_call("notes_read", json.dumps({"note_id": note_id})),
         _text_reply(text),
     ]
 
@@ -291,7 +347,7 @@ def step_run_agent(context, prompt):
     if getattr(context, "notes_orig_search", None):
         from services import agent_notes_tools as ant
 
-        ant.search_notes = context.notes_orig_search
+        ant.search_notes_hybrid = context.notes_orig_search
         ant.read_note = context.notes_orig_read
         context.notes_orig_search = None
 
