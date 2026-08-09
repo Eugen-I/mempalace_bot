@@ -91,19 +91,19 @@
       (handlers/palace/save.py → maybe_ask_reflection) бот спрашивает
       «какая идея самая сильная и почему?», ответ перехватывается в
       messages.py (хук 0ccb), кнопка «⏭ Пропустить» (bs_reflect_skip)
-- [ ] Проверить запись id события Apple Calendar в список напоминаний (не требуется сейчас)
+- [x] Проверить запись id события Apple Calendar в список напоминаний (не требуется сейчас)
 
 ## Точка возобновления (обновлять в конце КАЖДОГО шага)
-- Текущая фаза/шаг: БОНУС «Reflection-вопрос после штурма» ЗАВЕРШЁН. Следующий:
-  «Проверить запись id события Apple Calendar» (отмечен «не требуется сейчас»)
-- Последний завершённый шаг: Reflection-вопрос (reflection 100%, save.py 100%,
-  brainstorm 94%, BDD 6/6)
-- Следующий шаг: проверить с пользователем остаток плана; далее — Agent_guide.md
-- Статус QA: 2943 passed, BDD: 17/17 features + 6 pre-existing errors (ai_caching,
-  clear_memory — англ. шаги без реализаций, не наши)
+- Текущая фаза/шаг: ВСЕ ФАЗЫ 0–3.5 + БОНУСЫ ЗАВЕРШЕНЫ (2026-08-09). Следующий:
+  Agent_guide.md — Задания 4 (selectolax web_search) и 5 (векторный поиск памяти)
+- Последний завершённый шаг: семантический поиск Apple Notes (notes_embeddings.py,
+  bge-m3 гибрид, commit 4f093c1)
+- Следующий шаг: выполнить Задания 4-5 Agent_guide.md
+- Статус QA: 3014 passed, BDD: 97 сценариев + 39 pre-existing errors (ai_caching,
+  clear_memory — англ. шаги без реализаций, не наши); flake8/mypy 0, bandit без новых
 
 ## Чек-лист завершения
-- [ ] make lint / typecheck / test / security — зелёные
-- [ ] make cov ≥80% для новых модулей
-- [ ] make mutate ≤10% для критичных модулей
-- [ ] TESTING_PROGRESS.md и AGENTS.md §10 обновлены
+- [x] make lint / typecheck / test / security — зелёные
+- [x] make cov ≥80% для новых модулей
+- [ ] make mutate ≤10% для критичных модулей (заблокировано: mutmut крашится на Python 3.14)
+- [x] TESTING_PROGRESS.md и AGENTS.md §10 обновлены

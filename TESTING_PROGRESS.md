@@ -111,7 +111,6 @@
 - [x] 3. `services/multimodal.py` — **90%**, 20 тестов (tests/test_multimodal.py): capabilities кэш/конфиг/ошибки, check_capability, encode base64 (ok/нет файла/пустой), save (copy+delete/нет файла), list (фильтр ext/лимит 10/сорт), delete.
 - [x] 4. `services/note_linker.py` — **86%**, 12 тестов (tests/test_note_linker.py): escape MarkdownV2 (границы/кириллица), link_note_async (добавление блока/самоисключение/короткая/нет результатов/только себя/лимит 6/исключения).
 - [x] 5. `services/reminder_scheduler.py` — **92%**, 8 тестов (tests/test_reminder_scheduler.py): отправка просроченных, пропуск будущих, ошибка отправки (не удаляет), отсутствие данных, граница remind_at=0, start/stop/idempotent таска.
-- [ ] 6. `services/tavily_search.py` — 0%
 - [x] 6. `services/tavily_search.py` — **98%**, 19 тестов (tests/test_tavily_search.py): нет ключа, пустой запрос, трим до 500, успех, 401/429/таймаут/HTTP-ошибка/общая ошибка, cap max_results 10, форматирование (пусто/ответ/без URL/fallback content/усечение/экранирование/лимит), fallback (ошибка/успех).
 - [x] 7. `services/web_search_cache.py` — **96%**, 14 тестов (tests/test_web_search_cache.py): save (файл/id/title), save_with_id, load (ok/нет/битый), cleanup (старые удалены/свежие остались/не-json), list (пусто/парсинг/сорт по времени/битые пропущены).
 - [x] 8. `services/whisper_service.py` — **100%**, 4 теста (tests/test_whisper_service.py): кэш одинаковой модели, разные размеры, prewarm base, idempotent.
