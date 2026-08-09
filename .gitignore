@@ -55,3 +55,14 @@ telegram-bot-ai-guide-compressed.md
 
 # Локальные ТЗ для ИИ-сессий (не хранить в репозитории)
 TZ_*.md
+
+# Backup-файлы
+*.backup
+*.backup[0-9]*
+*.bak
+*.bak[0-9]*
+*.old
+*.orig
+*~
+.vscode/
+.idea/

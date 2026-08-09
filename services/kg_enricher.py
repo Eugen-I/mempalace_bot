@@ -1,8 +1,9 @@
-import json
 import logging
 import os
 import re
 from typing import Any
+
+from services.json_parser import safe_parse_llm_json
 
 logger = logging.getLogger("KGEnricher")
 
@@ -184,7 +185,10 @@ async def enrich_file(filepath: str) -> dict | None:
         if answer.startswith("json") or answer.startswith("JSON"):
             answer = answer[4:].strip()
 
-        data = json.loads(answer)
+        data = safe_parse_llm_json(answer, expected_type=dict)
+        if data is None:
+            logger.warning(f"AI parse failed for {fname}: not valid JSON, falling back to filename")
+            data = _extract_from_filename(fname, parent)
     except Exception as e:
         logger.warning(f"AI parse failed for {fname}: {e}, falling back to filename")
         data = _extract_from_filename(fname, parent)

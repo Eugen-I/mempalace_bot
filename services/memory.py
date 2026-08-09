@@ -1,9 +1,12 @@
+import asyncio
 import json
 import logging
 import os
 import re
 import tempfile
 from datetime import datetime
+
+from services.json_parser import safe_parse_llm_json
 
 logger = logging.getLogger("MemoryService")
 
@@ -83,7 +86,7 @@ async def extract_and_store_facts(user_id: int, user_query: str, ai_answer: str)
         facts = await _extract_facts(user_query, ai_answer)
         if not facts:
             return
-        memories = _load_memories(user_id)
+        memories = await asyncio.to_thread(_load_memories, user_id)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         for fact in facts:
             memories.append(
@@ -96,7 +99,7 @@ async def extract_and_store_facts(user_id: int, user_query: str, ai_answer: str)
                     "access_count": 0,
                 },
             )
-        _save_memories(user_id, memories[-500:])
+        await asyncio.to_thread(_save_memories, user_id, memories[-500:])
         logger.info(f"[MEMORY] Stored {len(facts)} facts for user {user_id}")
     except Exception as e:
         logger.error(f"[MEMORY] extract error: {e}", exc_info=True)
@@ -126,8 +129,7 @@ async def _extract_facts(user_query: str, ai_answer: str) -> list[str]:
 
     match = re.search(r"\[.*?\]", result, re.DOTALL)
     if match:
-        try:
-            return json.loads(match.group())
-        except Exception:
-            pass
+        facts = safe_parse_llm_json(match.group(), expected_type=list)
+        if facts:
+            return facts
     return []
