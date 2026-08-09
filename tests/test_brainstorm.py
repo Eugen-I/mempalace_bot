@@ -206,4 +206,91 @@ def test_ideas_to_text():
     assert "2. B" in text
 
 
+# ─── Связывание идей («Связано с: …») ───
+
+def test_significant_tokens_empty():
+    assert bs._significant_tokens("") == set()
+    assert bs._significant_tokens(None) == set()
+
+
+def test_significant_tokens_filters_short_and_digits():
+    tokens = bs._significant_tokens("Кот 1234 Парк парк 2024")
+    assert tokens == {"парк"}
+
+
+def test_significant_tokens_case_insensitive():
+    assert bs._significant_tokens("ФОТОСЕРИЯ") == {"фотосерия"}
+
+
+def test_find_linked_happy():
+    context = {
+        "notes": "- План съёмки: полевая фотосерия в парке",
+        "palace": "запись про фотосерию в парке",
+        "kg": "нет совпадений",
+    }
+    linked = bs.find_linked("Идея: фотосерия в парке", context)
+    assert len(linked) == 2
+    assert linked[0]["score"] >= linked[1]["score"]
+    assert {item["source"] for item in linked} == {"notes", "palace"}
+
+
+def test_find_linked_no_overlap():
+    context = {"notes": "- Совсем другое", "palace": "", "kg": ""}
+    assert bs.find_linked("фотосерия в парке", context) == []
+
+
+def test_find_linked_empty_context():
+    assert bs.find_linked("фотосерия", {"notes": "", "palace": "", "kg": ""}) == []
+    assert bs.find_linked("фотосерия", {}) == []
+
+
+def test_find_linked_empty_ideas_text():
+    context = {"notes": "- фотосерия"}
+    assert bs.find_linked("", context) == []
+    assert bs.find_linked("   ", context) == []
+
+
+def test_find_linked_limit_boundary():
+    lines = "\n".join(f"- строка номер {i} фотосерия" for i in range(1, 8))
+    context = {"notes": lines, "palace": "", "kg": ""}
+    linked = bs.find_linked("фотосерия", context)
+    assert len(linked) == bs.MAX_LINKS
+    linked_one = bs.find_linked("фотосерия", context, limit=1)
+    assert len(linked_one) == 1
+    linked_zero = bs.find_linked("фотосерия", context, limit=0)
+    assert linked_zero == []
+
+
+def test_find_linked_sorted_by_score():
+    context = {
+        "notes": "- только фотосерия\n- фотосерия и парке вместе",
+        "palace": "",
+        "kg": "",
+    }
+    linked = bs.find_linked("фотосерия в парке", context)
+    assert linked[0]["text"].startswith("- фотосерия и парке")
+    assert linked[0]["score"] == 2
+    assert linked[1]["score"] == 1
+
+
+def test_find_linked_truncates_long_line():
+    long_line = "- фотосерия " + "x" * 500
+    linked = bs.find_linked("фотосерия", {"notes": long_line})
+    assert len(linked) == 1
+    assert len(linked[0]["text"]) == bs.MAX_LINK_TEXT_LEN
+
+
+def test_format_linked_happy():
+    linked = [{"source": "notes", "label": "Apple Notes",
+               "text": "текст <b>заметки</b>", "score": 1}]
+    text = bs.format_linked(linked)
+    assert text.startswith("🔗 <b>Связано с:</b>")
+    assert "Apple Notes" in text
+    assert "&lt;b&gt;заметки&lt;/b&gt;" in text
+
+
+def test_format_linked_empty():
+    assert bs.format_linked([]) == "🔗 <b>Связано с:</b>"
+
+
 # маленький хелпер для async-тестов (модуль импортирован без asyncio.run в тестах)

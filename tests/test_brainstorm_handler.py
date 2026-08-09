@@ -200,6 +200,57 @@ async def test_cb_all_expired_session():
     assert "Сессия истекла" in cb.message.edits[-1]
 
 
+# ─── Связывание идей («Связано с: …») ───
+
+async def test_confirm_shows_linked_block():
+    await h.run_storm(4242, FakeStatus(), "Тема")
+    h._storm_data[4242]["context"] = {
+        "notes": "- Заметка: идея про фотосерию",
+        "palace": "",
+        "kg": "",
+    }
+    cb = FakeCb(data="bs_pick:1")
+    await h.cb_pick_idea(cb)
+    preview = cb.message.edits[-1]
+    assert "Связано с" in preview
+    assert "Apple Notes" in preview
+    assert "фотосерию" in preview
+
+
+async def test_confirm_no_linked_block_without_overlap():
+    await h.run_storm(4242, FakeStatus(), "Тема")
+    h._storm_data[4242]["context"] = {
+        "notes": "- Совсем другие слова",
+        "palace": "тоже без пересечений",
+        "kg": "",
+    }
+    cb = FakeCb(data="bs_pick:1")
+    await h.cb_pick_idea(cb)
+    assert "Связано с" not in cb.message.edits[-1]
+
+
+async def test_confirm_no_linked_block_empty_context():
+    await h.run_storm(4242, FakeStatus(), "Тема")
+    h._storm_data[4242]["context"] = {"notes": "", "palace": "", "kg": ""}
+    cb = FakeCb(data="bs_all")
+    await h.cb_save_all(cb)
+    assert "Связано с" not in cb.message.edits[-1]
+
+
+async def test_confirm_linked_html_escaped():
+    await h.run_storm(4242, FakeStatus(), "Тема")
+    h._storm_data[4242]["context"] = {
+        "notes": "- идея с тегом <b>сырым</b>",
+        "palace": "",
+        "kg": "",
+    }
+    cb = FakeCb(data="bs_pick:1")
+    await h.cb_pick_idea(cb)
+    preview = cb.message.edits[-1]
+    assert "<b>сырым</b>" not in preview
+    assert "&lt;b&gt;сырым&lt;/b&gt;" in preview
+
+
 # ─── Сохранение (мост в save-флоу) ───
 
 async def test_cb_confirm_save_bridges_to_palace(monkeypatch):

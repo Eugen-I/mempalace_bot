@@ -136,6 +136,10 @@ async def _storm_confirm(uid: int, edit_func, selected: list[dict], label: str):
         f"💾 <b>Сохранить в Дворец?</b>\n\n"
         f"{safe_html_format(text)}"
     )
+    data = _storm_data.get(uid) or {}
+    linked = bs.find_linked(text, data.get("context", {}))
+    if linked:
+        preview += "\n\n" + bs.format_linked(linked)
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="✅ Сохранить", callback_data="bs_save"))
     kb.row(

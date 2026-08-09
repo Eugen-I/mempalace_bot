@@ -15,6 +15,7 @@
 
 import json
 import logging
+import re
 
 from services.apple_notes import AppleNotesError, search_notes
 from services.palace_mcp import get_mcp
@@ -25,6 +26,14 @@ MAX_IDEAS = 7
 MIN_IDEAS = 5
 MAX_TITLE_LEN = 80
 CONTEXT_SOURCE_LIMIT = 4000
+LINK_MIN_TOKEN_LEN = 4
+MAX_LINK_TEXT_LEN = 120
+MAX_LINKS = 5
+SOURCE_LABELS = {
+    "notes": "Apple Notes",
+    "palace": "Дворец",
+    "kg": "Граф знаний",
+}
 
 STORM_SYSTEM_PROMPT = (
     "Ты — генератор идей в личном пространстве MemPalace. Отвечай на русском.\n"
@@ -166,3 +175,54 @@ def ideas_to_text(ideas: list[dict]) -> str:
             block += f" Шаги: {idea['steps']}"
         lines.append(block)
     return "\n\n".join(lines)
+
+
+def _significant_tokens(text: str) -> set[str]:
+    """Значащие токены: слова длиной ≥ LINK_MIN_TOKEN_LEN, без чисел."""
+    out = set()
+    for word in re.findall(r"[а-яёa-z0-9]+", (text or "").lower()):
+        if len(word) >= LINK_MIN_TOKEN_LEN and not word.isdigit():
+            out.add(word)
+    return out
+
+
+def find_linked(ideas_text: str, context: dict, limit: int = MAX_LINKS) -> list[dict]:
+    """Записи контекста, пересекающиеся с текстом идей (для «Связано с:»).
+
+    Каждая строка блока контекста — кандидат; запись попадает в результат,
+    если у неё есть хотя бы один общий значащий токен с идеями. Сортировка —
+    по числу совпадений (убывание), затем по названию источника.
+    """
+    ideas_tokens = _significant_tokens(ideas_text)
+    if not ideas_tokens:
+        return []
+    found: list[dict] = []
+    for source, label in SOURCE_LABELS.items():
+        block = context.get(source, "")
+        for line in block.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            overlap = ideas_tokens & _significant_tokens(line)
+            if overlap:
+                found.append({
+                    "source": source,
+                    "label": label,
+                    "text": line[:MAX_LINK_TEXT_LEN],
+                    "score": len(overlap),
+                })
+    found.sort(key=lambda item: (-item["score"], item["label"]))
+    return found[:max(limit, 0)]
+
+
+def format_linked(linked: list[dict]) -> str:
+    """Форматирует блок «Связано с:» (HTML). Без записей — один заголовок."""
+    from services.text_formatter import safe_html_format
+
+    lines = ["🔗 <b>Связано с:</b>"]
+    for item in linked:
+        lines.append(
+            f"• <b>{safe_html_format(item['label'])}</b>: "
+            f"{safe_html_format(item['text'])}",
+        )
+    return "\n".join(lines)
