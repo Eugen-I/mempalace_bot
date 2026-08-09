@@ -10,10 +10,15 @@
 - QA-команды: `make lint`, `make typecheck`, `make test`, `make security`, `make qa`.
 
 ## Последний зелёный рубеж (checkpoint)
-- **Дата**: 2026-08-07
-- **Тесты**: **2631 passed**, 0 failed (было 2626)
+- **Дата**: 2026-08-09
+- **Тесты**: **2943 passed**, 0 failed (было 2922)
 - **Общее покрытие**: **99%**
-- **lint**: flake8 0 новых (pre-existing: test_ai_engine W292, test_main F841, test_ollama_process F401/F811/W292) ✅ | **mypy**: Success, 68 source files ✅ | **bandit**: 67 issues (прежний базлайн, новых нет) ✅
+- **lint**: flake8 0 новых (pre-existing очищены: E306/F841/E501/F401 в test_messages_handler/test_palace_save) ✅ | **mypy**: Success, 82 source files ✅ | **bandit**: 67 issues (прежний базлайн, новых нет) ✅
+- **Бонусы плана завершены (2026-08-09)**:
+  - **Авто-категоризация Apple Notes → KG** (`7e5db90`): services/auto_categorize.py — `categorize_note` (тип+темы через `_extract_from_filename` из kg_enricher, без AI), `auto_categorize_notes` (лимит, kv-отметки namespace `categorized`, факты `subject→topic→тема` через `mempalace_kg_add` по контракту kg_enricher, отметка ТОЛЬКО при успехе KG, толерантность к падениям индекса/KG/kv); подключение в reminder_scheduler раз в 720 циклов (~6ч). 16 unit (94%) + 3 scheduler + BDD 6/6.
+  - **Reflection-вопрос после штурма** (`7eafc00`): services/reflection.py (build_reflection_question HTML-safe тема ≤80, save_reflection_answer kv-журнал `reflection` с seq-ключом, ответ ≤2000, пустой отклоняется); вопрос после успешного сохранения в Дворец (save.py → maybe_ask_reflection, TTL 10 мин), ответ перехватывается хуком 0ccb (messages.py), кнопка «⏭ Пропустить» (bs_reflect_skip). 22 unit (reflection 100%, save.py 100%, brainstorm 94%) + BDD 6/6.
+- **BDD**: 17/17 features, 94 scenarios passed + 6 pre-existing errors (ai_caching, clear_memory — англ. шаги без реализаций, не наши).
+
 - **Ollama живёт вместе с ботом (вечер 3b)**: пользователь хочет, чтобы `ollama serve`, поднятый ботом при AI-вызове, ЗАКРЫВАЛСЯ вместе с ботом (не висел как осиротевший). Было: `start_new_session=True` + ни реестра, ни cleanup → после остановки бота ollama осиротевал (PPID→1). Теперь:
   - **ollama_process.py**: модульный реестр `_SPAWNED` (list) + `_track()` + `stop_all()` (terminate всех поднятых серверов, идемпотентно) + `atexit.register(stop_all)`.
   - **main.py**: `stop_all()` в `finally` после polling + обработчик SIGTERM в `__main__` (`SystemExit` → корректный unwind → atexit/finally чистят ollama).
