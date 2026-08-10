@@ -222,3 +222,25 @@ def test_extract_facts_malformed_json_returns_empty(monkeypatch):
     monkeypatch.setattr(ai_engine, "get_ai_response_async", fake_ai)
     result = asyncio.run(memory._extract_facts("вопрос", "ответ"))
     assert result == []
+
+
+def test_load_memories_async_roundtrip(mem_dir):
+    memory._save_memories(1, [{"fact": "async-факт"}])
+    loaded = asyncio.run(memory._load_memories_async(1))
+    assert loaded == [{"fact": "async-факт"}]
+
+
+def test_load_memories_async_missing(mem_dir):
+    assert asyncio.run(memory._load_memories_async(999)) == []
+
+
+def test_save_memories_async_replace(mem_dir, monkeypatch, caplog):
+    asyncio.run(memory._save_memories_async(1, [{"fact": "новый"}]))
+    assert memory._load_memories(1) == [{"fact": "новый"}]
+
+    def boom(a, b):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", boom)
+    asyncio.run(memory._save_memories_async(1, [{"fact": "x"}]))
+    assert "Save error" in caplog.text

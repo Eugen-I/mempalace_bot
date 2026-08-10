@@ -11,6 +11,8 @@ import pytest
 
 import services.web_search as ws
 
+SNIPPET_HTML = '<table><tr><td class="table-snippet">{}</td></tr></table>'
+
 
 @pytest.fixture(autouse=True)
 def cache_dir(tmp_path, monkeypatch):
@@ -99,8 +101,8 @@ def test_cleanup_old_cache_ignores_stat_error(cache_dir, monkeypatch):
 @pytest.mark.asyncio
 async def test_parse_html_table_snippets():
     html_text = (
-        '<td class="table-snippet">Короткий текст из таблицы длиннее 20 символов</td>'
-        '<td class="table-snippet">Второй сниппет длиннее двадцати символов</td>'
+        SNIPPET_HTML.format('Короткий текст из таблицы длиннее 20 символов')
+        + SNIPPET_HTML.format('Второй сниппет длиннее двадцати символов')
     )
     out = await ws._parse_html_results(html_text, 5)
     assert len(out) >= 2
@@ -149,21 +151,21 @@ async def test_parse_html_generic_class():
 
 @pytest.mark.asyncio
 async def test_parse_html_skips_short():
-    html_text = '<td class="table-snippet">коротко</td>'
+    html_text = SNIPPET_HTML.format('коротко')
     out = await ws._parse_html_results(html_text, 5)
     assert out == []
 
 
 @pytest.mark.asyncio
 async def test_parse_html_respects_max_results():
-    html_text = ("<td class=\"table-snippet\">Длинный сниппет таблицы номер ноль</td>" * 10)
+    html_text = (SNIPPET_HTML.format('Длинный сниппет таблицы номер ноль') * 10)
     out = await ws._parse_html_results(html_text, 2)
     assert len(out) <= 2
 
 
 @pytest.mark.asyncio
 async def test_parse_html_unescapes():
-    html_text = '<td class="table-snippet">Текст &amp; &lt;b&gt;пример&lt;/b&gt; ещё</td>'
+    html_text = SNIPPET_HTML.format('Текст &amp; &lt;b&gt;пример&lt;/b&gt; ещё')
     out = await ws._parse_html_results(html_text, 5)
     assert out and "&amp;" not in out[0]["text"]
     assert "&lt;" not in out[0]["text"]
@@ -215,7 +217,10 @@ async def test_google_search_success(monkeypatch):
     monkeypatch.setattr(ws, "GOOGLE_CSE_API_KEY", "key")
     monkeypatch.setattr(ws, "GOOGLE_CSE_ID", "cx")
     client = FakeClient([FakeResponse(json_data={
-        "items": [{"snippet": "сниппет", "link": "http://a"}, {"snippet": "два", "link": "http://b"}],
+        "items": [
+            {"snippet": "сниппет", "link": "http://a"},
+            {"snippet": "два", "link": "http://b"},
+        ],
     })])
     out = await ws._google_search(client, "запрос", 5)
     assert len(out) == 2
@@ -302,7 +307,6 @@ async def test_ddg_search_success():
 
 @pytest.mark.asyncio
 async def test_ddg_search_retry_on_202(monkeypatch):
-    import asyncio
 
     async def fake_sleep(x):
         return None
@@ -516,7 +520,7 @@ async def test_search_web_escapes_html(monkeypatch):
 async def test_search_web_empty_then_lite_fallback(monkeypatch):
     client = FakeClient([
         FakeResponse(json_data={"Results": [], "RelatedTopics": []}),
-        FakeResponse(text='<td class="table-snippet">Сниппет из лайта длинный текст</td>'),
+        FakeResponse(text=SNIPPET_HTML.format('Сниппет из лайта длинный текст')),
     ])
     monkeypatch.setattr(ws.httpx, "AsyncClient", lambda *a, **k: _CtxManager(client))
     out = await ws.search_web("q")
@@ -529,8 +533,8 @@ async def test_search_web_empty_then_lite_fallback(monkeypatch):
 async def test_search_web_lite_empty_then_html(monkeypatch):
     client = FakeClient([
         FakeResponse(json_data={"Results": [], "RelatedTopics": []}),
-        FakeResponse(text="<td class=\"table-snippet\">нет результатов</td>"),
-        FakeResponse(text='<td class="table-snippet">Полный html сниппет длинный текст</td>'),
+        FakeResponse(text=SNIPPET_HTML.format('нет результатов')),
+        FakeResponse(text=SNIPPET_HTML.format('Полный html сниппет длинный текст')),
     ])
     monkeypatch.setattr(ws.httpx, "AsyncClient", lambda *a, **k: _CtxManager(client))
     out = await ws.search_web("q")
@@ -542,8 +546,8 @@ async def test_search_web_lite_empty_then_html(monkeypatch):
 async def test_search_web_nothing_found(monkeypatch):
     client = FakeClient([
         FakeResponse(json_data={"Results": [], "RelatedTopics": []}),
-        FakeResponse(text="<td class=\"table-snippet\">нет</td>"),
-        FakeResponse(text="<td class=\"table-snippet\">нет</td>"),
+        FakeResponse(text="<table><tr><td class=\"table-snippet\">нет</td></tr></table>"),
+        FakeResponse(text="<table><tr><td class=\"table-snippet\">нет</td></tr></table>"),
     ])
     monkeypatch.setattr(ws.httpx, "AsyncClient", lambda *a, **k: _CtxManager(client))
     out = await ws.search_web("q")

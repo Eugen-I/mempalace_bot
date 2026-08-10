@@ -110,13 +110,17 @@ def test_no_sync_io_in_async_functions():
         if isinstance(node, ast.AsyncFunctionDef):
             for child in ast.walk(node):
                 if isinstance(child, ast.Call):
-                    name = (
-                        child.func.id
-                        if isinstance(child.func, ast.Name)
-                        else child.func.attr
-                        if isinstance(child.func, ast.Attribute)
-                        else ""
-                    )
+                    func = child.func
+                    if isinstance(func, ast.Name):
+                        name = func.id
+                    elif (
+                        isinstance(func, ast.Attribute)
+                        and isinstance(func.value, ast.Name)
+                        and func.value.id == "json"
+                    ):
+                        name = f"json.{func.attr}"
+                    else:
+                        name = ""
                     assert name not in blocked, (
                         f"sync IO {name} в async {node.name} (строка {child.lineno})"
                     )

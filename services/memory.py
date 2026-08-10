@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -34,6 +33,20 @@ def _load_memories(user_id: int) -> list[dict]:
         return []
 
 
+async def _load_memories_async(user_id: int) -> list[dict]:
+    import aiofiles
+
+    path = _memory_path(user_id)
+    if not os.path.exists(path):
+        return []
+    try:
+        async with aiofiles.open(path, encoding="utf-8") as f:
+            content = await f.read()
+        return json.loads(content)
+    except Exception:
+        return []
+
+
 def _save_memories(user_id: int, memories: list[dict]):
     path = _memory_path(user_id)
     try:
@@ -43,6 +56,21 @@ def _save_memories(user_id: int, memories: list[dict]):
         ) as tmp:
             json.dump(memories, tmp, ensure_ascii=False, indent=2)
             tmp_path = tmp.name
+        os.replace(tmp_path, path)
+    except Exception as e:
+        logger.error(f"[MEMORY] Save error: {e}")
+
+
+async def _save_memories_async(user_id: int, memories: list[dict]):
+    import aiofiles
+
+    path = _memory_path(user_id)
+    try:
+        dirpath = os.path.dirname(path)
+        fd, tmp_path = tempfile.mkstemp(dir=dirpath, suffix=".tmp")
+        os.close(fd)
+        async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(memories, ensure_ascii=False, indent=2))
         os.replace(tmp_path, path)
     except Exception as e:
         logger.error(f"[MEMORY] Save error: {e}")
@@ -86,7 +114,7 @@ async def extract_and_store_facts(user_id: int, user_query: str, ai_answer: str)
         facts = await _extract_facts(user_query, ai_answer)
         if not facts:
             return
-        memories = await asyncio.to_thread(_load_memories, user_id)
+        memories = await _load_memories_async(user_id)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         for fact in facts:
             memories.append(
@@ -99,7 +127,7 @@ async def extract_and_store_facts(user_id: int, user_query: str, ai_answer: str)
                     "access_count": 0,
                 },
             )
-        await asyncio.to_thread(_save_memories, user_id, memories[-500:])
+        await _save_memories_async(user_id, memories[-500:])
         logger.info(f"[MEMORY] Stored {len(facts)} facts for user {user_id}")
     except Exception as e:
         logger.error(f"[MEMORY] extract error: {e}", exc_info=True)

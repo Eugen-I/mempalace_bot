@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "name": "Rules: AGENT_PLAN — Агентный режим qwen2.5 для mempalace_bot",
+      "type": "rules",
+      "files": [
+        "AGENTS.md"
+      ],
+      "description": "Правила из AGENT_PLAN.md",
+      "id": "rules:-agent-plan-—-агентный-режим-qwen2.5-для-mempalace-bot-20260808-1",
+      "installed_at": "2026-08-08T18:37:10.837701+00:00",
+      "enabled": true
+    },
+    {
+      "name": "Rules: Предписания для ИИ-разработки",
+      "type": "rules",
+      "files": [
+        "AGENTS.md"
+      ],
+      "description": "Правила из AGENTS.md",
+      "id": "rules:-предписания-для-ии-разработки-20260808-1",
+      "installed_at": "2026-08-08T18:37:10.881889+00:00",
+      "enabled": true
+    },
+    {
+      "name": "Rules: Отчет о выполненных задачах",
+      "type": "rules",
+      "files": [
+        "AGENTS.md"
+      ],
+      "description": "Правила из Agent_guide.md",
+      "id": "rules:-отчет-о-выполненных-задачах-20260808-1",
+      "installed_at": "2026-08-08T18:37:10.925661+00:00",
+      "enabled": true
+    },
+    {
+      "name": "Rules: TESTING_PROGRESS.md",
+      "type": "rules",
+      "files": [
+        "AGENTS.md"
+      ],
+      "description": "Правила из TESTING_PROGRESS.md",
+      "id": "rules:-testing-progress.md-20260808-1",
+      "installed_at": "2026-08-08T18:37:10.968317+00:00",
+      "enabled": true
+    }
+  ]
+}

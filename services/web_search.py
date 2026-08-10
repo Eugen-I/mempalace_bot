@@ -1,7 +1,6 @@
 import html
 import json
 import logging
-import re
 import time
 import uuid
 from pathlib import Path
@@ -68,39 +67,27 @@ def cleanup_old_cache():
 
 
 # --- Парсинг HTML ---
-async def _parse_html_results(html_text: str, max_results: int) -> list[dict]:
+_SNIPPET_SELECTORS = ".table-snippet, .result__snippet, .compText"
+
+
+def _collect_snippets(html_text: str, selectors: str, min_len: int,
+                      max_results: int) -> list[dict]:
+    """Извлекает сниппеты через selectolax (вместо regex-парсинга HTML)."""
+    from selectolax.parser import HTMLParser
+
     results = []
-    for match in re.finditer(
-        r'<td class="table-snippet">([^<]+)</td>',
-        html_text,
-        re.IGNORECASE,
-    ):
-        text = html.unescape(match.group(1)).strip()
-        if text and len(text) > 20:
+    tree = HTMLParser(html_text)
+    for node in tree.css(selectors):
+        text = node.text(strip=True)
+        if len(text) > min_len:
             results.append({"text": text, "url": ""})
             if len(results) >= max_results:
-                return results
-    for match in re.finditer(
-        r'<a[^>]+class="result__snippet"[^>]*>([^<]+)</a>',
-        html_text,
-        re.IGNORECASE,
-    ):
-        text = html.unescape(match.group(1)).strip()
-        if text and len(text) > 20:
-            results.append({"text": text, "url": ""})
-            if len(results) >= max_results:
-                return results
-    for match in re.finditer(
-        r'(?:class="table-snippet"|class="result__snippet")[^>]*>([^<]{20,})<',
-        html_text,
-        re.IGNORECASE,
-    ):
-        text = html.unescape(match.group(1)).strip()
-        if text:
-            results.append({"text": text, "url": ""})
-            if len(results) >= max_results:
-                return results
+                break
     return results
+
+
+async def _parse_html_results(html_text: str, max_results: int) -> list[dict]:
+    return _collect_snippets(html_text, _SNIPPET_SELECTORS, 20, max_results)
 
 
 async def _google_search(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict]:
@@ -163,18 +150,7 @@ async def _yahoo_search(client: httpx.AsyncClient, query: str, max_results: int)
             timeout=15.0,
         )
         resp.raise_for_status()
-        results = []
-        for match in re.finditer(
-            r'<div[^>]*class="[^"]*compText[^"]*"[^>]*>([^<]{30,})<',
-            resp.text,
-            re.IGNORECASE,
-        ):
-            text = html.unescape(match.group(1)).strip()
-            if len(text) > 30:
-                results.append({"text": text, "url": ""})
-                if len(results) >= max_results:
-                    break
-        return results
+        return _collect_snippets(resp.text, ".compText", 30, max_results)
     except Exception as e:
         logger.warning(f"Yahoo search failed: {e}")
         return []
