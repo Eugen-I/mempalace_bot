@@ -167,3 +167,199 @@ class TestKVStoreMutants:
         )
         con.commit()
         assert kv.get("raw") == "not-json"
+
+
+class _FakeConn:
+    def __init__(self):
+        self.sqls = []
+        self._row = None
+
+    def execute(self, sql, params=()):
+        self.sqls.append(sql)
+        return self
+
+    def fetchone(self):
+        return self._row
+
+    def fetchall(self):
+        return []
+
+    def commit(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class TestKVStoreSQLLiterals:
+    def _make(self, tmp_path, monkeypatch, fake_conn=None):
+        import services.kv_store as kv_mod
+
+        monkeypatch.setattr(
+            "sqlite3.connect",
+            lambda path, check_same_thread: fake_conn or _FakeConn(),
+        )
+        store = kv_mod.KVStore(db_path=str(tmp_path / "t.sqlite"))
+        if fake_conn is None:
+            fake_conn = store._get_conn()
+        return store, fake_conn
+
+    def test_init_runs_pragma_wal(self, tmp_path, monkeypatch):
+        fake = _FakeConn()
+        store, _ = self._make(tmp_path, monkeypatch, fake)
+        try:
+            assert fake.sqls.count("PRAGMA journal_mode=WAL") == 1
+            assert fake.sqls.count("PRAGMA synchronous=NORMAL") == 1
+        finally:
+            store.close()
+
+    def test_connect_uses_check_same_thread_false(self, tmp_path, monkeypatch):
+        import services.kv_store as kv_mod
+
+        captured = {}
+
+        def fake_connect(path, check_same_thread):
+            captured["check"] = check_same_thread
+            return _FakeConn()
+
+        monkeypatch.setattr("services.kv_store.sqlite3.connect", fake_connect)
+        store = kv_mod.KVStore(db_path=str(tmp_path / "t.sqlite"))
+        try:
+            assert captured.get("check") is False
+        finally:
+            store.close()
+
+    def test_reconnect_after_close_ok(self, tmp_path, monkeypatch):
+        fake = _FakeConn()
+        store, _ = self._make(tmp_path, monkeypatch, fake)
+        store.close()
+        store._get_conn()
+        store.close()
+
+    def test_close_without_conn_ok(self, kv):
+        kv.close()
+        del kv._local.conn
+        kv.close()
+
+    def test_set_exact_sql(self, tmp_path, monkeypatch):
+        fake = _FakeConn()
+        store, _ = self._make(tmp_path, monkeypatch, fake)
+        try:
+            store.set("k", 1)
+            assert ("INSERT OR REPLACE INTO kv_store "
+                    "(key, value, namespace, expires_at)") in fake.sqls[-1]
+        finally:
+            store.close()
+
+    def test_get_exact_sql(self, tmp_path, monkeypatch):
+        fake = _FakeConn()
+        store, _ = self._make(tmp_path, monkeypatch, fake)
+        try:
+            store.get("k", namespace="ns")
+            assert fake.sqls[-1] == ("SELECT value, expires_at FROM kv_store "
+                                     "WHERE key = ? AND namespace = ?")
+        finally:
+            store.close()
+
+    def test_delete_exact_sql(self, tmp_path, monkeypatch):
+        fake = _FakeConn()
+        store, _ = self._make(tmp_path, monkeypatch, fake)
+        try:
+            store.delete("k", namespace="ns")
+            assert fake.sqls[-1] == "DELETE FROM kv_store WHERE key = ? AND namespace = ?"
+        finally:
+            store.close()
+
+    def test_evict_expired_exact_sql(self, tmp_path, monkeypatch):
+        fake = _FakeConn()
+        store, _ = self._make(tmp_path, monkeypatch, fake)
+        try:
+            store.set("k", 1)
+            assert ("DELETE FROM kv_store WHERE expires_at IS NOT NULL "
+                    "AND expires_at < ?") in fake.sqls
+        finally:
+            store.close()
+
+    def test_stats_exact_sql(self, tmp_path, monkeypatch):
+        fake = _FakeConn()
+        store, _ = self._make(tmp_path, monkeypatch, fake)
+        try:
+            store.stats
+            assert fake.sqls[-1] == "SELECT COUNT(*) FROM kv_store"
+        finally:
+            store.close()
+
+    def test_cleanup_exact_sql(self, tmp_path, monkeypatch):
+        fake = _FakeConn()
+        store, _ = self._make(tmp_path, monkeypatch, fake)
+        try:
+            store.cleanup()
+            assert fake.sqls[-1] == "VACUUM"
+        finally:
+            store.close()
+
+    def test_expired_row_triggers_delete_via_fetchone(self, tmp_path, monkeypatch):
+        import json as json_mod
+
+        fake = _FakeConn()
+        fake._row = (json_mod.dumps("v"), 0.0)
+        store, _ = self._make(tmp_path, monkeypatch, fake)
+        try:
+            assert store.get("k") is None
+            assert fake.sqls[-1] == "DELETE FROM kv_store WHERE key = ? AND namespace = ?"
+        finally:
+            store.close()
+
+
+class TestKVStoreBoundaryMutants:
+    def test_get_exact_expiry_boundary_returns_value(self, monkeypatch):
+        import services.kv_store as kv_mod
+
+        fake_now = [1000.0]
+        monkeypatch.setattr("services.kv_store.time.time", lambda: fake_now[0])
+        store = kv_mod.KVStore(db_path=":memory:")
+        try:
+            store.set("k", "v", ttl=0)
+            assert store.get("k", default="fallback") == "v"
+        finally:
+            store.close()
+
+    def test_pop_from_one_namespace_leaves_others_intact(self, kv):
+        kv.set("k", "default-value", namespace="default")
+        kv.set("k", "docs-value", namespace="docs")
+        assert kv.pop("k", namespace="docs") == "docs-value"
+        assert kv.get("k", namespace="default") == "default-value"
+        assert kv.get("k", namespace="docs") is None
+
+
+class TestKVStoreSQLLiteralsExtra:
+    def test_keys_exact_sql(self, tmp_path, monkeypatch):
+        fake = _FakeConn()
+        monkeypatch.setattr("sqlite3.connect", lambda path, check_same_thread: fake)
+        store = KVStore(db_path=str(tmp_path / "t.sqlite"))
+        try:
+            store.keys("ns")
+            assert fake.sqls[-1] == "SELECT key FROM kv_store WHERE namespace = ?"
+        finally:
+            store.close()
+
+    def test_clear_exact_sql(self, tmp_path, monkeypatch):
+        fake = _FakeConn()
+        monkeypatch.setattr("sqlite3.connect", lambda path, check_same_thread: fake)
+        store = KVStore(db_path=str(tmp_path / "t.sqlite"))
+        try:
+            store.clear("ns")
+            assert fake.sqls[-1] == "DELETE FROM kv_store WHERE namespace = ?"
+            store.clear()
+            assert fake.sqls[-1] == "DELETE FROM kv_store"
+        finally:
+            store.close()
+
+    def test_set_keeps_cyrillic_unescaped(self, kv):
+        kv.set("key", "значение")
+        con = kv._get_conn()
+        raw = con.execute(
+            "SELECT value FROM kv_store WHERE key = ?", ("key",),
+        ).fetchone()[0]
+        assert "значение" in raw
+        assert "\\u" not in raw

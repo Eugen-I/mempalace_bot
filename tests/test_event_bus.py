@@ -142,3 +142,32 @@ class TestUnsubscribeNoSubscribers:
 
         bus.unsubscribe(Event.CHAT_SYNCED, handler)
         assert Event.CHAT_SYNCED not in bus._subscribers
+
+
+class TestEventBusSubscribeLogMutant:
+    async def test_subscribe_logs_debug_exact_message(self, caplog):
+        bus = EventBus()
+
+        async def handler():
+            pass
+
+        with caplog.at_level("DEBUG", logger="EventBus"):
+            bus.subscribe(Event.CHAT_SYNCED, handler)
+        assert caplog.records[-1].getMessage() == (
+            "Handler handler subscribed to chat_synced"
+        )
+
+
+class TestEventBusPublishDefaultMutant:
+    async def test_publish_uses_empty_list_as_default(self, monkeypatch):
+        bus = EventBus()
+        seen = []
+
+        class RecordingDict(dict):
+            def get(self, key, default=None):
+                seen.append(default)
+                return super().get(key, default)
+
+        monkeypatch.setattr(bus, "_subscribers", RecordingDict())
+        await bus.publish(Event.NOTE_SAVED)
+        assert seen == [[]]

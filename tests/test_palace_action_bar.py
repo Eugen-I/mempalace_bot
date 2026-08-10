@@ -966,3 +966,23 @@ def test_cb_no_data_guard(monkeypatch, handler):
     cb = FakeCb()
     asyncio.run(handler(cb))
     assert cb.answered == [(None, None)]
+
+
+class TestActionBarMUTANTTexts:
+    def test_build_action_bar_agent_button_exact_text(self):
+        from handlers.palace.action_bar import build_action_bar
+        from handlers.palace.action_bar import Answer
+
+        answer = Answer(
+            sid="s1", text="text", pages=["text"], title="", ctx={},
+        )
+        kb = build_action_bar(answer, 0)
+        rows = kb.export()
+        flat = [btn.text for row in rows for btn in row]
+        assert "🤖 Агент" in flat
+
+    def test_paginate_exact_limit_boundary(self):
+        from handlers.palace.action_bar import paginate
+
+        text = "abcdefghi "
+        assert paginate(text, limit=10) == ["abcdefghi "]

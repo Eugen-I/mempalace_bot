@@ -1,6 +1,6 @@
 import time
 
-from services.semantic_cache import SemanticCache
+from services.semantic_cache import SemanticCache, SemanticCacheEntry
 
 
 class TestSemanticCache:
@@ -146,3 +146,31 @@ class TestSemanticCacheMutants:
         with caplog.at_level("DEBUG", logger="SemanticCache"):
             assert cache.get("q") is None
         assert caplog.records[-1].getMessage() == "Evicted 1 expired cache entries"
+
+    def test_evict_boundary_exact_ttl_is_expired(self, monkeypatch):
+        cache = SemanticCache(ttl=100)
+        fake_now = [1000.0]
+        monkeypatch.setattr(
+            "services.semantic_cache.time.time", lambda: fake_now[0],
+        )
+        cache.set("q", "r")
+        fake_now[0] = 1100.0
+        cache.get("q")
+        assert cache._normalize("q") in cache._entries
+
+    def test_get_equal_scores_keeps_first_entry(self, monkeypatch):
+        cache = SemanticCache(threshold=0.5)
+        cache._entries["first key"] = SemanticCacheEntry("first key", "r1")
+        cache._entries["second key"] = SemanticCacheEntry("second key", "r2")
+        monkeypatch.setattr(cache, "_similarity", lambda a, b: 0.9)
+        assert cache.get("q") == "r1"
+
+    def test_set_stores_normalized_query(self):
+        cache = SemanticCache()
+        cache.set("  What   Is   AI? ", "r")
+        entry = cache._entries["what is ai?"]
+        assert entry.query == "what is ai?"
+
+    def test_invalidate_missing_key_no_keyerror(self):
+        cache = SemanticCache()
+        cache.invalidate("несуществующий")

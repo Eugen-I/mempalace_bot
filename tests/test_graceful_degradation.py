@@ -165,3 +165,20 @@ class TestDegradationManagerMutants:
         assert caplog.records[-1].getMessage() == (
             "Degradation level changed: full → medium"
         )
+
+
+class TestRecordFailureStrictFalseMUTANT:
+    def test_failure_sets_strict_boolean_false(self):
+        mgr = DegradationManager()
+        mgr.record_failure("palace_mcp")
+        assert mgr.health.palace_mcp is False
+        mgr.record_failure("palace_search")
+        assert mgr.health.palace_search is False
+        mgr.record_failure("memory")
+        assert mgr.health.memory_store is False
+
+
+class TestInitDegradedReasonMUTANT:
+    def test_initial_degraded_reason_is_empty_string(self):
+        mgr = DegradationManager()
+        assert mgr._degraded_reason == ""

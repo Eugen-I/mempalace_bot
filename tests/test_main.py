@@ -68,7 +68,7 @@ def test_import_guard_exits_on_bad_config(monkeypatch):
 
     monkeypatch.setattr(sys, "exit", fake_exit)
     with pytest.raises(SystemExit):
-        importlib.reload(main)
+        importlib.reload(importlib.import_module("main"))
     assert exits == [1]
 
 
@@ -213,7 +213,7 @@ def _main_mocks(monkeypatch):
 
 
 def test_main_run(monkeypatch):
-    mcp = _main_mocks(monkeypatch)
+    _main_mocks(monkeypatch)
     started = []
     prewarmed = []
     monkeypatch.setattr(

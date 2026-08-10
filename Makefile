@@ -43,3 +43,6 @@ format: # автоформатирование (требует ruff или autop
 	else \
 		echo "Установи ruff или autopep8: pip install ruff autopep8"; \
 	fi
+
+# --- Imported tools (managed by devkit) ---
+-include .devkit/tools.mk

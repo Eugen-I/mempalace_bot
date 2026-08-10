@@ -200,3 +200,37 @@ class TestCircuitBreakerMutants:
         with pytest.raises(CircuitBreakerOpenError) as exc_info:
             await cb.call(_success)
         assert "Retry in 50s" in str(exc_info.value)
+
+
+class TestCircuitBreakerTimeoutBoundaryMUTANT:
+    async def test_recovers_exactly_at_recovery_timeout(self, monkeypatch):
+        fake_now = [1000.0]
+        monkeypatch.setattr(
+            "services.circuit_breaker.time.time", lambda: fake_now[0],
+        )
+        cb = CircuitBreaker("test", failure_threshold=1, recovery_timeout=30.0)
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+        assert cb.state == CircuitState.OPEN
+        fake_now[0] = 1030.0
+        result = await cb.call(_success)
+        assert result == "ok"
+        assert cb.state == CircuitState.CLOSED
+
+
+class TestGetMCPCircuitBreakerArgsMUTANT:
+    async def test_mcp_breaker_gets_explicit_args(self, monkeypatch):
+        from services import circuit_breaker as cb_mod
+
+        captured = {}
+
+        class FakeBreaker:
+            def __init__(self, name, **kwargs):
+                captured["failure_threshold"] = kwargs.get("failure_threshold", None)
+                captured["recovery_timeout"] = kwargs.get("recovery_timeout", None)
+
+        monkeypatch.setattr(cb_mod, "CircuitBreaker", FakeBreaker)
+        monkeypatch.setattr(cb_mod, "_mcp_cb", None)
+        cb_mod.get_mcp_circuit_breaker()
+        assert captured["failure_threshold"] == 3
+        assert captured["recovery_timeout"] == 30.0
