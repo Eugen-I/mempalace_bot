@@ -748,3 +748,65 @@ def test_move_note_invalidates_index(tmp_index, fake_notes, monkeypatch):
     )
     an.move_note("n1", "Другая")
     assert not tmp_index.exists()
+
+
+# ─── list_notes: сортировка по дате изменения и лимит (Фаза 3) ───
+
+
+def _write_notes_index(index_file, notes):
+    index_file.write_text(json.dumps({"notes": notes}), encoding="utf-8")
+
+
+def _mk_note(name, updated):
+    return {
+        "id": f"id_{name}", "name": name, "folder": "Фото",
+        "preview": "", "updated": updated,
+    }
+
+
+def test_list_notes_sort_by_updated_desc(tmp_index):
+    _write_notes_index(tmp_index, [
+        _mk_note("старая", "2026-01-01T10:00:00Z"),
+        _mk_note("свежая", "2026-08-10T10:00:00Z"),
+        _mk_note("средняя", "2026-05-05T10:00:00Z"),
+    ])
+    names = [n["name"] for n in an.list_notes(sort_by_updated=True)]
+    assert names == ["свежая", "средняя", "старая"]
+
+
+def test_list_notes_sort_notes_without_date_last(tmp_index):
+    _write_notes_index(tmp_index, [
+        _mk_note("без даты", ""),
+        _mk_note("свежая", "2026-08-10T10:00:00Z"),
+    ])
+    names = [n["name"] for n in an.list_notes(sort_by_updated=True)]
+    assert names == ["свежая", "без даты"]
+
+
+def test_list_notes_limit(tmp_index):
+    _write_notes_index(tmp_index, [
+        _mk_note("a", "2026-01-01T10:00:00Z"),
+        _mk_note("b", "2026-08-10T10:00:00Z"),
+        _mk_note("c", "2026-05-05T10:00:00Z"),
+    ])
+    names = [n["name"] for n in an.list_notes(sort_by_updated=True, limit=2)]
+    assert names == ["b", "c"]
+
+
+def test_list_notes_limit_without_sort_keeps_order(tmp_index):
+    _write_notes_index(tmp_index, [
+        _mk_note("a", ""), _mk_note("b", ""), _mk_note("c", ""),
+    ])
+    names = [n["name"] for n in an.list_notes(limit=2)]
+    assert names == ["a", "b"]
+
+
+def test_list_notes_limit_zero_and_negative(tmp_index):
+    _write_notes_index(tmp_index, [_mk_note("a", "2026-01-01T10:00:00Z")])
+    assert an.list_notes(limit=0) == []
+    assert an.list_notes(limit=-5) == []
+
+
+def test_list_notes_limit_exceeds_count(tmp_index):
+    _write_notes_index(tmp_index, [_mk_note("a", "2026-01-01T10:00:00Z")])
+    assert len(an.list_notes(limit=100)) == 1

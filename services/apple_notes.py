@@ -44,6 +44,7 @@ for (const f of app.folders()) {
     const names = f.notes.name();
     const ids = f.notes.id();
     const texts = f.notes.plaintext();
+    const updated = f.notes.modificationDate();
     const fname = String(f.name());
     for (let i = 0; i < names.length; i++) {
       out.push({
@@ -51,7 +52,7 @@ for (const f of app.folders()) {
         name: String(names[i]),
         folder: fname,
         preview: String(texts[i] || ""),
-        updated: ""
+        updated: updated[i] ? String(updated[i]) : ""
       });
     }
   } catch (e) {
@@ -69,6 +70,7 @@ for (const f of app.folders()) {
     if (String(f.name()) === "Recently Deleted") continue;
     const names = f.notes.name();
     const ids = f.notes.id();
+    const updated = f.notes.modificationDate();
     const fname = String(f.name());
     for (let i = 0; i < names.length; i++) {
       out.push({
@@ -76,7 +78,7 @@ for (const f of app.folders()) {
         name: String(names[i]),
         folder: fname,
         preview: "",
-        updated: ""
+        updated: updated[i] ? String(updated[i]) : ""
       });
     }
   } catch (e) {
@@ -297,8 +299,34 @@ def invalidate_index() -> bool:
     return False
 
 
-def list_notes(folder: str | None = None, force_refresh: bool = False) -> list[dict]:
-    """Список заметок из индекса (необязательно фильтр по папке)."""
+def list_notes(
+    folder: str | None = None,
+    force_refresh: bool = False,
+    sort_by_updated: bool = False,
+    limit: int | None = None,
+) -> list[dict]:
+    """Список заметок из индекса.
+
+    sort_by_updated=True — сортировка по дате изменения (свежие первыми,
+    заметки без даты — в конец). limit — ограничить количество.
+    """
+    notes = list_notes_all(folder=folder, force_refresh=force_refresh)
+    if sort_by_updated:
+        notes = sorted(
+            notes,
+            key=lambda n: n.get("updated") or "",
+            reverse=True,
+        )
+    if limit is not None:
+        notes = notes[:limit]
+    return notes
+
+
+def list_notes_all(
+    folder: str | None = None,
+    force_refresh: bool = False,
+) -> list[dict]:
+    """Полный список заметок из индекса (без сортировки и лимита)."""
     index = get_index(force_refresh=force_refresh)
     notes = index.get("notes", [])
     if folder:

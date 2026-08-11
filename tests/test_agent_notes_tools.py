@@ -78,7 +78,8 @@ def test_notes_list_empty(mock_apple_notes):
 def test_notes_list_passes_folder(mock_apple_notes, monkeypatch):
     captured = {}
 
-    def fake_list_notes(folder=None, force_refresh=False):
+    def fake_list_notes(folder=None, force_refresh=False,
+                        sort_by_updated=False, limit=None):
         captured["folder"] = folder
         captured["force"] = force_refresh
         return []
@@ -182,3 +183,61 @@ def test_list_agent_tools_includes_notes():
     names = [t.name for t in at.list_agent_tools()]
     for name in ("notes_list", "notes_search", "notes_read"):
         assert name in names
+
+
+# ─── notes_list: параметр limit (Фаза 3) ───
+
+
+def test_notes_list_limit_schema_valid():
+    tool = at.get_tool("notes_list")
+    errors = at.validate_arguments(tool, {"limit": 10})
+    assert errors == []
+
+
+def test_notes_list_limit_schema_zero_rejected():
+    tool = at.get_tool("notes_list")
+    assert at.validate_arguments(tool, {"limit": 0})
+
+
+def test_notes_list_limit_schema_negative_rejected():
+    tool = at.get_tool("notes_list")
+    assert at.validate_arguments(tool, {"limit": -1})
+
+
+def test_notes_list_limit_schema_non_int_rejected():
+    tool = at.get_tool("notes_list")
+    assert at.validate_arguments(tool, {"limit": "пять"})
+
+
+def test_notes_list_limit_passed_to_list_notes(monkeypatch):
+    from services import agent_notes_tools as ant
+
+    received = {}
+
+    def fake_list_notes(folder=None, force_refresh=False,
+                        sort_by_updated=False, limit=None):
+        received.update(folder=folder, force_refresh=force_refresh,
+                        sort_by_updated=sort_by_updated, limit=limit)
+        return [{"id": "n1", "name": "X", "folder": "Фото"}]
+
+    monkeypatch.setattr(ant, "list_notes", fake_list_notes)
+    out = ant._notes_list({"limit": 7})
+    assert received["limit"] == 7
+    assert received["sort_by_updated"] is True
+    assert "X" in out
+
+
+def test_notes_list_without_limit_unsorted(monkeypatch):
+    from services import agent_notes_tools as ant
+
+    received = {}
+
+    def fake_list_notes(folder=None, force_refresh=False,
+                        sort_by_updated=False, limit=None):
+        received.update(sort_by_updated=sort_by_updated, limit=limit)
+        return [{"id": "n1", "name": "X", "folder": "Фото"}]
+
+    monkeypatch.setattr(ant, "list_notes", fake_list_notes)
+    ant._notes_list({})
+    assert received["sort_by_updated"] is False
+    assert received["limit"] is None

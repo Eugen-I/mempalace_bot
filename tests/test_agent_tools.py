@@ -312,3 +312,19 @@ def test_agent_list_tools_contains_system_tools():
 def test_force_execute_unknown_tool_raises():
     with pytest.raises(KeyError):
         at.force_tool_execute("no_such_tool", {})
+
+
+def test_notes_category_isolates_from_palace(cleanup):
+    """allowed_categories=(CAT_NOTES,): дворцовые инструменты не видны."""
+    import services.agent_mcp_tools  # noqa: F401 — регистрирует mp_*
+    import services.agent_notes_write_tools  # noqa: F401 — регистрирует notes_write
+
+    names = [t.name for t in at.list_agent_tools(
+        allowed_categories=(at.CAT_NOTES,), include_write=True,
+    )]
+    for name in ("notes_list", "notes_search", "notes_read",
+                 "notes_create", "notes_update", "notes_delete", "notes_move"):
+        assert name in names
+    for name in ("mp_search", "mp_kg_query", "mp_kg_timeline",
+                 "mp_kg_stats", "mp_drawer_read", "mp_diary_read"):
+        assert name not in names

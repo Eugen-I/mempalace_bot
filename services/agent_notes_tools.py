@@ -24,7 +24,8 @@ def _error_text(exc: Exception) -> str:
 @register_tool(
     "notes_list",
     "Список заметок Apple Notes из индекса (быстро, из кэша). Необязательно "
-    "фильтр по папке. Используй перед notes_read, чтобы узнать ID заметки.",
+    "фильтр по папке. limit — последние N заметок по дате изменения "
+    "(свежие первыми). Используй перед notes_read, чтобы узнать ID заметки.",
     schema={
         "type": "object",
         "properties": {
@@ -36,6 +37,13 @@ def _error_text(exc: Exception) -> str:
                 "type": "boolean",
                 "description": "Принудительно обновить индекс (необязательно)",
             },
+            "limit": {
+                "type": "integer",
+                "description": "Сколько последних заметок вернуть (по дате "
+                "изменения), необязательно",
+                "minimum": 1,
+                "maximum": 200,
+            },
         },
     },
     category=CAT_NOTES,
@@ -45,6 +53,8 @@ def _notes_list(args: dict) -> str:
         notes = list_notes(
             folder=args.get("folder"),
             force_refresh=bool(args.get("force_refresh")),
+            sort_by_updated=args.get("limit") is not None,
+            limit=args.get("limit"),
         )
     except AppleNotesError as exc:
         return _error_text(exc)

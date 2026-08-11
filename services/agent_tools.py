@@ -157,6 +157,14 @@ def validate_arguments(tool: AgentTool, args: dict) -> list[str]:
         elif expected == "array":
             if not isinstance(value, list):
                 errors.append(f"Аргумент '{key}' должен быть массивом")
+        if expected in ("integer", "number") and isinstance(value, (int, float)) \
+                and not isinstance(value, bool):
+            minimum = prop.get("minimum")
+            maximum = prop.get("maximum")
+            if minimum is not None and value < minimum:
+                errors.append(f"Аргумент '{key}' не может быть меньше {minimum}")
+            if maximum is not None and value > maximum:
+                errors.append(f"Аргумент '{key}' не может быть больше {maximum}")
     return errors
 
 
