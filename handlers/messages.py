@@ -489,7 +489,34 @@ async def process_user_message(message: types.Message):
     # === 🤖 АГЕНТНЫЙ РЕЖИМ (включён в /settings → «🤖 Агент: ВКЛ») ===
     from handlers.agent import should_route_to_agent
 
-    if should_route_to_agent(uid, clean_q):
+    agent_on = should_route_to_agent(uid, clean_q)
+
+    # === 📝 АГЕНТ ЗАМЕТОК APPLE NOTES ===
+    from handlers.notes_agent import (
+        consume_notes_input,
+        is_waiting_for_notes_input,
+        maybe_suggest_note_action,
+        run_notes_agent,
+    )
+
+    if is_waiting_for_notes_input(uid):
+        consume_notes_input(uid)
+        status = await message.answer("📝 Запускаю агента заметок…")
+        return await run_notes_agent(uid, status, clean_q)
+
+    if not agent_on:
+        suggestion = maybe_suggest_note_action(clean_q)
+        if suggestion:
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(
+                text=suggestion, callback_data="notes_agent_start",
+            ))
+            await message.answer(
+                "Могу поработать с вашими заметками Apple Notes.",
+                reply_markup=kb.as_markup(),
+            )
+
+    if agent_on:
         from handlers.agent import AGENT_SYSTEM_PROMPT, _build_scope_prompt, _run_agent_reply
 
         status = await message.answer("🤖 Запускаю агента…")

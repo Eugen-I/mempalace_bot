@@ -185,6 +185,73 @@ async def test_write_tool_excluded_by_default(fake_model, cleanup):
     assert "не существует" in result.steps[0].results[0]["output"]
 
 
+async def test_include_write_without_confirm_write_still_excluded(fake_model, cleanup):
+    """Без confirm_write запись невозможна даже при include_write=True."""
+    _register_test_tool(name="test_write", is_write=True)
+    fake_model.script.append(_tool_call("test_write", '{"value": "x"}'))
+    fake_model.script.append(_content("Ок"))
+
+    result = await ae.run_agent(
+        "sys", "user", engine="qwen", model="m", include_write=True,
+    )
+    assert result.steps[0].results[0]["ok"] is False
+    assert "не существует" in result.steps[0].results[0]["output"]
+
+
+async def test_confirm_write_approved_executes(fake_model, cleanup):
+    _register_test_tool(name="test_write", is_write=True)
+    fake_model.script.append(_tool_call("test_write", '{"value": "x"}'))
+    fake_model.script.append(_content("Ок"))
+    confirmations = []
+
+    async def approve(name, arguments):
+        confirmations.append((name, arguments))
+        return True
+
+    result = await ae.run_agent(
+        "sys", "user", engine="qwen", model="m",
+        include_write=True, confirm_write=approve,
+    )
+    assert result.steps[0].results[0]["ok"] is True
+    assert result.steps[0].results[0]["output"] == "got:x"
+    assert confirmations == [("test_write", {"value": "x"})]
+
+
+async def test_confirm_write_rejected_skips_execution(fake_model, cleanup):
+    _register_test_tool(name="test_write", is_write=True)
+    fake_model.script.append(_tool_call("test_write", '{"value": "x"}'))
+    fake_model.script.append(_content("Понял, отменяю"))
+
+    async def reject(name, arguments):
+        return False
+
+    result = await ae.run_agent(
+        "sys", "user", engine="qwen", model="m",
+        include_write=True, confirm_write=reject,
+    )
+    assert result.steps[0].results[0]["ok"] is False
+    assert "отклонил" in result.steps[0].results[0]["output"]
+    assert result.final_answer == "Понял, отменяю"
+
+
+async def test_confirm_write_not_called_for_read_tool(fake_model, cleanup):
+    _register_test_tool()
+    fake_model.script.append(_tool_call("test_tool", '{"value": "abc"}'))
+    fake_model.script.append(_content("Готово"))
+    confirmations = []
+
+    async def approve(name, arguments):
+        confirmations.append(name)
+        return True
+
+    result = await ae.run_agent(
+        "sys", "user", engine="qwen", model="m",
+        include_write=True, confirm_write=approve,
+    )
+    assert result.steps[0].results[0]["ok"] is True
+    assert confirmations == []
+
+
 async def test_tool_validation_error(fake_model, cleanup):
     _register_test_tool()
     fake_model.script.append(_tool_call("test_tool", "{}"))  # нет required value

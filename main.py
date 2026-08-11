@@ -26,8 +26,8 @@ logger = setup_logging(DATA_DIR)
 init_bot(logger)
 
 from handlers import (  # noqa: E402
-    agent, brainstorm, chat, digest, notes, palace, pdf, personal_note,
-    reminder, settings, search,
+    agent, brainstorm, chat, digest, notes, notes_agent, palace, pdf,
+    personal_note, reminder, settings, search,
 )
 from handlers import photos, reactions, transkript, voice, web_search_btn, youtube_ui  # noqa: E402
 from handlers.messages import process_user_message  # noqa: E402
@@ -57,6 +57,7 @@ _safe_include(search.router)
 _safe_include(reactions.router)
 _safe_include(transkript.router)
 _safe_include(web_search_btn.router)
+_safe_include(notes_agent.router)
 
 fallback_router = Router()
 dp.include_router(fallback_router)
@@ -91,6 +92,9 @@ async def cmd_start(message: types.Message):
                 types.KeyboardButton(text="🏰 Дворец"),
                 types.KeyboardButton(text="📜 Транскрипты"),
             ],
+            [
+                types.KeyboardButton(text="📝 Apple Notes"),
+            ],
         ],
         resize_keyboard=True,
     )
@@ -104,6 +108,14 @@ async def cmd_palace_button(message: types.Message):
     from handlers.palace import cmd_palace
 
     await cmd_palace(message)
+
+
+@fallback_router.message(F.text == "📝 Apple Notes")
+@allowed_only
+async def cmd_notes_agent_button(message: types.Message):
+    from handlers.notes_agent import start_notes_agent_session
+
+    await start_notes_agent_session(message)
 
 
 @fallback_router.message(F.text == "🔄 Синхронизация")

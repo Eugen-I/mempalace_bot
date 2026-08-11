@@ -290,6 +290,7 @@ def test_engine_include_write_executes_write_tool(monkeypatch):
         engine="qwen",
         model="qwen2.5:7b",
         include_write=True,
+        confirm_write=_approve_all,
         max_iterations=1,
     ))
     assert calls == ["Т"]
@@ -323,6 +324,10 @@ def test_engine_without_write_unknown_tool(monkeypatch):
     ))
     assert result.steps[0].results[0]["ok"] is False
     assert "не существует" in result.steps[0].results[0]["output"]
+
+
+async def _approve_all(name: str, arguments: dict) -> bool:
+    return True
 
 
 def asyncio_run(coro):

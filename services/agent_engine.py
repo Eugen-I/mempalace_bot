@@ -105,6 +105,7 @@ async def run_agent(
     status_cb: Callable[[str], Awaitable[None]] | None = None,
     max_iterations: int = MAX_ITERATIONS,
     tool_timeout: float = TOOL_TIMEOUT,
+    confirm_write: Callable[[str, dict], Awaitable[bool]] | None = None,
 ) -> AgentResult:
     """Запускает агентный цикл и возвращает итоговый ответ.
 
@@ -114,6 +115,12 @@ async def run_agent(
         include_write — разрешить инструменты записи (по умолчанию НЕТ).
         allowed_categories — ограничение категорий инструментов (allowlist).
         status_cb — async-колбэк для статусных сообщений («Шаг N/5: tool…»).
+        confirm_write — async-колбэк (name, arguments) → bool. Вызывается ПЕРЕД
+            выполнением каждого write-инструмента. Если возвращает False —
+            инструмент НЕ выполняется, модели возвращается результат
+            «Пользователь отклонил действие». Если confirm_write не передан,
+            write-инструменты не доступны вообще (include_write игнорируется) —
+            гарантия: запись без подтверждения невозможна.
     """
     if engine is None or model is None:
         engine, model = get_current_ai()
@@ -124,6 +131,8 @@ async def run_agent(
             "Смените модель в /settings.",
         )
 
+    if confirm_write is None:
+        include_write = False
     tools = atools.list_agent_tools(
         allowed_categories=allowed_categories, include_write=include_write,
     )
@@ -208,6 +217,14 @@ async def run_agent(
                     "output": "Ошибка аргументов: " + "; ".join(errors),
                 })
                 continue
+            if tool.is_write and confirm_write is not None:
+                approved = await confirm_write(name, call["arguments"])
+                if not approved:
+                    step.results.append({
+                        "name": name, "ok": False,
+                        "output": "Пользователь отклонил действие.",
+                    })
+                    continue
             if status_cb:
                 await status_cb(f"🔧 Шаг {i}/{max_iterations}: {name}…")
             try:
