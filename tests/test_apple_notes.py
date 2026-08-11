@@ -419,3 +419,332 @@ def test_search_snippet_trimmed_both_sides(tmp_index, fake_notes):
     fake_notes([("Заметка", "Ф", body)])
     snippet = an.search_notes("шопенгауэр")[0]["snippet"]
     assert snippet.startswith("…") and snippet.endswith("…")
+
+
+# ─── detect_and_validate_language ───
+
+
+def test_lang_detects_ru():
+    assert an.detect_and_validate_language("Обычная заметка на русском") == "ru"
+
+
+def test_lang_detects_de_by_diacritics():
+    assert an.detect_and_validate_language("Schöne Grüße aus München") == "de"
+    assert an.detect_and_validate_language("die Äpfel und Öl") == "de"
+
+
+def test_lang_rejects_chinese():
+    with pytest.raises(an.AppleNotesError, match="азиатские"):
+        an.detect_and_validate_language("这是一条中文笔记")
+
+
+def test_lang_rejects_japanese():
+    with pytest.raises(an.AppleNotesError, match="азиатские"):
+        an.detect_and_validate_language("こんにちは")
+    with pytest.raises(an.AppleNotesError, match="азиатские"):
+        an.detect_and_validate_language("カタカナ")
+
+
+def test_lang_rejects_korean():
+    with pytest.raises(an.AppleNotesError, match="азиатские"):
+        an.detect_and_validate_language("한국어 메모")
+
+
+def test_lang_rejects_cjk_mixed_with_ru():
+    with pytest.raises(an.AppleNotesError, match="азиатские"):
+        an.detect_and_validate_language("Заметка с 中文 символами")
+
+
+def test_lang_empty_and_non_str():
+    assert an.detect_and_validate_language("") == "ru"
+    with pytest.raises(an.AppleNotesError, match="строкой"):
+        an.detect_and_validate_language(123)
+
+
+# ─── create_note ───
+
+
+def test_create_note_ok(tmp_index, monkeypatch):
+    def fake(script, timeout=30.0):
+        assert "{target}" not in script and "{title}" not in script and "{body}" not in script
+        assert 'name: "Моя заметка"' in script
+        assert "app.notes" in script
+        return json.dumps({"id": "new1", "name": "Моя заметка"})
+
+    monkeypatch.setattr(an, "run_osascript", fake)
+    assert an.create_note("Моя заметка", "Текст") == "new1"
+
+
+def test_create_note_escapes_quotes_and_newlines(tmp_index, monkeypatch):
+    def fake(script, timeout=30.0):
+        assert 'name: "Заметка \\"важная\\""' in script
+        assert 'body: "строка 1\\nстрока 2"' in script
+        return json.dumps({"id": "n1", "name": "x"})
+
+    monkeypatch.setattr(an, "run_osascript", fake)
+    assert an.create_note('Заметка "важная"', "строка 1\nстрока 2") == "n1"
+
+
+def test_create_note_in_folder(tmp_index, monkeypatch):
+    def fake(script, timeout=30.0):
+        assert 'app.folders.byName("Философия")' in script
+        return json.dumps({"id": "n1", "name": "x"})
+
+    monkeypatch.setattr(an, "run_osascript", fake)
+    assert an.create_note("Название", folder="Философия") == "n1"
+
+
+def test_create_note_empty_title(tmp_index):
+    with pytest.raises(an.AppleNotesError, match="заголовок"):
+        an.create_note("   ")
+    with pytest.raises(an.AppleNotesError, match="заголовок"):
+        an.create_note(None)
+
+
+def test_create_note_empty_folder(tmp_index):
+    with pytest.raises(an.AppleNotesError, match="папки"):
+        an.create_note("Название", folder="   ")
+
+
+def test_create_note_rejects_cjk(tmp_index):
+    with pytest.raises(an.AppleNotesError, match="азиатские"):
+        an.create_note("中文标题", "текст")
+
+
+def test_create_note_jxa_error(tmp_index, monkeypatch):
+    monkeypatch.setattr(
+        an, "run_osascript",
+        lambda *a, **k: json.dumps({"error": "Can't find folder"}),
+    )
+    with pytest.raises(an.AppleNotesError, match="создать"):
+        an.create_note("Название", folder="Нет такой")
+
+
+def test_create_note_non_dict_response(tmp_index, monkeypatch):
+    monkeypatch.setattr(an, "run_osascript", lambda *a, **k: "[1, 2]")
+    with pytest.raises(an.AppleNotesError, match="формат ответа"):
+        an.create_note("Название")
+
+
+def test_create_note_invalidates_index(tmp_index, fake_notes, monkeypatch):
+    fake_notes([("Старая", "Ф")])
+    an.get_index()
+    assert tmp_index.exists()
+    monkeypatch.setattr(
+        an, "run_osascript",
+        lambda *a, **k: json.dumps({"id": "n9", "name": "x"}),
+    )
+    an.create_note("Новая")
+    assert not tmp_index.exists()
+
+
+# ─── update_note ───
+
+
+def _update_osascript(current_body="Старый текст"):
+    def fake(script, timeout=30.0):
+        if "plaintext()" in script:
+            return json.dumps({"name": "Заметка", "body": current_body})
+        return json.dumps({"id": "n1", "name": "Заметка"})
+
+    return fake
+
+
+def test_update_note_append_ok(tmp_index, monkeypatch):
+    monkeypatch.setattr(an, "run_osascript", _update_osascript("Старый текст"))
+    result = an.update_note("n1", append_text="Дополнение")
+    assert result["body"] == "Старый текст\nДополнение"
+    assert result["id"] == "n1"
+
+
+def test_update_note_append_escapes_body(tmp_index, monkeypatch):
+    captured = {}
+
+    def fake(script, timeout=30.0):
+        if "plaintext()" in script:
+            return json.dumps({"name": "N", "body": "база"})
+        captured["script"] = script
+        return json.dumps({"id": "n1", "name": "N"})
+
+    monkeypatch.setattr(an, "run_osascript", fake)
+    an.update_note("n1", append_text='дозапись "важная"')
+    assert 'n.body = "база\\nдозапись \\"важная\\""' in captured["script"]
+
+
+def test_update_note_replace_ok(tmp_index, monkeypatch):
+    def fake(script, timeout=30.0):
+        assert an._JXA_READ_NOTE not in script
+        return json.dumps({"id": "n1", "name": "N"})
+
+    monkeypatch.setattr(an, "run_osascript", fake)
+    result = an.update_note("n1", replace_text="Полностью новый текст")
+    assert result["body"] == "Полностью новый текст"
+
+
+def test_update_note_both_modes_rejected(tmp_index):
+    with pytest.raises(an.AppleNotesError, match="только один"):
+        an.update_note("n1", append_text="a", replace_text="b")
+
+
+def test_update_note_no_text_rejected(tmp_index):
+    with pytest.raises(an.AppleNotesError, match="дозаписи"):
+        an.update_note("n1")
+
+
+def test_update_note_empty_append_rejected(tmp_index):
+    with pytest.raises(an.AppleNotesError, match="не должен быть пустым"):
+        an.update_note("n1", append_text="  ")
+
+
+def test_update_note_rejects_cjk(tmp_index):
+    with pytest.raises(an.AppleNotesError, match="азиатские"):
+        an.update_note("n1", append_text="追加テキスト")
+    with pytest.raises(an.AppleNotesError, match="азиатские"):
+        an.update_note("n1", replace_text="新文本")
+
+
+def test_update_note_empty_id(tmp_index):
+    with pytest.raises(an.AppleNotesError, match="корректный ID"):
+        an.update_note("")
+
+
+def test_update_note_missing_note(tmp_index, monkeypatch):
+    def fake(script, timeout=30.0):
+        if "plaintext()" in script:
+            return json.dumps({"error": "Can't find object"})
+        return json.dumps({"id": "n1"})
+
+    monkeypatch.setattr(an, "run_osascript", fake)
+    with pytest.raises(an.AppleNotesError, match="не найдена"):
+        an.update_note("missing", append_text="x")
+
+
+def test_update_note_jxa_error(tmp_index, monkeypatch):
+    monkeypatch.setattr(
+        an, "run_osascript",
+        lambda *a, **k: json.dumps({"error": "Can't set body"}),
+    )
+    with pytest.raises(an.AppleNotesError, match="обновить"):
+        an.update_note("n1", replace_text="x")
+
+
+def test_update_note_invalidates_index(tmp_index, fake_notes, monkeypatch):
+    fake_notes([("Заметка", "Ф")])
+    an.get_index()
+    monkeypatch.setattr(an, "run_osascript", _update_osascript())
+    an.update_note("n1", append_text="x")
+    assert not tmp_index.exists()
+
+
+# ─── delete_note ───
+
+
+def test_delete_note_ok(tmp_index, monkeypatch):
+    def fake(script, timeout=30.0):
+        assert 'byName("Recently Deleted")' in script
+        return json.dumps({"id": "n1", "deleted": True})
+
+    monkeypatch.setattr(an, "run_osascript", fake)
+    assert an.delete_note("n1") is True
+
+
+def test_delete_note_empty_id(tmp_index):
+    with pytest.raises(an.AppleNotesError, match="корректный ID"):
+        an.delete_note("")
+
+
+def test_delete_note_jxa_error(tmp_index, monkeypatch):
+    monkeypatch.setattr(
+        an, "run_osascript",
+        lambda *a, **k: json.dumps({"error": "Can't find note"}),
+    )
+    with pytest.raises(an.AppleNotesError, match="удалить"):
+        an.delete_note("nope")
+
+
+def test_delete_note_invalidates_index(tmp_index, fake_notes, monkeypatch):
+    fake_notes([("Заметка", "Ф")])
+    an.get_index()
+    monkeypatch.setattr(
+        an, "run_osascript",
+        lambda *a, **k: json.dumps({"id": "n1", "deleted": True}),
+    )
+    an.delete_note("n1")
+    assert not tmp_index.exists()
+
+
+# ─── list_folders ───
+
+
+def test_list_folders_ok(tmp_index, monkeypatch):
+    monkeypatch.setattr(
+        an, "run_osascript",
+        lambda *a, **k: json.dumps(["Философия", "Личное", "Быт"]),
+    )
+    assert an.list_folders() == ["Философия", "Личное", "Быт"]
+
+
+def test_list_folders_filters_recently_deleted_in_script(tmp_index, monkeypatch):
+    def fake(script, timeout=30.0):
+        assert 'name === "Recently Deleted"' in script
+        return json.dumps(["Философия"])
+
+    monkeypatch.setattr(an, "run_osascript", fake)
+    assert an.list_folders() == ["Философия"]
+
+
+def test_list_folders_non_list_response(tmp_index, monkeypatch):
+    monkeypatch.setattr(an, "run_osascript", lambda *a, **k: "{}")
+    with pytest.raises(an.AppleNotesError, match="формат ответа"):
+        an.list_folders()
+
+
+# ─── move_note ───
+
+
+def test_move_note_ok(tmp_index, monkeypatch):
+    def fake(script, timeout=30.0):
+        assert 'app.folders.byName("Личное")' in script
+        return json.dumps({"id": "n1", "folder": "Личное"})
+
+    monkeypatch.setattr(an, "run_osascript", fake)
+    assert an.move_note("n1", "Личное") == {"id": "n1", "folder": "Личное"}
+
+
+def test_move_note_escapes_folder(tmp_index, monkeypatch):
+    def fake(script, timeout=30.0):
+        assert 'byName("Папка \\"особая\\"")' in script
+        return json.dumps({"id": "n1", "folder": "x"})
+
+    monkeypatch.setattr(an, "run_osascript", fake)
+    an.move_note("n1", 'Папка "особая"')
+
+
+def test_move_note_empty_folder(tmp_index):
+    with pytest.raises(an.AppleNotesError, match="папку назначения"):
+        an.move_note("n1", "  ")
+
+
+def test_move_note_to_recently_deleted_blocked(tmp_index):
+    with pytest.raises(an.AppleNotesError, match="удаление заметки"):
+        an.move_note("n1", "Recently Deleted")
+
+
+def test_move_note_jxa_error(tmp_index, monkeypatch):
+    monkeypatch.setattr(
+        an, "run_osascript",
+        lambda *a, **k: json.dumps({"error": "Can't find folder"}),
+    )
+    with pytest.raises(an.AppleNotesError, match="переместить"):
+        an.move_note("n1", "Нет такой")
+
+
+def test_move_note_invalidates_index(tmp_index, fake_notes, monkeypatch):
+    fake_notes([("Заметка", "Ф")])
+    an.get_index()
+    monkeypatch.setattr(
+        an, "run_osascript",
+        lambda *a, **k: json.dumps({"id": "n1", "folder": "Другая"}),
+    )
+    an.move_note("n1", "Другая")
+    assert not tmp_index.exists()
