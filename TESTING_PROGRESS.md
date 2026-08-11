@@ -2,6 +2,32 @@
 
 Прогресс по задаче «Проверить все файлы Telegram-бота через тестирование».
 
+## Снимок состояния (обновлять каждую сессию)
+- Дата последнего обновления: 2026-08-11
+- Статус тестов: 3165 passed, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
+- Мутационное тестирование `services/file_index.py`: **742/757 killed, 14 survived + 1 timeout = 1.98%** (цель ≤10%). Прогон: `python3 -m mutmut run --max-children 1` (обязательно `--max-children 1` + чистка `mutants/services/*.meta` при изменении тестов).
+
+## Сделано (Done)
+- **Мутационное тестирование `services/file_index.py`** (2026-08-11): выжившие мутанты 105 → 14 (13.9% → 1.98%). Ключевые моменты:
+  - **Кэш mutmut не инвалидируется при изменении тестов** (результаты переиспользуются по хэшу кода функции из `mutants/services/*.meta`). После правки тестов обязательно `rm -f "mutants/services/"*.meta "mutants/mutmut-stats.json"`.
+  - **fork-параллелизм mutmut ненадёжен**: параллельные pytest-процессы дерутся за `pytest-current` (FileNotFoundError в дочерних) + pytest-timeout abort → числа прогонов «плавают» (486/268 vs 650/105 на одинаковых входах). Детерминизм: `--max-children 1`.
+  - **Убито новыми/усиленными тестами (92 теста, +7 новых)**:
+    - canonical-SQL spy-тест (`_canonical_sql_set`, AST по исходнику репозитория — НЕ `fi.__file__`, в мутантных прогонах это копия): `assert set(seen) <= canonical` убил ~44 SQL-case мутанта (case-варианты `lower()`/`upper()` во всех SELECT/INSERT/UPDATE/DELETE, включая UPDATE-путь через повторный `index_document` и failed-путь через BoomConn с commit-ошибкой).
+    - Точные равенства вместо `in`/`match`: caplog.messages == [полное сообщение] (18 logger-мутантов), str(ValueError) == exact (chunk_text 5/12, search_files 4), FileNotFoundError exact (index_directory 3), failed-dict `==` (151-156), `row[1]` проверка ПОСЛЕ первого вызова (мутант 136 — второй вызов перезаписывает error через ON CONFLICT), `_now()` endswith("+00:00") (1), kg_log dict-равенство (11/12/13).
+    - `round(score,4)` vs `round(score,5)` — нужен bm25-скор с ≥5 значащих дробных разрядов: термин в 1 из 5 файлов (df=1) даёт -1.44295... (важно: UNINDEXED-колонки FTS5 меняют bm25; json.loads разэкранирует `\uXXXX` — проверять сырую колонку БД, не распарсенный dict).
+    - `is_model_available` моки: `lambda model="x": model is not None` (мутанты `is_model_available(None)`); graceful-тесты дополнительно мокают `_call_embed` (иначе реальный сетевой вызов → «suspicious»).
+  - **14 выживших — верифицированные эквиваленты** (diff + семантика): chunk_text.17 (`<`/`<=` — break при `end==len`), index_document 17/20 (decode: дефолтная кодировка ≡ utf-8, регистр-алиас), 83 (ensure_ascii=None ≡ False), search_files.28 (rows=None ≡ []), search_similar 10/12 (dtype), 41 (or→and при нулевых нормах), 68 (`>=`→`>` — срез `[:limit]`), 72 (seen.add(None) — дедуп через dict `best`), 83/85/88 (folder — ключ всегда есть в meta), _snippet.8 (chars//2 ≡ chars/2 при SNIPPET_CHARS=160). 1 timeout: chunk_text.23 (`start - chunk_chars` — вечная петля, ловится pytest-timeout).
+  - **Технический долг**: `services/file_index.py` и `tests/test_file_index.py` не были в git — теперь закоммичены.
+- **Все шаги AGENT_PLAN.md завершены** (2026-08-09): Фазы 0–3.5 + бонусы «Утренний дайджест» (fb39aca), «Связывание идей» (d620cd0), «Авто-категоризация Apple Notes → KG» (7e5db90), «Reflection-вопрос после штурма» (7eafc00). Последний пункт плана «Проверить запись id события Apple Calendar» помечен «не требуется сейчас».
+- **SQLite/файловые ResourceWarning — устранено**: `pytest -W error::ResourceWarning` даёт 0 предупреждений. Фикс: `services/logging_setup.py` закрывает FileHandler'ы при замене; тесты с `open(...).read()` переведены на `with`; синхронные моки для `save_bot_photo`; `coro.close()` в fake_create. Остались только 6 DeprecationWarning из библиотек (google/genai, swig) — не наш код.
+
+## Открытые вопросы / Next steps
+- **Agent_guide.md** (создан 2026-08-08): ждёт выполнения после завершения всех шагов плана — по указанию пользователя.
+- Проверить после изменений:
+  - `pytest -q tests/test_logging_setup.py`
+  - `pytest -q -W error::ResourceWarning`
+
+
 ## Правила работы
 - Порядок: сначала `services/`, потом `handlers/`.
 - Цель: **≥80% покрытие** на каждый модуль.
@@ -10,9 +36,10 @@
 - QA-команды: `make lint`, `make typecheck`, `make test`, `make security`, `make qa`.
 
 ## Последний зелёный рубеж (checkpoint)
-- **Дата**: 2026-08-09
-- **Тесты**: **2943 passed**, 0 failed (было 2922)
+- **Дата**: 2026-08-11
+- **Тесты**: **3165 passed**, 0 failed (было 2943)
 - **Общее покрытие**: **99%**
+- **lint**: flake8 0 errors ✅ | **mypy**: Success, 85 source files ✅ | **bandit**: 73 Low (прежний базлайн, новых нет; High/Medium: 0) ✅ | **mutmut file_index**: 1.98% survived ✅
 - **lint**: flake8 0 новых (pre-existing очищены: E306/F841/E501/F401 в test_messages_handler/test_palace_save) ✅ | **mypy**: Success, 82 source files ✅ | **bandit**: 67 issues (прежний базлайн, новых нет) ✅
 - **Бонусы плана завершены (2026-08-09)**:
   - **Авто-категоризация Apple Notes → KG** (`7e5db90`): services/auto_categorize.py — `categorize_note` (тип+темы через `_extract_from_filename` из kg_enricher, без AI), `auto_categorize_notes` (лимит, kv-отметки namespace `categorized`, факты `subject→topic→тема` через `mempalace_kg_add` по контракту kg_enricher, отметка ТОЛЬКО при успехе KG, толерантность к падениям индекса/KG/kv); подключение в reminder_scheduler раз в 720 циклов (~6ч). 16 unit (94%) + 3 scheduler + BDD 6/6.

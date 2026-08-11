@@ -24,6 +24,10 @@ from services.note_linker import link_note_async
 from services.multimodal import list_photos, encode_image_to_base64, check_capability
 from services.prompts import get_smart_prompt
 from services.kg_enricher import enrich_all_notes
+from services.file_index import (
+    index_directory, search_files, file_stats, delete_file,
+    build_embeddings,
+)
 from cli.utils import (
     C, format_for_terminal, speak_text, save_chat, get_cli_voice,
     set_cli_voice, generate_summary_if_needed, export_chat_to_md,
@@ -376,6 +380,16 @@ async def cmd_enrich():
         return
     print(f"{C.CYAN}Обогащаю заметки...{C.END}")
 
+    try:
+        report = index_directory(NOTES_DIR)
+        if report["total"]:
+            print(f"{C.CYAN}Индекс файлов: {len(report['added'])} новых "
+                  f"из {report['total']} общих{C.END}")
+            for fail in report["failed"]:
+                print(f"  {C.RED}  ✗ {fail['path']}: {fail['error']}{C.END}")
+    except OSError as e:
+        print(f"{C.YELLOW}Индексация файлов пропущена: {e}{C.END}")
+
     async def _progress(curr, total, stats):
         print(
             f"{C.CYAN}  [{curr}/{total}] {stats['processed']} "
@@ -438,6 +452,67 @@ async def cmd_transkript(user_input):
 async def cmd_kgadd(user_input):
     result = await cli_kgadd(user_input)
     print(f"{C.CYAN}{result}{C.END}")
+
+
+async def cmd_files(user_input):
+    parts = user_input.strip().split(maxsplit=1)
+    sub = parts[0].lower() if parts else ""
+    arg = parts[1].strip() if len(parts) > 1 else ""
+    if sub == "search":
+        if not arg:
+            print(f"{C.YELLOW}Использование: /files search <запрос>{C.END}")
+            return
+        try:
+            results = search_files(arg)
+        except ValueError as e:
+            print(f"{C.RED}{e}{C.END}")
+            return
+        if not results:
+            print(f"{C.YELLOW}Ничего не найдено по «{arg}».{C.END}")
+            return
+        print(f"{C.CYAN}Найдено файлов: {len(results)}{C.END}")
+        for r in results:
+            print(f"  {C.GREEN}{r['filename']}{C.END} [{r['folder']}] "
+                  f"score={r['_score']}")
+            print(f"    {r['snippet']}")
+    elif sub == "stats":
+        s = file_stats()
+        print(f"{C.CYAN}Индекс файлов:{C.END}")
+        print(f"  • Всего файлов: {s['total_files']} (indexed: {s['indexed']}, "
+              f"failed: {s['failed']})")
+        print(f"  • Чанков: {s['total_chunks']}")
+        print(f"  • Объём: {s['size_bytes']} байт")
+        print(f"  • С эмбеддингами: {s['embedded_files']}")
+    elif sub == "index":
+        target = arg or NOTES_DIR
+        if not os.path.isdir(target):
+            print(f"{C.RED}Директория не найдена: {target}{C.END}")
+            return
+        print(f"{C.CYAN}Индексирую {target}...{C.END}")
+        report = index_directory(target)
+        print(f"  • Файлов всего: {report['total']}")
+        print(f"  • Новых: {len(report['added'])}")
+        for fail in report["failed"]:
+            print(f"  {C.RED}  ✗ {fail['path']}: {fail['error']}{C.END}")
+        print(f"{C.GREEN}Готово.{C.END}")
+    elif sub == "del":
+        if not arg:
+            print(f"{C.YELLOW}Использование: /files del <file_id>{C.END}")
+            return
+        if delete_file(arg):
+            print(f"{C.GREEN}Файл {arg} удалён из индекса.{C.END}")
+        else:
+            print(f"{C.RED}Файл {arg} не найден.{C.END}")
+    elif sub == "embeddings":
+        ok = build_embeddings()
+        if ok:
+            print(f"{C.GREEN}Эмбеддинги файлов построены.{C.END}")
+        else:
+            print(f"{C.YELLOW}Модель недоступна или нечего индексировать — "
+                  f"семантика выключена, полнотекстовый поиск работает.{C.END}")
+    else:
+        print(f"{C.YELLOW}Подкоманды /files: search <запрос> | stats | "
+              f"index [директория] | del <file_id> | embeddings{C.END}")
 
 
 async def cmd_settings(messages, data, chat_path):

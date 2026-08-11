@@ -74,10 +74,10 @@ exclude_lines = [
 
 [tool.mutmut]
 backup = true
-source_paths = ["services/semantic_cache.py", "services/circuit_breaker.py", "services/event_bus.py", "services/kv_store.py", "services/graceful_degradation.py", "handlers/palace/action_bar.py", "services/notes_embeddings.py"]
+source_paths = ["services/file_index.py"]
 also_copy = ["config.py", "main.py", "cli_ask.py", "cli_extras.py", "cli", "handlers", "services"]
 pytest_add_cli_args = ["--override-ini=addopts=-ra", "-p", "no:cacheprovider"]
-pytest_add_cli_args_test_selection = ["tests/"]
+pytest_add_cli_args_test_selection = ["tests/test_file_index.py"]
 swhitelist = [
   "*/venv/*",
   "*/__pycache__/*",

@@ -14,7 +14,7 @@ from cli.commands import (
     cmd_status, cmd_mcp, cmd_wakeup, cmd_repair, cmd_compact, cmd_compress, cmd_palace,
     cmd_wings, cmd_rooms, cmd_taxonomy, cmd_graph, cmd_traverse,
     cmd_tunnels, cmd_follow, cmd_kg, cmd_kgstats, cmd_enrich, cmd_sync,
-    cmd_remind, cmd_pdfs, cmd_yt, cmd_transkript, cmd_kgadd,
+    cmd_remind, cmd_pdfs, cmd_yt, cmd_transkript, cmd_kgadd, cmd_files,
     cmd_settings, cmd_web, save_quick_note, save_extraction, process_ai_query,
 )
 from cli.utils import C, format_for_terminal, get_cli_voice, is_noise_input
@@ -29,7 +29,7 @@ class CLICompleter(Completer):
             '/sync', '/photos', '/analyze_photo', '/status', '/mcp', '/wakeup',
             '/repair', '/compact', '/compress', '/palace', '/wings', '/rooms',
             '/taxonomy', '/graph', '/traverse', '/tunnels', '/follow', '/kg',
-            '/kgadd', '/kgstats', '/enrich', '/settings', '/pdfs', '/transkript',
+            '/kgadd', '/kgstats', '/enrich', '/files', '/settings', '/pdfs', '/transkript',
             '/yt', '/ytaudio', '/remind', 'звук', 'звук-',
         ]
         self.palace_subcommands = [
@@ -255,6 +255,10 @@ async def chat_loop(chat_path: str, session: PromptSession):
 
         if cmd.startswith("/kgadd "):
             await cmd_kgadd(user_input[7:].strip())
+            continue
+
+        if cmd == "/files" or cmd.startswith("/files "):
+            await cmd_files(user_input[6:].strip())
             continue
 
         if cmd == "/settings":
