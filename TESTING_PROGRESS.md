@@ -4,8 +4,24 @@
 
 ## Снимок состояния (обновлять каждую сессию)
 - Дата последнего обновления: 2026-08-11
-- Статус тестов: 3165 passed, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
+- Статус тестов: **3275 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
 - Мутационное тестирование `services/file_index.py`: **742/757 killed, 14 survived + 1 timeout = 1.98%** (цель ≤10%). Прогон: `python3 -m mutmut run --max-children 1` (обязательно `--max-children 1` + чистка `mutants/services/*.meta` при изменении тестов).
+
+## Сделано (Done)
+
+### Notes Agent — фазы 0–4 (NOTES_AGENT_PLAN.md, 2026-08-11)
+Коммиты: f81add0 (Фаза 0), 8e04f95 (Фаза 1), 1d89398 (Фаза 2), 47b5fed (Фаза 3).
+- **Фаза 0 — write-операции Apple Notes** (`services/apple_notes.py`): `create_note`, `update_note(append|replace)`, `delete_note` (→ Recently Deleted), `list_folders`, `move_note`; языковая валидация `detect_and_validate_language` (ru/de эвристика по äöüß, запрет CJK 0x4E00-9FFF/3040-30FF/AC00-D7A3); `_js_literal`, `_safe_note_id`, `_unwrap_note_result`; все write-операции инвалидируют индекс. +50 тестов (80 в файле), покрытие 99%.
+- **Фаза 1 — инструменты** (`services/agent_notes_write_tools.py`): `notes_create/update/delete/move` (is_write=True) + `notes_list_folders` (is_write=False — осознанное отклонение: листинг папок не требует подтверждения); регистрация через импорт в `agent_engine.py`. +25 тестов (схемы BVA, allowlist, интеграция с run_agent).
+- **Фаза 2 — механизм подтверждения**:
+  - `run_agent(confirm_write=...)`: колбэк вызывается ПЕРЕД каждым write-инструментом; `False` → результат «Пользователь отклонил действие» без выполнения; **без confirm_write write-тулы недоступны даже при include_write=True** (гарантия «нет подтверждения — нет записи»). +5 engine-тестов.
+  - `handlers/notes_agent.py`: промпт NOTES_AGENT_SYSTEM_PROMPT (только заметки, авто-определение языка, запрет CJK, правило «объясни перед write»), `allowed_categories=(CAT_NOTES,)`, `confirm_write` с карточками `notes_confirm:<token>`/`notes_cancel:<token>`, таймаут 120с (TtlDict 300с, asyncio.Event), **двойное подтверждение для notes_delete** (первая карточка «Удалить заметку X?» → вторая «Это необратимо…»), название заметки для карточки из кэш-индекса. +28 тестов.
+  - Кнопка «📝 Apple Notes» в главном меню (`main.py`) + режим ожидания ввода; авто-предложение `maybe_suggest_note_action` (keyword-эвристика, не LLM) в `messages.py` — кнопка «📝 Работать с заметками?» (не показывается в агентом режиме).
+  - BDD `features/notes_write.feature` 6/6 (happy/отмена/двойное подтверждение/без confirm_write/таймаут/read-only).
+- **Фаза 3 — updated + limit**: JXA-скрипты (полный и basic) читают `modificationDate` → ISO-строка; `list_notes(sort_by_updated=True, limit=N)` (свежие первыми, без даты — в конец); `notes_list` получил `limit` 1..200 (сортировка включается при limit); `validate_arguments` — BVA-проверка minimum/maximum для integer/number; тест изоляции: CAT_NOTES не видит mp_*-инструменты. +16 тестов.
+- **Фаза 4 (частично)**: HELP_TEXT в `handlers/notes.py` дополнен блоком про «📝 Apple Notes». Осталось: ручная проверка на реальном Mac + Фаза 5 (сюрреалистичный штурм).
+- QA по фазам: 3262→3275 passed, flake8 0, mypy 0, bandit 73 (базлайн, новых нет), BDD notes_write 6/6, полный behave-прогон без новых ошибок (18 features passed; 7 error — пре-существующие фичи с англ. шагами без реализаций).
+
 
 ## Сделано (Done)
 - **Мутационное тестирование `services/file_index.py`** (2026-08-11): выжившие мутанты 105 → 14 (13.9% → 1.98%). Ключевые моменты:
