@@ -4,13 +4,13 @@
 
 ## Снимок состояния (обновлять каждую сессию)
 - Дата последнего обновления: 2026-08-11
-- Статус тестов: **3275 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
+- Статус тестов: **3305 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
 - Мутационное тестирование `services/file_index.py`: **742/757 killed, 14 survived + 1 timeout = 1.98%** (цель ≤10%). Прогон: `python3 -m mutmut run --max-children 1` (обязательно `--max-children 1` + чистка `mutants/services/*.meta` при изменении тестов).
 
 ## Сделано (Done)
 
 ### Notes Agent — фазы 0–4 (NOTES_AGENT_PLAN.md, 2026-08-11)
-Коммиты: f81add0 (Фаза 0), 8e04f95 (Фаза 1), 1d89398 (Фаза 2), 47b5fed (Фаза 3).
+Коммиты: f81add0 (Фаза 0), 8e04f95 (Фаза 1), 1d89398 (Фаза 2), 47b5fed (Фаза 3), 1106119 (Фаза 4).
 - **Фаза 0 — write-операции Apple Notes** (`services/apple_notes.py`): `create_note`, `update_note(append|replace)`, `delete_note` (→ Recently Deleted), `list_folders`, `move_note`; языковая валидация `detect_and_validate_language` (ru/de эвристика по äöüß, запрет CJK 0x4E00-9FFF/3040-30FF/AC00-D7A3); `_js_literal`, `_safe_note_id`, `_unwrap_note_result`; все write-операции инвалидируют индекс. +50 тестов (80 в файле), покрытие 99%.
 - **Фаза 1 — инструменты** (`services/agent_notes_write_tools.py`): `notes_create/update/delete/move` (is_write=True) + `notes_list_folders` (is_write=False — осознанное отклонение: листинг папок не требует подтверждения); регистрация через импорт в `agent_engine.py`. +25 тестов (схемы BVA, allowlist, интеграция с run_agent).
 - **Фаза 2 — механизм подтверждения**:
@@ -19,8 +19,15 @@
   - Кнопка «📝 Apple Notes» в главном меню (`main.py`) + режим ожидания ввода; авто-предложение `maybe_suggest_note_action` (keyword-эвристика, не LLM) в `messages.py` — кнопка «📝 Работать с заметками?» (не показывается в агентом режиме).
   - BDD `features/notes_write.feature` 6/6 (happy/отмена/двойное подтверждение/без confirm_write/таймаут/read-only).
 - **Фаза 3 — updated + limit**: JXA-скрипты (полный и basic) читают `modificationDate` → ISO-строка; `list_notes(sort_by_updated=True, limit=N)` (свежие первыми, без даты — в конец); `notes_list` получил `limit` 1..200 (сортировка включается при limit); `validate_arguments` — BVA-проверка minimum/maximum для integer/number; тест изоляции: CAT_NOTES не видит mp_*-инструменты. +16 тестов.
-- **Фаза 4 (частично)**: HELP_TEXT в `handlers/notes.py` дополнен блоком про «📝 Apple Notes». Осталось: ручная проверка на реальном Mac + Фаза 5 (сюрреалистичный штурм).
-- QA по фазам: 3262→3275 passed, flake8 0, mypy 0, bandit 73 (базлайн, новых нет), BDD notes_write 6/6, полный behave-прогон без новых ошибок (18 features passed; 7 error — пре-существующие фичи с англ. шагами без реализаций).
+- **Фаза 4 (частично)**: HELP_TEXT в `handlers/notes.py` дополнен блоком про «📝 Apple Notes». Осталось: ручная проверка на реальном Mac.
+- **Фаза 5 — сюрреалистичный творческий штурм (ЗАВЕРШЕНА)**:
+  - `SURREAL_STORM_SYSTEM_PROMPT` выровнен с планом (1–2 совмещённых приёма, ссылка на раздел «Комбинации для сюрреализма»).
+  - `parse_ideas(raw, require_camera_setup=True)` — идея без непустого `camera_setup` отбраковывается (стандартный штурм не затронут); `storm_system_prompt(mode)` — выбор промпта.
+  - `collect_context(topic, mode="standard"|"surreal", folder=None)` — surreal: palace/kg НЕ запрашиваются, notes по теме или из папки (`list_notes`), 4-й блок — полный текст `docs/FUJI_XT4_CREATIVE_GUIDE.md\u2009` (кэш в памяти процесса, толерантен к отсутствию файла).
+  - `handlers/notes_agent.py`: триггеры «творческий штурм»/«сюрреалистичный штурм»/«сюрштурм» → `run_surreal_storm` (карточки 💡/🎭 Почему сюрреалистично/📷 Настройки камеры `<code>`/➡️ Первые шаги); пункт-подсказка в SESSION_INVITE.
+  - Раздел «Комбинации для сюрреализма» (Комбо 1/2 + правило смешивания) добавлен в конец гайда (23197 байт).
+  - Тесты: +30 unit (test_brainstorm.py 50, test_notes_agent_handler.py 39), +BDD `features/surreal_storm.feature` 6/6. Покрытие: brainstorm 99%, notes_agent 95%.
+- QA по фазам: 3262→3275→3305 passed, flake8 0, mypy 0, bandit 73 (базлайн, новых нет), полный behave без новых ошибок (19 features passed; 7 error — пре-существующие фичи с англ. шагами без реализаций).
 
 
 ## Сделано (Done)

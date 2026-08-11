@@ -12,6 +12,7 @@
 
 import asyncio
 import logging
+import re
 import secrets
 
 from aiogram import F, Router, types
@@ -29,6 +30,8 @@ logger = logging.getLogger("NotesAgentHandler")
 router = Router()
 
 CONFIRM_TIMEOUT = 120  # секунд на подтверждение
+
+SURREAL_TRIGGERS = ("творческий штурм", "сюрреалистичный штурм", "сюрштурм")
 
 NOTES_AGENT_SYSTEM_PROMPT = (
     "Ты — агент для работы с заметками Apple Notes в MemPalace. "
@@ -211,6 +214,65 @@ async def _run_notes_agent_reply(uid: int, status_msg, question: str):
     )
 
 
+# ─── 💡 Творческий штурм (сюрреалистичный, с настройками X-T4) ───
+
+
+def _extract_storm_topic(text: str) -> str | None:
+    """Извлекает тему сюрреалистичного штурма из текста.
+
+    Возвращает тему (может быть пустой строкой) или None, если текст
+    не является запросом «💡 Творческий штурм».
+    """
+    t = (text or "").strip()
+    low = t.lower()
+    for trigger in SURREAL_TRIGGERS:
+        pos = low.find(trigger)
+        if pos == -1:
+            continue
+        topic = t[pos + len(trigger):]
+        topic = re.sub(r"^[\s:：—-]+", "", topic)
+        return topic.strip()
+    return None
+
+
+async def run_surreal_storm(uid: int, status_msg, topic: str):
+    """Сюрреалистичный штурм: контекст notes+гайд → SURREAL промпт → карточки."""
+    from services import brainstorm as bs
+    from services.ai_engine import get_ai_response_async, get_current_ai
+
+    topic = (topic or "").strip()
+    if not topic:
+        await _status_edit(
+            status_msg,
+            "Укажите тему после команды. Например: «💡 Творческий штурм: ночные сны»",
+        )
+        return
+
+    try:
+        await _status_edit(status_msg, "🔍 Собираю контекст из заметок…")
+        context = await bs.collect_context(topic, mode="surreal")
+
+        await _status_edit(status_msg, "💭 Генерирую сюрреалистичные идеи…")
+        engine, model = get_current_ai()
+        msgs = [
+            {"role": "system", "content": bs.storm_system_prompt("surreal")},
+            {"role": "user", "content": bs.build_storm_prompt(topic, context)},
+        ]
+        raw = await get_ai_response_async(engine, model, msgs)
+
+        ideas = bs.parse_ideas(raw, require_camera_setup=True)
+    except Exception as exc:  # noqa: BLE001 — показываем пользователю текст ошибки
+        logger.error("[SURREAL] run failed: %s", exc, exc_info=True)
+        await _status_edit(status_msg, f"❌ Ошибка штурма: {exc}")
+        return
+
+    text = bs.format_surreal_ideas_text(topic, ideas)
+    try:
+        await status_msg.edit_text(text, parse_mode="HTML")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SURREAL] show ideas failed: %s", exc)
+
+
 # ─── Кнопка «📝 Apple Notes» в главном меню ───
 
 SESSION_INVITE = (
@@ -218,7 +280,9 @@ SESSION_INVITE = (
     "Напишите, что сделать с заметками — свободным текстом. Например:\n"
     "• «Сохрани в заметку: купить капучино»\n"
     "• «Найди мою заметку про Фудзи»\n"
-    "• «Что там в заметках про поездку?»"
+    "• «Что там в заметках про поездку?»\n\n"
+    "💡 <b>Творческий штурм:</b> «💡 Творческий штурм: ночные сны» — "
+    "сюрреалистичные фотоидеи с точными настройками Fujifilm X-T4."
 )
 
 
@@ -296,5 +360,13 @@ def consume_notes_input(uid: int) -> bool:
 
 
 async def run_notes_agent(uid: int, status_msg, question: str):
-    """Запуск агента заметок (из кнопки меню или авто-предложения)."""
+    """Запуск агента заметок (из кнопки меню или авто-предложения).
+
+    Сообщение «💡 Творческий штурм: <тема>» маршрутизируется в
+    сюрреалистичный штурм вместо обычного агента.
+    """
+    topic = _extract_storm_topic(question)
+    if topic is not None:
+        await run_surreal_storm(uid, status_msg, topic)
+        return
     await _run_notes_agent_reply(uid, status_msg, question)

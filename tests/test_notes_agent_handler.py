@@ -384,3 +384,171 @@ async def test_run_notes_agent_max_iterations(monkeypatch):
     status = FakeStatus()
     await na._run_notes_agent_reply(4242, status, "вопрос")
     assert "лимит итераций" in status.edits[-1]
+
+
+# ─── 💡 Творческий штурм: извлечение темы ───
+
+
+def test_extract_storm_topic_happy():
+    assert na._extract_storm_topic("💡 Творческий штурм: ночные сны") == "ночные сны"
+    assert na._extract_storm_topic("Творческий штурм ночные сны") == "ночные сны"
+    assert na._extract_storm_topic("сюрреалистичный штурм: море") == "море"
+    assert na._extract_storm_topic("СЮРШТУРМ сны") == "сны"
+
+
+def test_extract_storm_topic_with_separators():
+    assert na._extract_storm_topic("💡 Творческий штурм — сны") == "сны"
+    assert na._extract_storm_topic("💡 Творческий штурм:  сны  ") == "сны"
+
+
+def test_extract_storm_topic_empty_topic():
+    assert na._extract_storm_topic("💡 Творческий штурм") == ""
+    assert na._extract_storm_topic("творческий штурм:") == ""
+
+
+def test_extract_storm_topic_none_for_plain_text():
+    assert na._extract_storm_topic("найди заметку про штурм") is None
+    assert na._extract_storm_topic("") is None
+    assert na._extract_storm_topic("   ") is None
+    assert na._extract_storm_topic("как дела") is None
+
+
+def _fake_coro(value):
+    async def _run():
+        return value
+    return _run()
+
+
+# ─── run_surreal_storm: пайплайн ───
+
+
+async def test_run_surreal_storm_happy(monkeypatch):
+    from services import brainstorm as bs
+    from services import ai_engine
+
+    monkeypatch.setattr(
+        bs, "collect_context",
+        lambda topic, mode="standard", folder=None: _fake_coro(
+            {"notes": "заметка", "guide": "гайд"},
+        ),
+    )
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
+    captured = {}
+
+    async def fake_response(engine, model, msgs):
+        captured["system"] = msgs[0]["content"]
+        captured["user"] = msgs[1]["content"]
+        return '{"ideas": [{"title": "Сон", "reason": "r", "camera_setup": "ACROS", "steps": "s"}]}'
+
+    monkeypatch.setattr(ai_engine, "get_ai_response_async", fake_response)
+
+    status = FakeStatus()
+    await na.run_surreal_storm(4242, status, "ночные сны")
+
+    assert captured["system"] == bs.SURREAL_STORM_SYSTEM_PROMPT
+    assert "ночные сны" in captured["user"]
+    assert "[Руководство Fujifilm X-T4]" in captured["user"]
+    assert status.edits, "карточки должны быть показаны"
+    joined = "\n".join(status.edits)
+    assert "🌪" in joined and "Сон" in joined
+    assert "📷" in joined and "<code>ACROS</code>" in joined
+
+
+async def test_run_surreal_storm_empty_topic(monkeypatch):
+    status = FakeStatus()
+    await na.run_surreal_storm(4242, status, "   ")
+    assert "Укажите тему" in status.edits[-1]
+
+
+async def test_run_surreal_storm_ai_error(monkeypatch):
+    from services import brainstorm as bs
+    from services import ai_engine
+
+    monkeypatch.setattr(
+        bs, "collect_context",
+        lambda topic, mode="standard", folder=None: _fake_coro({"notes": "", "guide": ""}),
+    )
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
+
+    async def boom(engine, model, msgs):
+        raise RuntimeError("ollama down")
+
+    monkeypatch.setattr(ai_engine, "get_ai_response_async", boom)
+
+    status = FakeStatus()
+    await na.run_surreal_storm(4242, status, "сны")
+    assert "Ошибка штурма" in status.edits[-1]
+
+
+async def test_run_surreal_storm_rejects_ideas_without_camera_setup(monkeypatch):
+    from services import brainstorm as bs
+    from services import ai_engine
+
+    monkeypatch.setattr(
+        bs, "collect_context",
+        lambda topic, mode="standard", folder=None: _fake_coro({"notes": "", "guide": ""}),
+    )
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
+
+    async def no_camera(engine, model, msgs):
+        return '{"ideas": [{"title": "Без камеры", "reason": "r"}]}'
+
+    monkeypatch.setattr(ai_engine, "get_ai_response_async", no_camera)
+
+    status = FakeStatus()
+    await na.run_surreal_storm(4242, status, "сны")
+    assert "Ошибка штурма" in status.edits[-1]
+    assert "Нет валидных идей" in status.edits[-1]
+
+
+# ─── run_notes_agent: маршрутизация в сюрреалистичный штурм ───
+
+
+async def test_run_notes_agent_routes_to_surreal_storm(monkeypatch):
+    from services import brainstorm as bs
+    from services import ai_engine
+
+    monkeypatch.setattr(
+        bs, "collect_context",
+        lambda topic, mode="standard", folder=None: _fake_coro(
+            {"notes": "", "guide": "гайд"},
+        ),
+    )
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
+
+    async def fake_response(engine, model, msgs):
+        return '{"ideas": [{"title": "Т", "camera_setup": "ACROS", "reason": "", "steps": ""}]}'
+
+    monkeypatch.setattr(ai_engine, "get_ai_response_async", fake_response)
+
+    status = FakeStatus()
+    await na.run_notes_agent(4242, status, "💡 Творческий штурм: сны")
+    joined = "\n".join(status.edits)
+    assert "Сюрреалистичный штурм" in joined
+    assert "ACROS" in joined
+
+
+async def test_run_notes_agent_routes_to_surreal_storm_empty_topic(monkeypatch):
+    status = FakeStatus()
+    await na.run_notes_agent(4242, status, "💡 Творческий штурм")
+    assert "Укажите тему" in status.edits[-1]
+
+
+async def test_run_notes_agent_normal_text_goes_to_agent(monkeypatch):
+    from handlers.palace import action_bar
+
+    async def fake_finalize(uid, edit_func, text, **kwargs):
+        pass
+
+    async def fake_run_agent(*args, **kwargs):
+        return na.ae.AgentResult(
+            final_answer="Обычный ответ", finished_reason="done", error=None,
+        )
+
+    monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
+    monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
+
+    status = FakeStatus()
+    await na.run_notes_agent(4242, status, "найди заметку про фудзи")
+    joined = "\n".join(status.edits)
+    assert "Сюрреалистичный штурм" not in joined

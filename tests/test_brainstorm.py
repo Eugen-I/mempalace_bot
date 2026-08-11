@@ -206,6 +206,201 @@ def test_ideas_to_text():
     assert "2. B" in text
 
 
+# ─── parse_ideas: сюрреалистичный режим (require_camera_setup) ───
+
+def test_parse_ideas_surreal_happy():
+    raw = (
+        '{"ideas": ['
+        '{"title": "Идея 1", "reason": "образ", "camera_setup": "ACROS, R+9", '
+        '"steps": "шаг"}]}'
+    )
+    ideas = bs.parse_ideas(raw, require_camera_setup=True)
+    assert len(ideas) == 1
+    assert ideas[0]["camera_setup"] == "ACROS, R+9"
+
+
+def test_parse_ideas_surreal_rejects_idea_without_camera_setup():
+    raw = (
+        '{"ideas": ['
+        '{"title": "Без настроек", "reason": "r"},'
+        '{"title": "С настройками", "camera_setup": "Мультиэкспозиция"}]}'
+    )
+    ideas = bs.parse_ideas(raw, require_camera_setup=True)
+    assert len(ideas) == 1
+    assert ideas[0]["title"] == "С настройками"
+
+
+def test_parse_ideas_surreal_rejects_empty_camera_setup():
+    raw = '{"ideas": [{"title": "Пустая строка", "camera_setup": "   "}]}'
+    with pytest.raises(ValueError, match="Нет валидных идей"):
+        bs.parse_ideas(raw, require_camera_setup=True)
+
+
+def test_parse_ideas_surreal_all_rejected_raises():
+    raw = '{"ideas": [{"title": "A"}, {"title": "B", "camera_setup": ""}]}'
+    with pytest.raises(ValueError, match="Нет валидных идей"):
+        bs.parse_ideas(raw, require_camera_setup=True)
+
+
+def test_parse_ideas_standard_keeps_idea_without_camera_setup():
+    """Обычный штурм не требует camera_setup — идеи без него валидны."""
+    ideas = bs.parse_ideas('{"ideas": [{"title": "Обычная идея"}]}')
+    assert len(ideas) == 1
+    assert ideas[0]["camera_setup"] == ""
+
+
+def test_parse_ideas_non_string_camera_setup_rejected():
+    raw = '{"ideas": [{"title": "T", "camera_setup": 42}]}'
+    with pytest.raises(ValueError, match="Нет валидных идей"):
+        bs.parse_ideas(raw, require_camera_setup=True)
+
+
+# ─── storm_system_prompt: выбор промпта по mode ───
+
+def test_storm_system_prompt_standard():
+    assert bs.storm_system_prompt("standard") == bs.STORM_SYSTEM_PROMPT
+    assert bs.storm_system_prompt("") == bs.STORM_SYSTEM_PROMPT
+
+
+def test_storm_system_prompt_surreal():
+    assert bs.storm_system_prompt("surreal") == bs.SURREAL_STORM_SYSTEM_PROMPT
+    assert bs.SURREAL_STORM_SYSTEM_PROMPT is not bs.STORM_SYSTEM_PROMPT
+    assert "camera_setup" in bs.SURREAL_STORM_SYSTEM_PROMPT
+    assert "Комбинации для сюрреализма" in bs.SURREAL_STORM_SYSTEM_PROMPT
+
+
+# ─── collect_context: mode="surreal" ───
+
+def test_collect_context_surreal_no_palace_kg(monkeypatch):
+    """При surreal palace/kg НЕ запрашиваются (нет ключей в контексте)."""
+
+    def _notes(*a, **k):
+        return [{"name": "Сон", "snippet": "ночные тени"}]
+
+    monkeypatch.setattr(bs, "search_notes", _notes)
+
+    def _boom(*a, **k):
+        raise AssertionError("get_mcp не должен вызываться при surreal")
+
+    monkeypatch.setattr(bs, "get_mcp", _boom)
+    ctx = run_async(bs.collect_context("сон", mode="surreal"))
+    assert "palace" not in ctx
+    assert "kg" not in ctx
+    assert ctx["notes"]
+    assert "Сон" in ctx["notes"]
+
+
+def test_collect_context_surreal_uses_list_notes_with_folder(monkeypatch):
+    """surreal + folder → list_notes(folder=...), не search_notes."""
+
+    def _boom(*a, **k):
+        raise AssertionError("search_notes не должен вызываться при folder")
+
+    monkeypatch.setattr(bs, "search_notes", _boom)
+
+    def _list_notes(folder=None, sort_by_updated=False, limit=None):
+        assert folder == "Фото"
+        return [{"name": "Кадр", "preview": "свет"}]
+
+    monkeypatch.setattr(bs, "list_notes", _list_notes)
+    ctx = run_async(bs.collect_context("тема", mode="surreal", folder="Фото"))
+    assert "Кадр" in ctx["notes"]
+
+
+def test_collect_context_surreal_guide_loaded(mock_sources, monkeypatch):
+    """surreal → в контексте полный текст FUJI-гайда (кэш в памяти)."""
+    mock_sources()
+    monkeypatch.setattr(bs, "_load_fuji_guide", lambda: "РУКОВОДСТВО X-T4")
+    ctx = run_async(bs.collect_context("тема", mode="surreal"))
+    assert ctx["guide"] == "РУКОВОДСТВО X-T4"
+
+
+def test_load_fuji_guide_cached_once(monkeypatch, tmp_path):
+    """Руководство читается с диска один раз, далее — из кэша."""
+    calls = []
+
+    class FakePath:
+        def __init__(self, name):
+            self._name = name
+
+        def read_text(self, encoding=None):
+            calls.append(self._name)
+            return "ГАЙД"
+
+    monkeypatch.setattr(bs, "_FUJI_GUIDE_NAMES", ("guide.md",))
+    monkeypatch.setattr(
+        bs, "_FUJI_GUIDE_DIR", type("D", (), {"__truediv__": lambda self, n: FakePath(n)})(),
+    )
+    bs.reset_fuji_guide_cache()
+    try:
+        assert bs._load_fuji_guide() == "ГАЙД"
+        assert bs._load_fuji_guide() == "ГАЙД"
+        assert len(calls) == 1
+    finally:
+        bs.reset_fuji_guide_cache()
+
+
+def test_load_fuji_guide_missing_file_tolerated(monkeypatch):
+    """Нет файла руководства → "" (блок просто пропускается)."""
+    class MissingPath:
+        def read_text(self, encoding=None):
+            raise OSError("нет файла")
+
+    monkeypatch.setattr(
+        bs, "_FUJI_GUIDE_DIR", type("D", (), {"__truediv__": lambda self, n: MissingPath()})(),
+    )
+    bs.reset_fuji_guide_cache()
+    try:
+        assert bs._load_fuji_guide() == ""
+    finally:
+        bs.reset_fuji_guide_cache()
+
+
+def test_build_storm_prompt_includes_guide_block():
+    ctx = {"notes": "заметка", "guide": "ГАЙД X-T4"}
+    prompt = bs.build_storm_prompt("Тема", ctx)
+    assert "[Руководство Fujifilm X-T4]\nГАЙД X-T4" in prompt
+
+
+def test_build_storm_prompt_standard_skips_missing_guide():
+    prompt = bs.build_storm_prompt("Тема", {"notes": "n", "palace": "", "kg": ""})
+    assert "Руководство Fujifilm" not in prompt
+
+
+def test_format_surreal_card():
+    idea = {
+        "title": "Сон во сне",
+        "reason": "двойная реальность",
+        "camera_setup": "ACROS, R+9 B-9",
+        "steps": "взять камеру",
+    }
+    text = bs.format_surreal_card(1, idea)
+    assert "💡" in text and "Сон во сне" in text
+    assert "🎭" in text and "двойная реальность" in text
+    assert "📷" in text and "<code>ACROS, R+9 B-9</code>" in text
+    assert "➡️" in text and "взять камеру" in text
+
+
+def test_format_surreal_card_without_camera_setup():
+    text = bs.format_surreal_card(2, {"title": "Т", "reason": "", "steps": ""})
+    assert "📷" not in text
+    assert "🎭" not in text and "➡️" not in text
+
+
+def test_format_surreal_card_escapes_html():
+    idea = {"title": "<b>Т</b>", "camera_setup": "WB <script>"}
+    text = bs.format_surreal_card(1, idea)
+    assert "<b>Т</b>" not in text
+    assert "&lt;script&gt;" in text
+
+
+def test_format_surreal_ideas_text_header():
+    ideas = [{"title": "A", "camera_setup": "X", "reason": "", "steps": ""}]
+    text = bs.format_surreal_ideas_text("ночные сны", ideas)
+    assert "🌪" in text and "Сюрреалистичный штурм" in text
+    assert "ночные сны" in text
+
+
 # ─── Связывание идей («Связано с: …») ───
 
 def test_significant_tokens_empty():
