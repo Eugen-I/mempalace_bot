@@ -102,8 +102,9 @@ _JXA_CREATE_NOTE = """
 const app = Application("Notes");
 try {
   const target = {target};
-  const note = app.make({new: "note", at: target,
-    withProperties: {name: {title}, body: {body}}});
+  const props = {name: {title}, body: {body}};
+  const note = target ? app.make({new: "note", at: target, withProperties: props})
+                      : app.make({new: "note", withProperties: props});
   JSON.stringify({id: String(note.id()), name: String(note.name())});
 } catch (e) {
   JSON.stringify({error: String(e)});
@@ -143,15 +144,14 @@ for (const f of app.folders()) {
 JSON.stringify(out);
 """
 
-_JXA_MOVE_NOTE = """
-const app = Application("Notes");
-try {
-  const n = app.notes.byId("{note_id}");
-  n.move({to: app.folders.byName({folder})});
-  JSON.stringify({id: String(n.id()), folder: String(n.folder().name())});
-} catch (e) {
-  JSON.stringify({error: String(e)});
-}
+_AS_MOVE_NOTE = """
+set nid to "{note_id}"
+set fname to "{folder}"
+tell application "Notes"
+  set n to note id nid
+  move n to folder fname
+  return "{\\"id\\":\\"" & nid & "\\", \\"folder\\":\\"" & fname & "\\"}"
+end tell
 """
 
 
@@ -194,6 +194,39 @@ def _looks_like_error(stdout: str, stderr: str) -> bool:
         if marker in combined:
             return True
     return False
+
+
+def run_applescript(script: str, timeout: float = OSASCRIPT_TIMEOUT) -> str:
+    """Выполняет AppleScript-скрипт через osascript и возвращает stdout.
+
+    JXA-перемещение заметок (app.make/move с объектами) падает с
+    «Typen können nicht konvertiert werden» на ряде машин — для move_note
+    используется AppleScript (тот же подход, что в apple_calendar).
+    """
+    try:
+        proc = subprocess.run(  # nosec — osascript фиксированный, без shell
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AppleNotesError("osascript превысил таймаут — Notes не отвечает.") from exc
+    except OSError as exc:
+        raise AppleNotesError(f"Не удалось запустить osascript: {exc}") from exc
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    if proc.returncode != 0 or _looks_like_error(stdout, stderr):
+        detail = stderr or stdout or "без вывода"
+        if "not authorized" in (stderr + stdout).lower():
+            raise AppleNotesError(
+                "Нет доступа к Apple Notes (TCC). Разрешите доступ в "
+                "«Системные настройки → Конфиденциальность → Автоматизация».",
+            )
+        raise AppleNotesError(f"osascript не выполнился: {detail}")
+    return stdout
 
 
 def _parse_json_out(stdout: str) -> Any:
@@ -391,6 +424,15 @@ def _js_literal(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)
 
 
+def _as_literal(text: str) -> str:
+    """Экранирует строку для вставки в AppleScript-литерал двойных кавычек.
+
+    AppleScript экранирует кавычки удвоением («""»), бэкслеши — без спец-
+    обработки в строках; переносы строк внутри имён папок недопустимы.
+    """
+    return str(text).replace('"', '""')
+
+
 def _safe_note_id(note_id: str) -> str:
     return note_id.replace("\\", "").replace('"', "")
 
@@ -414,7 +456,7 @@ def create_note(title: str, body: str = "", folder: str | None = None) -> str:
         raise AppleNotesError("Укажите заголовок заметки.")
     detect_and_validate_language(f"{title}\n{body}")
     if folder is None:
-        target = "app.notes"
+        target = "null"
     else:
         folder = folder.strip()
         if not folder:
@@ -502,9 +544,9 @@ def move_note(note_id: str, target_folder: str) -> dict:
         raise AppleNotesError(
             "Перемещение в «Recently Deleted» запрещено — используйте удаление заметки.",
         )
-    script = _JXA_MOVE_NOTE.replace("{note_id}", _safe_note_id(note_id))
-    script = script.replace("{folder}", _js_literal(folder))
-    data = _unwrap_note_result(_parse_json_out(run_osascript(script)), "переместить заметку")
+    script = _AS_MOVE_NOTE.replace("{note_id}", _safe_note_id(note_id))
+    script = script.replace("{folder}", _as_literal(folder))
+    data = _unwrap_note_result(_parse_json_out(run_applescript(script)), "переместить заметку")
     invalidate_index()
     return {"id": data.get("id", note_id), "folder": data.get("folder", folder)}
 

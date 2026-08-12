@@ -3,8 +3,8 @@
 Прогресс по задаче «Проверить все файлы Telegram-бота через тестирование».
 
 ## Снимок состояния (обновлять каждую сессию)
-- Дата последнего обновления: 2026-08-11
-- Статус тестов: **3305 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
+- Дата последнего обновления: 2026-08-12
+- Статус тестов: **3306 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
 - Мутационное тестирование `services/file_index.py`: **742/757 killed, 14 survived + 1 timeout = 1.98%** (цель ≤10%). Прогон: `python3 -m mutmut run --max-children 1` (обязательно `--max-children 1` + чистка `mutants/services/*.meta` при изменении тестов).
 
 ## Сделано (Done)
@@ -28,6 +28,12 @@
   - Раздел «Комбинации для сюрреализма» (Комбо 1/2 + правило смешивания) добавлен в конец гайда (23197 байт).
   - Тесты: +30 unit (test_brainstorm.py 50, test_notes_agent_handler.py 39), +BDD `features/surreal_storm.feature` 6/6. Покрытие: brainstorm 99%, notes_agent 95%.
 - QA по фазам: 3262→3275→3305 passed, flake8 0, mypy 0, bandit 73 (базлайн, новых нет), полный behave без новых ошибок (19 features passed; 7 error — пре-существующие фичи с англ. шагами без реализаций).
+- **Ручная проверка на реальном Mac (2026-08-12, завершена)** — коммит fix «move_note через AppleScript» (после 5400840):
+  - **Баг 1 — create_note** (JXA `at: app.notes` → «Die Routine verarbeitet nur einzelne Objekte»): исправлено `_JXA_CREATE_NOTE` через `const target = null` + условный `app.make` без `at`; старый ассерт теста (`"app.notes" in script`) закреплял баг — обновлён.
+  - **Баг 2 — move_note** (JXA-перемещение падает «Typen können nicht konvertiert werden» на этой машине в любой форме: объект/строка/push/свойство): переведено на AppleScript — `_AS_MOVE_NOTE` + `run_applescript` (паттерн `apple_calendar.py`; **nosec** на subprocess — bandit остался 73); возврат `{id, folder}` — имя папки известно заранее, т.к. `folder of note` в AppleScript не читается (-1728). Подтверждено вживую: move в «Notes»/«Gemini» + верификация `search_notes`. Замечание: `folder` JXA-файл может не читаться после move — `read_note` возвращает только name/body (folder=None), это не баг.
+  - **delete_note** (JXA `move` → Recently Deleted) — проверен вживую: заметка реально появилась в «Recently Deleted» (подтверждено AppleScript-перебором папки).
+  - QA-заметки («QA-тест MemPalace», «QA-вариант-1/3», «QA-условный») удалены штатно через `delete_note`; в папках Notes/Gemini не осталось.
+  - Итог: 87 тестов в `test_apple_notes.py` (+2: `test_as_literal_escapes_quotes`, обновлены move-тесты), **3306 passed**, полный behave 19 passed / 7 error (пре-существующие), flake8 0, mypy 0, bandit 73.
 
 
 ## Сделано (Done)

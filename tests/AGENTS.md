@@ -89,10 +89,10 @@ _Source: AGENT_PLAN.md (AGENT_PLAN.md)_
 - [ ] Проверить запись id события Apple Calendar в список напоминаний (не требуется сейчас)
 
 ## Точка возобновления (обновлять в конце КАЖДОГО шага)
-- Текущая фаза/шаг: NOTES_AGENT_PLAN — Фаза 5 «Сюрреалистичный штурм» ЗАВЕРШЕНА. Следующий: ручная проверка на реальном Mac
-- Последний завершённый шаг: Фаза 5 (SURREAL промпт, camera_setup-валидация, collect_context mode="surreal", FUJI-гайд кэш + «Комбинации для сюрреализма», карточки 💡/🎭/📷/➡️ в notes_agent, BDD 6/6)
-- Следующий шаг: ручная проверка на реальном Mac (см. §10) ИЛИ любой бонус из списка
-- Статус QA: 3305 passed, BDD: 19 features passed + 7 pre-existing errors (ai_caching,
+- Текущая фаза/шаг: NOTES_AGENT_PLAN — Фазы 0–5 ЗАВЕРШЕНЫ + ручная проверка на реальном Mac ЗАВЕРШЕНА (create_note fix через `target=null`, move_note переведён на AppleScript `_AS_MOVE_NOTE`/`run_applescript`, delete_note подтверждён вживую, QA-заметки удалены). Следующий: любой бонус из списка ниже ИЛИ опциональная ручная проверка Telegram-флоу (двойное подтверждение) при запущенном боте
+- Последний завершённый шаг: ручная проверка Notes на реальном Mac — все write-операции работают вживую (см. TESTING_PROGRESS.md «Ручная проверка»)
+- Следующий шаг: бонусы из чек-листа (открыть по желанию пользователя)
+- Статус QA: 3306 passed, flake8 0, mypy 0, bandit 73 (базлайн), BDD: 19 features passed + 7 pre-existing errors (ai_caching,
   clear_memory, event_handling, files_indexing, ollama_autostart, session_persistence,
   system_resilience — англ. шаги без реализаций, не наши)
 

@@ -468,7 +468,8 @@ def test_create_note_ok(tmp_index, monkeypatch):
     def fake(script, timeout=30.0):
         assert "{target}" not in script and "{title}" not in script and "{body}" not in script
         assert 'name: "Моя заметка"' in script
-        assert "app.notes" in script
+        assert "const target = null;" in script
+        assert "app.make({new: \"note\", withProperties: props})" in script
         return json.dumps({"id": "new1", "name": "Моя заметка"})
 
     monkeypatch.setattr(an, "run_osascript", fake)
@@ -704,19 +705,20 @@ def test_list_folders_non_list_response(tmp_index, monkeypatch):
 
 def test_move_note_ok(tmp_index, monkeypatch):
     def fake(script, timeout=30.0):
-        assert 'app.folders.byName("Личное")' in script
-        return json.dumps({"id": "n1", "folder": "Личное"})
+        assert 'set fname to "Личное"' in script
+        assert "move n to folder fname" in script
+        return '{"id": "n1", "folder": "Личное"}'
 
-    monkeypatch.setattr(an, "run_osascript", fake)
+    monkeypatch.setattr(an, "run_applescript", fake)
     assert an.move_note("n1", "Личное") == {"id": "n1", "folder": "Личное"}
 
 
 def test_move_note_escapes_folder(tmp_index, monkeypatch):
     def fake(script, timeout=30.0):
-        assert 'byName("Папка \\"особая\\"")' in script
-        return json.dumps({"id": "n1", "folder": "x"})
+        assert 'set fname to "Папка ""особая"""' in script
+        return '{"id": "n1", "folder": "x"}'
 
-    monkeypatch.setattr(an, "run_osascript", fake)
+    monkeypatch.setattr(an, "run_applescript", fake)
     an.move_note("n1", 'Папка "особая"')
 
 
@@ -732,19 +734,24 @@ def test_move_note_to_recently_deleted_blocked(tmp_index):
 
 def test_move_note_jxa_error(tmp_index, monkeypatch):
     monkeypatch.setattr(
-        an, "run_osascript",
-        lambda *a, **k: json.dumps({"error": "Can't find folder"}),
+        an, "run_applescript",
+        lambda *a, **k: '{"error": "Can\'t find folder"}',
     )
     with pytest.raises(an.AppleNotesError, match="переместить"):
         an.move_note("n1", "Нет такой")
+
+
+def test_as_literal_escapes_quotes():
+    assert an._as_literal('Папка "особая"') == 'Папка ""особая""'
+    assert an._as_literal("простая") == "простая"
 
 
 def test_move_note_invalidates_index(tmp_index, fake_notes, monkeypatch):
     fake_notes([("Заметка", "Ф")])
     an.get_index()
     monkeypatch.setattr(
-        an, "run_osascript",
-        lambda *a, **k: json.dumps({"id": "n1", "folder": "Другая"}),
+        an, "run_applescript",
+        lambda *a, **k: '{"id": "n1", "folder": "Другая"}',
     )
     an.move_note("n1", "Другая")
     assert not tmp_index.exists()
