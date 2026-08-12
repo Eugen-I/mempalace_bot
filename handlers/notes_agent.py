@@ -59,6 +59,88 @@ NOTES_AGENT_SYSTEM_PROMPT = (
 _pending_confirm: TtlDict = TtlDict(ttl=300)
 # uid -> True — пользователь в режиме ожидания ввода для агента заметок
 _waiting_for_notes_input: TtlDict = TtlDict()
+# uid -> {"items": [{"id", "name"}], "text": "..."} — список найденных заметок
+_notes_list_store: TtlDict = TtlDict(ttl=1800)
+# uid -> {"note_id", "name"} — заметка, выбранная для обсуждения с агентом
+_notes_discuss_ctx: TtlDict = TtlDict(ttl=900)
+
+_NOTE_ROW_RE = re.compile(r"^-\s*(.*?)\s*\[id=([^\]]+)\]")
+MAX_LIST_OPEN_BUTTONS = 10
+
+
+def _collect_notes_from_result(result) -> list[dict]:
+    """Заметки из результатов инструментов notes_search/notes_list.
+
+    Агент получает output вида «- Название [id=...] (папка: ...)» — парсим
+    их из шагов в порядке появления, дедуплицируем по id.
+    """
+    notes: list[dict] = []
+    seen: set[str] = set()
+    for step in getattr(result, "steps", []) or []:
+        for call, res in zip(getattr(step, "calls", []), getattr(step, "results", [])):
+            if call.get("name") not in ("notes_search", "notes_list"):
+                continue
+            output = res.get("output", "") or ""
+            for line in output.splitlines():
+                m = _NOTE_ROW_RE.match(line)
+                if not m:
+                    continue
+                nid = m.group(2)
+                if nid in seen:
+                    continue
+                seen.add(nid)
+                notes.append({"id": nid, "name": m.group(1).strip() or "Заметка"})
+    return notes
+
+
+def _notes_list_key(uid: int) -> dict | None:
+    """Актуальный кэш списка заметок пользователя или None."""
+    if uid in _notes_list_store:
+        return _notes_list_store.get(uid)
+    return None
+
+
+def _current_discuss(uid: int) -> dict | None:
+    if uid in _notes_discuss_ctx:
+        return _notes_discuss_ctx.get(uid)
+    return None
+
+
+def _consume_discuss(uid: int) -> dict | None:
+    ctx = _current_discuss(uid)
+    if ctx is not None:
+        _notes_discuss_ctx.pop(uid, None)
+    return ctx
+
+
+def _note_by_index(uid: int, idx: int) -> dict | None:
+    """Заметка по индексу из кэша списка (idx — 0-based)."""
+    data = _notes_list_key(uid)
+    if not data:
+        return None
+    if not isinstance(idx, int) or not 0 <= idx < len(data["items"]):
+        return None
+    return data["items"][idx]
+
+
+def _build_open_rows(uid: int) -> list[list[types.InlineKeyboardButton]]:
+    """Ряды кнопок «📄 N. Название» для открытия найденных заметок."""
+    data = _notes_list_key(uid)
+    if not data or not data["items"]:
+        return []
+    rows: list[list[types.InlineKeyboardButton]] = []
+    buttons = []
+    for i, item in enumerate(data["items"][:MAX_LIST_OPEN_BUTTONS], start=1):
+        label = f"📄 {i}. {item['name'][:18]}"
+        buttons.append(types.InlineKeyboardButton(
+            text=label, callback_data=f"notes_view:{i - 1}",
+        ))
+        if len(buttons) == 5:
+            rows.append(buttons)
+            buttons = []
+    if buttons:
+        rows.append(buttons)
+    return rows
 
 
 def _status_edit(status_msg, text: str):
@@ -205,12 +287,21 @@ async def _run_notes_agent_reply(uid: int, status_msg, question: str):
         await _status_edit(status_msg, f"⚠️ {result.error or 'Лимит итераций'}")
         return
 
+    notes = _collect_notes_from_result(result)
+    if notes:
+        _notes_list_store[uid] = {"items": notes, "text": result.final_answer}
+        extra_rows = _build_open_rows(uid)
+    else:
+        _notes_list_store.pop(uid, None)
+        extra_rows = None
+
     await finalize_answer(
         uid,
         status_msg.edit_text,
         result.final_answer,
         ctx={},
         title="<b>📝 Apple Notes</b>",
+        extra_rows=extra_rows,
     )
 
 
@@ -333,6 +424,61 @@ async def cb_notes_cancel(cb: types.CallbackQuery):
     await _resolve_confirmation(cb, False)
 
 
+# ─── Открытие найденной заметки ───
+
+
+async def _show_note_content(cb: types.CallbackQuery, note: dict):
+    """Показывает заметку и включает режим обсуждения с агентом."""
+    from services import apple_notes
+
+    name = note.get("name") or "Заметка"
+    try:
+        data = await asyncio.to_thread(apple_notes.read_note, note["id"])
+        body = str(data.get("body") or "")
+    except Exception as exc:  # noqa: BLE001 — показ заметки не критичен
+        logger.warning("[NOTES-AGENT] view note %s failed: %s", note.get("id"), exc)
+        body = ""
+
+    _notes_discuss_ctx[cb.from_user.id] = {
+        "note_id": note["id"], "name": name,
+    }
+    _waiting_for_notes_input[cb.from_user.id] = True
+
+    text = (
+        f"📄 <b>{safe_html_format(name)}</b>\n\n"
+        f"{safe_html_format(body) if body else '<i>Текст недоступен.</i>'}\n\n"
+        "💬 <b>Обсуждение включено:</b> задайте вопрос об этой заметке — "
+        "агент ответит с её текстом перед глазами."
+    )
+    from services.text_formatter import split_message
+
+    parts = split_message(text)
+    for part in parts[:-1]:
+        await cb.message.answer(part, parse_mode="HTML")
+    await safe_edit_text(cb.message, parts[-1], parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("notes_view:"))
+@allowed_callback
+async def cb_notes_view(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    try:
+        idx = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await safe_edit_text(cb.message, "❌ Неверный запрос.")
+        return
+    note = _note_by_index(cb.from_user.id, idx)
+    if not note:
+        await safe_edit_text(
+            cb.message,
+            "⏰ Список заметок устарел — повторите поиск в агентном режиме.",
+        )
+        return
+    await _show_note_content(cb, note)
+
+
 # ─── Вход из обычного диалога ───
 
 
@@ -364,10 +510,21 @@ async def run_notes_agent(uid: int, status_msg, question: str):
     """Запуск агента заметок (из кнопки меню или авто-предложения).
 
     Сообщение «💡 Творческий штурм: <тема>» маршрутизируется в
-    сюрреалистичный штурм вместо обычного агента.
+    сюрреалистичный штурм вместо обычного агента. Если пользователь
+    только что открыл заметку кнопкой «📄 N», следующий вопрос уходит
+    агенту с контекстом обсуждаемой заметки.
     """
     topic = _extract_storm_topic(question)
     if topic is not None:
         await run_surreal_storm(uid, status_msg, topic)
         return
+    discuss = _consume_discuss(uid)
+    if discuss:
+        note_id = str(discuss.get("note_id", ""))
+        name = str(discuss.get("name") or "заметка")
+        question = (
+            f"Пользователь обсуждает заметку «{name}» (id={note_id}). "
+            f"Прочитай её через notes_read и отвечай по содержанию заметки.\n\n"
+            f"Вопрос пользователя: {question}"
+        )
     await _run_notes_agent_reply(uid, status_msg, question)

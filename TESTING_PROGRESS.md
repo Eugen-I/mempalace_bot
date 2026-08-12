@@ -4,7 +4,7 @@
 
 ## Снимок состояния (обновлять каждую сессию)
 - Дата последнего обновления: 2026-08-12
-- Статус тестов: **3317 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
+- Статус тестов: **3346 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
 - Мутационное тестирование `services/file_index.py`: **742/757 killed, 14 survived + 1 timeout = 1.98%** (цель ≤10%). Прогон: `python3 -m mutmut run --max-children 1` (обязательно `--max-children 1` + чистка `mutants/services/*.meta` при изменении тестов).
 
 ## Сделано (Done)
@@ -40,6 +40,12 @@
   - `SURREAL_SAMPLING_PARAMS` (temp 0.95, top_p 0.95, freq_penalty 0.5, presence_penalty 0.3) + `storm_sampling_params(mode)`; `run_surreal_storm` передаёт `sampling=` в `get_ai_response_async`.
   - `ai_engine._sync_ai_call`: qwen/openai-ветки собирают call_kwargs с sampling (температура по умолчанию 0.6/0.7 сохраняется, при sampling переопределяется; top_p/penalties добавляются только если заданы) — поведение standard-режима не изменилось.
   - Тесты: +11 unit (keywords BVA, sampling проброс qwen/openai/async, storm_sampling_params) +BDD surreal_storm 6/6→8/8. Итог: **3317 passed**, flake8 0, mypy 0, bandit 73 (базлайн), behave 19 passed / 7 error (пре-существующие). Коммит: см. git log.
+- **Обсуждение найденных заметок (2026-08-12, продолжение)**: дочищен WIP в `handlers/notes_agent.py` (мёртвый код из незакоммиченного diff):
+  - `cb_notes_view` (`notes_view:<idx>`) — открытие заметки из списка найденных: заголовок + текст (split_message для длинных), при ошибке чтения — фолбэк «Текст недоступен», обсуждение включается даже при fail; устаревший/пустой список и невалидный idx — дружелюбные ошибки.
+  - `_run_notes_agent_reply` сохраняет найденные заметки в `_notes_list_store[uid]` и передаёт кнопки «📄 N.» в `finalize_answer(extra_rows=...)`; без заметок — store очищается.
+  - `run_notes_agent` потребляет `_notes_discuss_ctx` — последующий вопрос после открытия заметки уходит агенту с контекстом «обсуждаем заметку <name> (id=...), прочитай через notes_read».
+  - Тесты: +27 unit (collect/дедуп/пропуск чужих тулов, note_by_index BVA, discuss consume one-shot, build_open_rows 5/ряд + лимит 10, cb happy/expired/bad idx/read fail/split длинного/not allowed/no data, run_notes_agent с discuss и без, _note_title BVA+failure, storm edit-fail tolerant, session via message) → **handlers/notes_agent.py 100%**.
+  - BDD `features/notes_discuss.feature` 6/6 (happy + 3 neg: expired/out-of-range/malformed + 2 edge: read fail с discuss on, follow-up с контекстом). Итог: **3346 passed**, flake8 0, mypy 0, bandit 73 (базлайн), behave 20 features passed / 7 error (пре-существующие, англ. шаги без реализаций).
 
 
 ## Сделано (Done)

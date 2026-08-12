@@ -72,9 +72,13 @@ def allow_user(monkeypatch):
 def clear_pending():
     na._pending_confirm.clear()
     na._waiting_for_notes_input.clear()
+    na._notes_list_store.clear()
+    na._notes_discuss_ctx.clear()
     yield
     na._pending_confirm.clear()
     na._waiting_for_notes_input.clear()
+    na._notes_list_store.clear()
+    na._notes_discuss_ctx.clear()
 
 
 def _token_from(status: FakeStatus) -> str:
@@ -135,6 +139,46 @@ def test_describe_escapes_html():
     text = na._describe_action("notes_create", {"title": "<b>X</b>", "text": "<i>Y</i>"})
     assert "<b>X</b>" not in text
     assert "&lt;b&gt;X&lt;/b&gt;" in text
+
+
+# ─── _note_title: best-effort поиск названия по ID ───
+
+
+def test_note_title_empty_id_short_circuit(monkeypatch):
+    import asyncio
+
+    def boom(note_id):
+        raise AssertionError("list_notes не должен вызываться для пустого id")
+
+    monkeypatch.setattr("services.apple_notes.list_notes", boom)
+    assert asyncio.run(na._note_title("")) == ""
+
+
+def test_note_title_found_in_index(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(
+        "services.apple_notes.list_notes",
+        lambda: [{"id": "AAA", "name": "Идеи"}, {"id": "BBB", "name": "Другое"}],
+    )
+    assert asyncio.run(na._note_title("BBB")) == "Другое"
+
+
+def test_note_title_unknown_id(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr("services.apple_notes.list_notes", lambda: [{"id": "AAA"}])
+    assert asyncio.run(na._note_title("ZZZ")) == ""
+
+
+def test_note_title_failure_returns_empty(monkeypatch):
+    import asyncio
+
+    def boom():
+        raise RuntimeError("osascript down")
+
+    monkeypatch.setattr("services.apple_notes.list_notes", boom)
+    assert asyncio.run(na._note_title("AAA")) == ""
 
 
 # ─── maybe_suggest_note_action: эвристика интента ───
@@ -326,8 +370,8 @@ async def test_run_notes_agent_wiring(monkeypatch):
         calls.append(kwargs)
         return na.ae.AgentResult(final_answer="Вот ваша заметка")
 
-    async def fake_finalize(uid, edit, answer, ctx=None, title=""):
-        fake_finalize.args = (uid, answer, ctx, title)
+    async def fake_finalize(uid, edit, answer, ctx=None, title="", extra_rows=None):
+        fake_finalize.args = (uid, answer, ctx, title, extra_rows)
 
     monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
     monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
@@ -339,6 +383,7 @@ async def test_run_notes_agent_wiring(monkeypatch):
     assert callable(calls[0]["confirm_write"])
     assert fake_finalize.args[1] == "Вот ваша заметка"
     assert fake_finalize.args[3] == "<b>📝 Apple Notes</b>"
+    assert fake_finalize.args[4] is None
 
 
 async def test_run_notes_agent_engine_error(monkeypatch):
@@ -505,6 +550,32 @@ async def test_run_surreal_storm_rejects_ideas_without_camera_setup(monkeypatch)
     assert "Нет валидных идей" in status.edits[-1]
 
 
+async def test_run_surreal_storm_edit_failure_tolerated(monkeypatch):
+    from services import brainstorm as bs
+    from services import ai_engine
+
+    monkeypatch.setattr(
+        bs, "collect_context",
+        lambda topic, mode="standard", folder=None: _fake_coro({"notes": "", "guide": ""}),
+    )
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
+
+    async def fake_response(engine, model, msgs, **kwargs):
+        camera = "Имитация плёнки ACROS, тени -2"
+        return ('{"ideas": [{"title": "Сон", "reason": "р", '
+                f'"camera_setup": "{camera}", "steps": "s"}}]}}')
+
+    monkeypatch.setattr(ai_engine, "get_ai_response_async", fake_response)
+
+    class BrokenStatus(FakeStatus):
+        async def edit_text(self, text, parse_mode=None, reply_markup=None):
+            raise RuntimeError("message too old")
+
+    status = BrokenStatus()
+    await na.run_surreal_storm(4242, status, "сны")
+    assert status.edits == [], "упавшая отрисовка не должна ронять штурм"
+
+
 # ─── run_notes_agent: маршрутизация в сюрреалистичный штурм ───
 
 
@@ -558,3 +629,315 @@ async def test_run_notes_agent_normal_text_goes_to_agent(monkeypatch):
     await na.run_notes_agent(4242, status, "найди заметку про фудзи")
     joined = "\n".join(status.edits)
     assert "Сюрреалистичный штурм" not in joined
+
+
+# ─── 📄 Список найденных заметок: кнопки открытия и обсуждение ───
+
+
+def _note_steps(note_rows: str) -> list:
+    """Строит AgentResult со шагом, вернувшим notes_search output."""
+    from types import SimpleNamespace
+
+    step = SimpleNamespace(
+        calls=[{"id": "c1", "name": "notes_search", "arguments": "{}"}],
+        results=[{"name": "notes_search", "ok": True, "output": note_rows}],
+    )
+    return na.ae.AgentResult(final_answer="ok", steps=[step])
+
+
+ROW_1 = "- Идеи для фото [id=AAA] (папка: Notes)"
+ROW_2 = "- Покупки [id=BBB] (папка: Дом)"
+ROW_1_DUP = "- Идеи для фото [id=AAA] (папка: Notes)"
+
+
+def test_collect_notes_from_result_happy():
+    notes = na._collect_notes_from_result(_note_steps(f"{ROW_1}\n{ROW_2}"))
+    assert notes == [
+        {"id": "AAA", "name": "Идеи для фото"},
+        {"id": "BBB", "name": "Покупки"},
+    ]
+
+
+def test_collect_notes_from_result_dedups_and_merges_notes_list():
+    from types import SimpleNamespace
+
+    step1 = SimpleNamespace(
+        calls=[{"id": "c1", "name": "notes_search", "arguments": "{}"}],
+        results=[{"name": "notes_search", "ok": True, "output": f"{ROW_1}\n{ROW_1_DUP}"}],
+    )
+    step2 = SimpleNamespace(
+        calls=[{"id": "c2", "name": "notes_list", "arguments": "{}"}],
+        results=[{"name": "notes_list", "ok": True, "output": ROW_2}],
+    )
+    result = na.ae.AgentResult(final_answer="ok", steps=[step1, step2])
+    notes = na._collect_notes_from_result(result)
+    assert [n["id"] for n in notes] == ["AAA", "BBB"]
+
+
+def test_collect_notes_from_result_skips_other_tools_and_junk():
+    from types import SimpleNamespace
+
+    step = SimpleNamespace(
+        calls=[{"id": "c1", "name": "notes_read", "arguments": "{}"}],
+        results=[{"name": "notes_read", "ok": True, "output": "не разметка заметки"}],
+    )
+    result = na.ae.AgentResult(final_answer="ok", steps=[step])
+    assert na._collect_notes_from_result(result) == []
+
+
+def test_collect_notes_from_result_no_steps():
+    result = na.ae.AgentResult(final_answer="ok", steps=[])
+    assert na._collect_notes_from_result(result) == []
+    assert na._collect_notes_from_result(None) == []
+
+
+def test_collect_notes_from_result_line_without_id_ignored():
+    notes = na._collect_notes_from_result(_note_steps("просто текст\n— Нет id"))
+    assert notes == []
+    assert na._collect_notes_from_result(_note_steps("")) == []
+
+
+def test_notes_list_key_and_note_by_index():
+    assert na._notes_list_key(1) is None
+    na._notes_list_store[1] = {"items": [{"id": "A", "name": "X"}], "text": ""}
+    assert na._notes_list_key(1)["items"][0]["id"] == "A"
+    assert na._note_by_index(1, 0) == {"id": "A", "name": "X"}
+
+
+def test_note_by_index_bounds():
+    na._notes_list_store[1] = {"items": [{"id": "A", "name": "X"}], "text": ""}
+    assert na._note_by_index(1, -1) is None
+    assert na._note_by_index(1, 1) is None
+    assert na._note_by_index(1, 99) is None
+    assert na._note_by_index(1, "0") is None
+    assert na._note_by_index(2, 0) is None
+    assert na._note_by_index(2, None) is None
+
+
+def test_current_discuss_and_consume():
+    assert na._current_discuss(7) is None
+    na._notes_discuss_ctx[7] = {"note_id": "A", "name": "X"}
+    assert na._current_discuss(7) == {"note_id": "A", "name": "X"}
+    assert na._consume_discuss(7) == {"note_id": "A", "name": "X"}
+    assert na._consume_discuss(7) is None
+    assert na._current_discuss(7) is None
+
+
+def test_build_open_rows_empty():
+    assert na._build_open_rows(3) == []
+
+
+def test_build_open_rows_packs_five_per_row_and_truncates():
+    items = [{"id": f"n{i}", "name": f"Заметка {i}"} for i in range(6)]
+    na._notes_list_store[1] = {"items": items, "text": ""}
+    rows = na._build_open_rows(1)
+    assert len(rows) == 2
+    assert len(rows[0]) == 5 and len(rows[1]) == 1
+    first = rows[0][0]
+    assert first.callback_data == "notes_view:0"
+    assert first.text == "📄 1. Заметка 0"
+    assert rows[1][0].callback_data == "notes_view:5"
+
+
+def test_build_open_rows_caps_at_max_buttons():
+    items = [{"id": f"n{i}", "name": f"Заметка {i}"} for i in range(12)]
+    na._notes_list_store[1] = {"items": items, "text": ""}
+    rows = na._build_open_rows(1)
+    buttons = [b for row in rows for b in row]
+    assert len(buttons) == na.MAX_LIST_OPEN_BUTTONS
+
+
+async def test_run_notes_agent_stores_notes_and_passes_rows(monkeypatch):
+    from handlers.palace import action_bar
+
+    captured = {}
+
+    async def fake_run_agent(*args, **kwargs):
+        status_cb = kwargs.get("status_cb")
+        if status_cb:
+            await status_cb("🔍 Ищу в заметках…")
+        return _note_steps(ROW_1)
+
+    async def fake_finalize(uid, edit, answer, ctx=None, title="", extra_rows=None):
+        captured["rows"] = extra_rows
+
+    monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
+    monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
+
+    status = FakeStatus()
+    await na._run_notes_agent_reply(4242, status, "найди про фудзи")
+    assert captured["rows"], "кнопки заметок должны передаваться в finalize_answer"
+    assert [b.callback_data for row in captured["rows"] for b in row] == ["notes_view:0"]
+    assert na._notes_list_key(4242)["items"][0]["id"] == "AAA"
+    assert "Ищу в заметках" in status.edits[-1]
+
+
+async def test_run_notes_agent_no_notes_clears_store(monkeypatch):
+    from handlers.palace import action_bar
+
+    na._notes_list_store[4242] = {"items": [{"id": "OLD", "name": "ст"}], "text": ""}
+    captured = {}
+
+    async def fake_run_agent(*args, **kwargs):
+        return na.ae.AgentResult(final_answer="без заметок", steps=[])
+
+    async def fake_finalize(uid, edit, answer, ctx=None, title="", extra_rows=None):
+        captured["rows"] = extra_rows
+
+    monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
+    monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
+
+    status = FakeStatus()
+    await na._run_notes_agent_reply(4242, status, "привет")
+    assert captured["rows"] is None
+    assert na._notes_list_key(4242) is None
+
+
+async def test_cb_notes_view_happy(monkeypatch):
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Идеи"}], "text": "",
+    }
+
+    def fake_read(note_id):
+        return {"name": "Идеи", "body": "Снимать на рассвете"}
+
+    monkeypatch.setattr("services.apple_notes.read_note", fake_read)
+
+    cb = FakeCbLite(4242, "notes_view:0")
+    await na.cb_notes_view(cb)
+    assert na._current_discuss(4242) == {"note_id": "AAA", "name": "Идеи"}
+    assert na.is_waiting_for_notes_input(4242)
+    joined = "\n".join(cb.message.edits)
+    assert "Идеи" in joined and "рассвете" in joined
+    assert "Обсуждение включено" in joined
+
+
+async def test_cb_notes_view_expired_list(monkeypatch):
+    cb = FakeCbLite(4242, "notes_view:0")
+    await na.cb_notes_view(cb)
+    assert "устарел" in cb.message.edits[-1]
+    assert na._current_discuss(4242) is None
+
+
+async def test_cb_notes_view_out_of_range(monkeypatch):
+    na._notes_list_store[4242] = {"items": [{"id": "A", "name": "x"}], "text": ""}
+    cb = FakeCbLite(4242, "notes_view:5")
+    await na.cb_notes_view(cb)
+    assert "устарел" in cb.message.edits[-1]
+
+
+async def test_cb_notes_view_bad_index(monkeypatch):
+    cb = FakeCbLite(4242, "notes_view:abc")
+    await na.cb_notes_view(cb)
+    assert "Неверный запрос" in cb.message.edits[-1]
+
+
+async def test_cb_notes_view_read_failure_falls_back(monkeypatch):
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Идеи"}], "text": "",
+    }
+
+    def boom(note_id):
+        raise RuntimeError("osascript down")
+
+    monkeypatch.setattr("services.apple_notes.read_note", boom)
+
+    cb = FakeCbLite(4242, "notes_view:0")
+    await na.cb_notes_view(cb)
+    assert na._current_discuss(4242) == {"note_id": "AAA", "name": "Идеи"}
+    assert "Текст недоступен" in cb.message.edits[-1]
+
+
+async def test_cb_notes_view_split_long_body(monkeypatch):
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Длинная"}], "text": "",
+    }
+
+    def fake_read(note_id):
+        return {"name": "Длинная", "body": "слово " * 2000}
+
+    monkeypatch.setattr("services.apple_notes.read_note", fake_read)
+
+    cb = FakeCbLite(4242, "notes_view:0")
+    await na.cb_notes_view(cb)
+    assert cb.message.answers, "длинный текст разбивается на несколько сообщений"
+    assert len(na._notes_discuss_ctx.get(4242) or {}) == 2
+
+
+async def test_run_notes_agent_discusses_opened_note(monkeypatch):
+    from services import brainstorm as bs
+    from services import ai_engine
+
+    monkeypatch.setattr(
+        bs, "collect_context",
+        lambda topic, mode="standard", folder=None: _fake_coro({"notes": "", "guide": ""}),
+    )
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
+
+    async def boom(engine, model, msgs, **kwargs):
+        raise AssertionError("Штурм не должен запускаться для обсуждения")
+
+    monkeypatch.setattr(ai_engine, "get_ai_response_async", boom)
+
+    from handlers.palace import action_bar
+
+    captured = {}
+
+    async def fake_finalize(uid, edit_func, text, **kwargs):
+        pass
+
+    async def fake_run_agent(system, question, **kwargs):
+        captured["question"] = question
+        return na.ae.AgentResult(final_answer="Ответ", finished_reason="done")
+
+    monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
+    monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
+
+    na._notes_discuss_ctx[4242] = {"note_id": "AAA", "name": "Идеи"}
+    status = FakeStatus()
+    await na.run_notes_agent(4242, status, "что там про рассвет?")
+    assert "Идеи" in captured["question"]
+    assert "AAA" in captured["question"]
+    assert "что там про рассвет" in captured["question"]
+    assert na._current_discuss(4242) is None, "контекст потребляется однократно"
+
+
+async def test_run_notes_agent_without_discuss_context(monkeypatch):
+    from handlers.palace import action_bar
+
+    captured = {}
+
+    async def fake_finalize(uid, edit_func, text, **kwargs):
+        pass
+
+    async def fake_run_agent(system, question, **kwargs):
+        captured["question"] = question
+        return na.ae.AgentResult(final_answer="Ответ", finished_reason="done")
+
+    monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
+    monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
+
+    status = FakeStatus()
+    await na.run_notes_agent(4242, status, "найди фудзи")
+    assert "обсуждает заметку" not in captured["question"]
+
+
+async def test_cb_notes_view_not_allowed(monkeypatch):
+    na._notes_list_store[777] = {"items": [{"id": "A", "name": "x"}], "text": ""}
+    cb = FakeCbLite(777, "notes_view:0")
+    await na.cb_notes_view(cb)
+    assert not cb.message.edits, "неавторизованный пользователь ничего не получает"
+    assert na._current_discuss(777) is None
+
+
+async def test_start_notes_agent_session_via_message():
+    msg = FakeMessageLite(4242, "игнор")
+    await na.start_notes_agent_session(msg)
+    assert na.is_waiting_for_notes_input(4242)
+    assert msg.answers and "Работа с заметками" in msg.answers[0]
+
+
+async def test_cb_notes_view_missing_callback_data():
+    cb = FakeCbLite(4242, None)
+    await na.cb_notes_view(cb)
+    assert not cb.message.edits, "без callback_data не показываем ничего"
