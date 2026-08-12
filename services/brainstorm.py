@@ -52,6 +52,25 @@ STORM_SYSTEM_PROMPT = (
     "- Никакого текста вне JSON."
 )
 
+SURREAL_SAMPLING_PARAMS = {
+    "temperature": 0.95,
+    "top_p": 0.95,
+    "frequency_penalty": 0.5,
+    "presence_penalty": 0.3,
+}
+
+_CAMERA_SETUP_KEYWORDS = (
+    "имитац",
+    "тон",
+    "подсвет",
+    "тень",
+    "clarity",
+    "прозрачн",
+    "wb",
+    "баланс бел",
+    "зерн",
+)
+
 SURREAL_STORM_SYSTEM_PROMPT = (
     "Ты — генератор сюрреалистичных фотоидей в личном пространстве MemPalace. "
     "Отвечай на русском.\n"
@@ -59,22 +78,45 @@ SURREAL_STORM_SYSTEM_PROMPT = (
     "разрыв с бытовой реальностью, неожиданные образы и сочетания на основе "
     "контекста из заметок пользователя.\n"
     "Правила:\n"
-    "- Придумай 5-7 конкретных фотоидей. Идеи должны быть смелыми, "
-    "нестандартными, ломающими привычную композицию/реализм.\n"
-    "- Опирайся на образы из контекста, но свободно комбинируй, искажай "
-    "масштаб, смешивай несовместимые объекты и сцены.\n"
-    "- К КАЖДОЙ идее ОБЯЗАТЕЛЬНО приложи один или ДВА СОВМЕЩЁННЫХ приёма "
-    "съёмки на Fujifilm X-T4 (мультиэкспозиция + искажённый баланс белого, "
-    "длинная выдержка + экстремальная эмуляция плёнки, и т.п.) — комбинация "
-    "приёмов ПРИВЕТСТВУЕТСЯ и усиливает сюрреалистичность результата.\n"
-    "- Используй ТОЛЬКО значения настроек из FUJI_XT4_CREATIVE_GUIDE.md "
-    "(включая раздел «Комбинации для сюрреализма»), не выдумывай числа.\n"
+    "- Придумай 5-7 конкретных фотоидей в сюрреалистичном стиле.\n"
+    "- Для КАЖДОЙ идеи подбери НАБОР настроек камеры Fujifilm X-T4 так, "
+    "чтобы они усиливали именно эту идею: свет, движение, настроение, "
+    "ощущение сна/искажения.\n"
+    "- КАЖДЫЙ camera_setup обязан включать минимум:\n"
+    "  - выбор имитации плёнки;\n"
+    "  - настройки тоновой кривой (Подсветка/Тень) и Динамического диапазона;\n"
+    "  - как минимум ОДИН из параметров: Прозрачность (Clarity), Цвет, "
+    "сдвиг баланса белого (WB Shift) или Эффект зерна;\n"
+    "  - приём съёмки (например, мультиэкспозиция, длинная выдержка, "
+    "расширенный фильтр), но мультиэкспозиция не должна быть единственным "
+    "приёмом.\n"
+    "- По всему списку идей ОБЯЗАТЕЛЬНО используй МИНИМУМ три разных "
+    "семейства приёмов:\n"
+    "  - мультиэкспозиция;\n"
+    "  - длинная выдержка / смазывание движения;\n"
+    "  - экстремальные кривые/Clarity/цвет и WB-сдвиг;\n"
+    "  - встроенные расширенные фильтры.\n"
+    "  - экспозиция, яркость кадра или его темнота, переэкспонирование или "
+    "недоэкспонирование.\n"
+    "  Не используй один и тот же приём (например, мультиэкспозицию) "
+    "более чем в двух идеях.\n"
+    "- В поле camera_setup для каждой идеи КРАТКО объясни, КАК каждый "
+    "выбранный параметр (кривая, Clarity, зерно, WB-сдвиг, мультиэкспозиция "
+    "и т.п.) усиливает задуманный сюрреалистичный эффект. Связь с идеей "
+    "должна быть понятной, не случайной.\n"
+    "- Используй значения из файла FUJI_XT4_CREATIVE_GUIDE.md как базу, но "
+    "разрешается творчески сдвигать отдельные параметры (кривая, Clarity, "
+    "Цвет, WB-сдвиг, ДД, зерно и т.п.) по всему доступному диапазону, "
+    "если это логично для идеи. Не делай бессмысленных крайностей, которые "
+    "превращают картинку в «мусор»: настройки должны давать интересный, "
+    "но фотографируемый результат.\n"
     "- Никогда не давай идею без приложенных настроек камеры.\n"
     "- У каждой идеи: title (до 60 символов); reason (1-2 предложения о "
-    "сюрреалистичном образе); camera_setup (приём(ы) + точные настройки, "
-    "2-4 предложения); steps (1-3 первых шага).\n"
+    "сюрреалистичном образе и связи с заметками); camera_setup (приём(ы) + "
+    "точные настройки и объяснение эффекта, 2-6 предложений); steps "
+    "(1-3 первых шага реализации).\n"
     "- Не выдумывай факты о пользователе, образы — придумывай свободно.\n"
-    "- Верни ТОЛЬКО JSON: "
+    "- Верни ТОЛЬКО JSON вида "
     '{"ideas": [{"title": "...", "reason": "...", "camera_setup": "...", '
     '"steps": "..."}]}.\n'
     "- Никакого текста вне JSON."
@@ -199,7 +241,22 @@ def _clean_raw(raw: str) -> str:
     return cleaned
 
 
-def _validate_idea(item, require_camera_setup: bool = False) -> dict | None:
+def _camera_setup_has_parameters(text: str) -> bool:
+    """Проверка, что camera_setup упоминает хотя бы один ключевой параметр.
+
+    Не жёсткий парсер: любой из маркеров (имитация плёнки, кривая/тон,
+    подсветка/тень, Clarity/Прозрачность, WB/баланс белого, зерно) считается
+    подтверждением того, что идея содержит настройки камеры.
+    """
+    lower = (text or "").lower()
+    return any(keyword in lower for keyword in _CAMERA_SETUP_KEYWORDS)
+
+
+def _validate_idea(
+    item,
+    require_camera_setup: bool = False,
+    require_camera_keywords: bool = False,
+) -> dict | None:
     if not isinstance(item, dict):
         return None
     title = item.get("title")
@@ -210,6 +267,8 @@ def _validate_idea(item, require_camera_setup: bool = False) -> dict | None:
         not isinstance(camera_setup, str) or not camera_setup.strip()
     ):
         return None
+    if require_camera_keywords and not _camera_setup_has_parameters(camera_setup):
+        return None
     return {
         "title": title.strip()[:MAX_TITLE_LEN],
         "reason": str(item.get("reason") or "").strip(),
@@ -218,11 +277,20 @@ def _validate_idea(item, require_camera_setup: bool = False) -> dict | None:
     }
 
 
-def parse_ideas(raw: str, require_camera_setup: bool = False) -> list[dict]:
+def parse_ideas(
+    raw: str,
+    require_camera_setup: bool = False,
+    require_camera_keywords: bool = False,
+) -> list[dict]:
     """Разбирает JSON-ответ модели в список идей (title/reason/camera_setup/steps).
 
     require_camera_setup=True — идея без непустого camera_setup отбраковывается
     (правило «никогда без настроек камеры» на уровне кода).
+
+    require_camera_keywords=True — идея также отбраковывается, если camera_setup
+    не упоминает ни одного ключевого параметра (имитация плёнки, кривая,
+    Clarity, WB, зерно и т.п.) — защита от пустых отговорок вроде «сделай
+    сюрреалистично».
 
     Raises:
         ValueError: если JSON не валиден, не содержит массива ideas
@@ -237,7 +305,10 @@ def parse_ideas(raw: str, require_camera_setup: bool = False) -> list[dict]:
     if not isinstance(data, dict) or not isinstance(data.get("ideas"), list):
         raise ValueError("В ответе нет массива ideas.")
     ideas = [
-        idea for idea in (_validate_idea(i, require_camera_setup) for i in data["ideas"])
+        idea for idea in (
+            _validate_idea(i, require_camera_setup, require_camera_keywords)
+            for i in data["ideas"]
+        )
         if idea is not None
     ]
     if not ideas:
@@ -250,6 +321,18 @@ def storm_system_prompt(mode: str) -> str:
     if mode == "surreal":
         return SURREAL_STORM_SYSTEM_PROMPT
     return STORM_SYSTEM_PROMPT
+
+
+def storm_sampling_params(mode: str) -> dict:
+    """Параметры выборки модели для штурма по режиму.
+
+    surreal — более креативная выборка (высокая температура, штрафы за
+    повторения), чтобы идеи не были однотипными. standard — пусто (клиент
+    использует свои дефолты, поведение обычного агента не меняется).
+    """
+    if mode == "surreal":
+        return dict(SURREAL_SAMPLING_PARAMS)
+    return {}
 
 
 def format_idea(index: int, idea: dict) -> str:

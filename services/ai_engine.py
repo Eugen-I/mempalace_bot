@@ -178,20 +178,26 @@ def _sync_ai_call(
             client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
             logger.info(f"[OLLAMA] Sending request to {model}...")
 
-            r = client.chat.completions.create(
-                model=model,
-                messages=full_messages,
-                temperature=0.6,
-                max_tokens=8192,
-                timeout=200.0,
-                stop=[
+            sampling = kwargs.get("sampling") or {}
+            call_kwargs = {
+                "model": model,
+                "messages": full_messages,
+                "temperature": sampling.get("temperature", 0.6),
+                "max_tokens": 8192,
+                "timeout": 200.0,
+                "stop": [
                     "<|im_start|>",
                     "<|im_end|>",
                     "<|endoftext|>",
                     "\nuser:",
                     "\nUser:",
                 ],
-            )
+            }
+            call_kwargs.update({
+                k: v for k, v in sampling.items() if k != "temperature"
+            })
+
+            r = client.chat.completions.create(**call_kwargs)
 
             elapsed = time.time() - start_time
 
@@ -254,20 +260,26 @@ def _sync_ai_call(
                 raise ValueError("OPENAI_API_KEY not set.")
 
             client = OpenAI(api_key=api_key)
-            r = client.chat.completions.create(
-                model=model,
-                messages=full_messages,
-                temperature=0.7,
-                max_tokens=8192,
-                timeout=200.0,
-                stop=[
+            sampling = kwargs.get("sampling") or {}
+            call_kwargs = {
+                "model": model,
+                "messages": full_messages,
+                "temperature": sampling.get("temperature", 0.7),
+                "max_tokens": 8192,
+                "timeout": 200.0,
+                "stop": [
                     "<|im_start|>",
                     "<|im_end|>",
                     "<|endoftext|>",
                     "\nuser:",
                     "\nUser:",
                 ],
-            )
+            }
+            call_kwargs.update({
+                k: v for k, v in sampling.items() if k != "temperature"
+            })
+
+            r = client.chat.completions.create(**call_kwargs)
             return r.choices[0].message.content or ""
 
         if engine == "gemini":

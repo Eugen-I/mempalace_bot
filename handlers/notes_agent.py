@@ -258,9 +258,10 @@ async def run_surreal_storm(uid: int, status_msg, topic: str):
             {"role": "system", "content": bs.storm_system_prompt("surreal")},
             {"role": "user", "content": bs.build_storm_prompt(topic, context)},
         ]
-        raw = await get_ai_response_async(engine, model, msgs)
+        sampling = bs.storm_sampling_params("surreal")
+        raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
 
-        ideas = bs.parse_ideas(raw, require_camera_setup=True)
+        ideas = bs.parse_ideas(raw, require_camera_setup=True, require_camera_keywords=True)
     except Exception as exc:  # noqa: BLE001 — показываем пользователю текст ошибки
         logger.error("[SURREAL] run failed: %s", exc, exc_info=True)
         await _status_edit(status_msg, f"❌ Ошибка штурма: {exc}")

@@ -115,6 +115,24 @@ def when_model_returns_idea_without_camera_setup(context):
         context.error = str(exc)
 
 
+@when('модель возвращает идею с camera_setup-отговоркой')
+def when_model_returns_idea_with_setup_slogan(context):
+    raw = json.dumps({
+        "ideas": [{"title": "Слоган", "camera_setup": "Просто сюрреализм"}],
+    }, ensure_ascii=False)
+    try:
+        bs.parse_ideas(raw, require_camera_setup=True, require_camera_keywords=True)
+        context.error = None
+    except ValueError as exc:
+        context.error = str(exc)
+
+
+@when("проверяется сюрреалистичный системный промпт")
+def when_check_surreal_prompt(context):
+    context.prompt = bs.SURREAL_STORM_SYSTEM_PROMPT
+    context.sampling = bs.storm_sampling_params("surreal")
+
+
 @when("вызывается сюрреалистичный штурм с пустой темой")
 def when_run_surreal_empty_topic(context):
     from handlers.notes_agent import run_surreal_storm
@@ -178,6 +196,19 @@ def then_prompt_contains_guide(context):
 @then('штурм завершается ошибкой "Нет валидных идей"')
 def then_no_valid_ideas_error(context):
     assert context.error and "Нет валидных идей" in context.error
+
+
+@then("промпт требует минимум три семейства приёмов, а не только мультиэкспозицию")
+def then_prompt_requires_diverse_techniques(context):
+    assert "МИНИМУМ три разных" in context.prompt
+    assert "не должна быть единственным" in context.prompt
+
+
+@then("для сюрреалистичного штурма заданы креативные параметры выборки")
+def then_surreal_sampling_creative(context):
+    assert context.sampling["temperature"] >= 0.9
+    assert context.sampling["top_p"] >= 0.9
+    assert 0.4 <= context.sampling["frequency_penalty"] <= 0.7
 
 
 @then('пользователь получает сообщение с подсказкой "Укажите тему"')

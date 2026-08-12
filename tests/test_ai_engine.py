@@ -278,6 +278,62 @@ def test_sync_qwen_returns_cleaned_response(monkeypatch):
     assert out == "Привет!"
 
 
+def test_sync_qwen_without_sampling_keeps_default_temperature(monkeypatch):
+    fake = FakeOpenAI(FakeSyncResponse("ok"))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+    ai_engine._sync_ai_call("qwen", "m", [{"role": "user", "content": "hi"}])
+    sent = fake.chat.completions.last_kwargs
+    assert sent["temperature"] == 0.6
+    assert "top_p" not in sent
+    assert "frequency_penalty" not in sent
+    assert "presence_penalty" not in sent
+
+
+def test_sync_qwen_applies_surreal_sampling(monkeypatch):
+    fake = FakeOpenAI(FakeSyncResponse("ok"))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+    sampling = {
+        "temperature": 0.95,
+        "top_p": 0.95,
+        "frequency_penalty": 0.5,
+        "presence_penalty": 0.3,
+    }
+    ai_engine._sync_ai_call(
+        "qwen", "m", [{"role": "user", "content": "hi"}], sampling=sampling,
+    )
+    sent = fake.chat.completions.last_kwargs
+    assert sent["temperature"] == 0.95
+    assert sent["top_p"] == 0.95
+    assert sent["frequency_penalty"] == 0.5
+    assert sent["presence_penalty"] == 0.3
+
+
+def test_sync_openai_applies_surreal_sampling(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    fake = FakeOpenAI(FakeSyncResponse("ok"))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+    sampling = {"temperature": 1.0, "presence_penalty": 0.3}
+    ai_engine._sync_ai_call(
+        "openai", "gpt-4o", [{"role": "user", "content": "hi"}], sampling=sampling,
+    )
+    sent = fake.chat.completions.last_kwargs
+    assert sent["temperature"] == 1.0
+    assert sent["presence_penalty"] == 0.3
+
+
+def test_get_ai_response_async_passes_sampling(monkeypatch):
+    """get_ai_response_async пробрасывает sampling до create()."""
+    fake = FakeOpenAI(FakeSyncResponse("ok"))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+    sampling = {"temperature": 0.95}
+    raw = asyncio.run(ai_engine.get_ai_response_async(
+        "ollama", "m", [{"role": "user", "content": "hi"}], sampling=sampling,
+    ))
+    sent = fake.chat.completions.last_kwargs
+    assert sent["temperature"] == 0.95
+    assert raw == "ok"
+
+
 def test_sync_qwen_preserves_system_message_from_messages(monkeypatch):
     fake = FakeOpenAI(FakeSyncResponse("ok"))
     monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)

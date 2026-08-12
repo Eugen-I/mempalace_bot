@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import json
 
 import pytest
 
@@ -249,6 +250,64 @@ def test_parse_ideas_standard_keeps_idea_without_camera_setup():
     assert ideas[0]["camera_setup"] == ""
 
 
+# ─── camera_setup: проверка ключевых параметров (keywords) ───
+
+def _surreal_setup_idea(camera_setup):
+    return (
+        '{"ideas": ['
+        + json.dumps({"title": "Идея", "reason": "р", "camera_setup": camera_setup})
+        + ']}'
+    )
+
+
+def test_parse_ideas_keywords_accepts_film_simulation():
+    ideas = bs.parse_ideas(
+        _surreal_setup_idea("Имитация плёнки ACROS, тени -2"),
+        require_camera_setup=True, require_camera_keywords=True,
+    )
+    assert len(ideas) == 1
+
+
+def test_parse_ideas_keywords_accepts_tonal_curve():
+    ideas = bs.parse_ideas(
+        _surreal_setup_idea("Кривая: Подсветка +2, тень -2, Clarity +3"),
+        require_camera_keywords=True,
+    )
+    assert len(ideas) == 1
+
+
+def test_parse_ideas_keywords_rejects_slogan_only():
+    """«Сделай сюрреалистично» без параметров камеры — отбраковывается."""
+    with pytest.raises(ValueError, match="Нет валидных идей"):
+        bs.parse_ideas(
+            _surreal_setup_idea("Усилить сюрреализм магией"),
+            require_camera_keywords=True,
+        )
+
+
+def test_parse_ideas_keywords_rejects_multi_exposure_only():
+    """Одна мультиэкспозиция без параметров камеры — недостаточно."""
+    with pytest.raises(ValueError, match="Нет валидных идей"):
+        bs.parse_ideas(
+            _surreal_setup_idea("Мультиэкспозиция"),
+            require_camera_keywords=True,
+        )
+
+
+def test_parse_ideas_keywords_keeps_idea_without_setup_on_standard():
+    """Без флага keywords обычная проверка camera_setup не меняется."""
+    ideas = bs.parse_ideas(_surreal_setup_idea("Только текст"))
+    assert len(ideas) == 1
+
+
+def test_camera_setup_has_parameters_variants():
+    assert bs._camera_setup_has_parameters("WB Shift R+9")
+    assert bs._camera_setup_has_parameters("Эффект зерна: сильный")
+    assert bs._camera_setup_has_parameters("баланс белого 3200K")
+    assert not bs._camera_setup_has_parameters("")
+    assert not bs._camera_setup_has_parameters("сюрреализм, свет, движение")
+
+
 def test_parse_ideas_non_string_camera_setup_rejected():
     raw = '{"ideas": [{"title": "T", "camera_setup": 42}]}'
     with pytest.raises(ValueError, match="Нет валидных идей"):
@@ -266,7 +325,19 @@ def test_storm_system_prompt_surreal():
     assert bs.storm_system_prompt("surreal") == bs.SURREAL_STORM_SYSTEM_PROMPT
     assert bs.SURREAL_STORM_SYSTEM_PROMPT is not bs.STORM_SYSTEM_PROMPT
     assert "camera_setup" in bs.SURREAL_STORM_SYSTEM_PROMPT
-    assert "Комбинации для сюрреализма" in bs.SURREAL_STORM_SYSTEM_PROMPT
+    assert "FUJI_XT4_CREATIVE_GUIDE.md" in bs.SURREAL_STORM_SYSTEM_PROMPT
+    assert "имитац" in bs.SURREAL_STORM_SYSTEM_PROMPT.lower()
+
+
+def test_storm_sampling_params():
+    assert bs.storm_sampling_params("standard") == {}
+    assert bs.storm_sampling_params("") == {}
+    surreal = bs.storm_sampling_params("surreal")
+    assert surreal["temperature"] >= 0.9
+    assert surreal["top_p"] >= 0.9
+    assert 0.4 <= surreal["frequency_penalty"] <= 0.7
+    assert surreal == bs.SURREAL_SAMPLING_PARAMS
+    assert surreal is not bs.SURREAL_SAMPLING_PARAMS  # копия, не ссылка
 
 
 # ─── collect_context: mode="surreal" ───

@@ -435,10 +435,13 @@ async def test_run_surreal_storm_happy(monkeypatch):
     monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
     captured = {}
 
-    async def fake_response(engine, model, msgs):
+    async def fake_response(engine, model, msgs, **kwargs):
         captured["system"] = msgs[0]["content"]
         captured["user"] = msgs[1]["content"]
-        return '{"ideas": [{"title": "Сон", "reason": "r", "camera_setup": "ACROS", "steps": "s"}]}'
+        captured["sampling"] = kwargs.get("sampling")
+        camera = "Имитация плёнки ACROS, тени -2"
+        return ('{"ideas": [{"title": "Сон", "reason": "р", '
+                f'"camera_setup": "{camera}", "steps": "s"}}]}}')
 
     monkeypatch.setattr(ai_engine, "get_ai_response_async", fake_response)
 
@@ -448,10 +451,11 @@ async def test_run_surreal_storm_happy(monkeypatch):
     assert captured["system"] == bs.SURREAL_STORM_SYSTEM_PROMPT
     assert "ночные сны" in captured["user"]
     assert "[Руководство Fujifilm X-T4]" in captured["user"]
+    assert captured["sampling"] == bs.SURREAL_SAMPLING_PARAMS
     assert status.edits, "карточки должны быть показаны"
     joined = "\n".join(status.edits)
     assert "🌪" in joined and "Сон" in joined
-    assert "📷" in joined and "<code>ACROS</code>" in joined
+    assert "📷" in joined and "<code>Имитация плёнки ACROS, тени -2</code>" in joined
 
 
 async def test_run_surreal_storm_empty_topic(monkeypatch):
@@ -470,7 +474,7 @@ async def test_run_surreal_storm_ai_error(monkeypatch):
     )
     monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
 
-    async def boom(engine, model, msgs):
+    async def boom(engine, model, msgs, **kwargs):
         raise RuntimeError("ollama down")
 
     monkeypatch.setattr(ai_engine, "get_ai_response_async", boom)
@@ -490,7 +494,7 @@ async def test_run_surreal_storm_rejects_ideas_without_camera_setup(monkeypatch)
     )
     monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
 
-    async def no_camera(engine, model, msgs):
+    async def no_camera(engine, model, msgs, **kwargs):
         return '{"ideas": [{"title": "Без камеры", "reason": "r"}]}'
 
     monkeypatch.setattr(ai_engine, "get_ai_response_async", no_camera)
@@ -516,8 +520,10 @@ async def test_run_notes_agent_routes_to_surreal_storm(monkeypatch):
     )
     monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
 
-    async def fake_response(engine, model, msgs):
-        return '{"ideas": [{"title": "Т", "camera_setup": "ACROS", "reason": "", "steps": ""}]}'
+    async def fake_response(engine, model, msgs, **kwargs):
+        camera = "Имитация плёнки ACROS, тень -1"
+        return ('{"ideas": [{"title": "Т", '
+                f'"camera_setup": "{camera}", "reason": "", "steps": ""}}]}}')
 
     monkeypatch.setattr(ai_engine, "get_ai_response_async", fake_response)
 

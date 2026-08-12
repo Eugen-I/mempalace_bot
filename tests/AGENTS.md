@@ -89,10 +89,10 @@ _Source: AGENT_PLAN.md (AGENT_PLAN.md)_
 - [ ] Проверить запись id события Apple Calendar в список напоминаний (не требуется сейчас)
 
 ## Точка возобновления (обновлять в конце КАЖДОГО шага)
-- Текущая фаза/шаг: NOTES_AGENT_PLAN — Фазы 0–5 ЗАВЕРШЕНЫ + ручная проверка на реальном Mac ЗАВЕРШЕНА (create_note fix через `target=null`, move_note переведён на AppleScript `_AS_MOVE_NOTE`/`run_applescript`, delete_note подтверждён вживую, QA-заметки удалены). Следующий: любой бонус из списка ниже ИЛИ опциональная ручная проверка Telegram-флоу (двойное подтверждение) при запущенном боте
-- Последний завершённый шаг: ручная проверка Notes на реальном Mac — все write-операции работают вживую (см. TESTING_PROGRESS.md «Ручная проверка»)
+- Текущая фаза/шаг: NOTES_AGENT_SURREAL_STORM_TASK.md ВЫПОЛНЕНА (новый SURREAL промпт с разнообразием приёмов, keywords-валидация camera_setup, креативные sampling-параметры для surreal-режима). Следующий: любой бонус из списка ниже ИЛИ опциональная ручная проверка Telegram-флоу (двойное подтверждение) при запущенном боте
+- Последний завершённый шаг: SURREAL_STORM_TASK (промпт, keywords, sampling в ai_engine + notes_agent, BDD 8/8)
 - Следующий шаг: бонусы из чек-листа (открыть по желанию пользователя)
-- Статус QA: 3306 passed, flake8 0, mypy 0, bandit 73 (базлайн), BDD: 19 features passed + 7 pre-existing errors (ai_caching,
+- Статус QA: 3317 passed, flake8 0, mypy 0, bandit 73 (базлайн), BDD: 19 features passed + 7 pre-existing errors (ai_caching,
   clear_memory, event_handling, files_indexing, ollama_autostart, session_persistence,
   system_resilience — англ. шаги без реализаций, не наши)
 
@@ -268,7 +268,9 @@ make qa
 
 ## 10. Напоминание на завтра
 - **Notes Agent (NOTES_AGENT_PLAN.md) — фазы 0–5 ЗАВЕРШЕНЫ** (2026-08-11): write-операции Apple Notes (create/update/delete/move + языковая валидация ru/de, отказ на CJK), инструменты агента notes_create/update/delete/move/list_folders, подтверждение write-операций через `confirm_write` в `run_agent` (без него write-тулы недоступны даже при include_write=True), хендлер `handlers/notes_agent.py` (карточки ✅/❌, таймаут 120с, двойное подтверждение удаления), кнопка «📝 Apple Notes» в главном меню, авто-предложение «📝 Работать с заметками?», `updated` в JXA-индексе + `list_notes(sort_by_updated, limit)` + `limit` в notes_list. Фаза 5 — сюрреалистичный штурм: `SURREAL_STORM_SYSTEM_PROMPT`, `parse_ideas(require_camera_setup=True)`, `collect_context(mode="surreal")` (без palace/kg + кэш FUJI-гайда), триггеры в notes_agent → карточки 💡/🎭/📷/➡️, раздел «Комбинации для сюрреализма» в `docs/FUJI_XT4_CREATIVE_GUIDE.md\u2009`. **3305 passed**, flake8/mypy 0, bandit 73 (базлайн, новых нет), BDD notes_write 6/6 + surreal_storm 6/6. Коммиты: f81add0, 8e04f95, 1d89398, 47b5fed, 1106119.
-- **Следующее: ручная проверка на реальном Mac** — создание/дозапись/перемещение/удаление с двойным подтверждением, отказ на китайский, изоляция CAT_NOTES, сюрреалистичный штурм (карточки 💡/🎭/📷/➡️ с настройками X-T4).
+- **Ручная проверка на реальном Mac (2026-08-12, завершена)**: create_note fix (`target=null` вместо `at: app.notes`), move_note переведён на AppleScript (`_AS_MOVE_NOTE`/`run_applescript` — JXA-перемещение падает «Typen…»), delete_note подтверждён вживую (Recently Deleted), QA-заметки удалены. Коммит e3be847.
+- **NOTES_AGENT_SURREAL_STORM_TASK.md (2026-08-12, выполнена)**: новый `SURREAL_STORM_SYSTEM_PROMPT` (минимум параметров в camera_setup, ≥3 семейства приёмов, мультиэкспозиция ≤2 идеи, связь настройка→эффект), `_camera_setup_has_parameters` + `require_camera_keywords` в parse_ideas, `SURREAL_SAMPLING_PARAMS` (temp 0.95, top_p 0.95, freq 0.5, presence 0.3) + `storm_sampling_params(mode)`, проброс sampling через `get_ai_response_async`→`_sync_ai_call` (default temperature сохранён). **3317 passed**, BDD surreal_storm 8/8. Коммит: см. git log.
+- **Следующее: бонусы из чек-листа** (связывание идей «Связано с:», авто-категоризация Notes → KG, Reflection после штурма) ИЛИ ручная проверка Telegram-флоу двойного подтверждения при запущенном боте.
 - **Тестирование завершено**: 2631 passed, общее покрытие 99% (см. TESTING_PROGRESS.md). Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
 - **SQLite/файловые ResourceWarning — устранено**: `pytest -W error::ResourceWarning` даёт 0 предупреждений. Фикс: `services/logging_setup.py` закрывает FileHandler'ы при замене; тесты с `open(...).read()` переведены на `with`; синхронные моки для `save_bot_photo`; `coro.close()` в fake_create. Остались только 6 DeprecationWarning из библиотек (google/genai, swig) — не наш код.
 - Проверить после изменений:

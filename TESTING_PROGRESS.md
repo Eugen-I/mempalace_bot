@@ -4,7 +4,7 @@
 
 ## Снимок состояния (обновлять каждую сессию)
 - Дата последнего обновления: 2026-08-12
-- Статус тестов: **3306 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
+- Статус тестов: **3317 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
 - Мутационное тестирование `services/file_index.py`: **742/757 killed, 14 survived + 1 timeout = 1.98%** (цель ≤10%). Прогон: `python3 -m mutmut run --max-children 1` (обязательно `--max-children 1` + чистка `mutants/services/*.meta` при изменении тестов).
 
 ## Сделано (Done)
@@ -34,6 +34,12 @@
   - **delete_note** (JXA `move` → Recently Deleted) — проверен вживую: заметка реально появилась в «Recently Deleted» (подтверждено AppleScript-перебором папки).
   - QA-заметки («QA-тест MemPalace», «QA-вариант-1/3», «QA-условный») удалены штатно через `delete_note`; в папках Notes/Gemini не осталось.
   - Итог: 87 тестов в `test_apple_notes.py` (+2: `test_as_literal_escapes_quotes`, обновлены move-тесты), **3306 passed**, полный behave 19 passed / 7 error (пре-существующие), flake8 0, mypy 0, bandit 73.
+- **НОТЕS_AGENT_SURREAL_STORM_TASK.md (2026-08-12, выполнена)**:
+  - `SURREAL_STORM_SYSTEM_PROMPT` заменён на новый: минимум параметров в каждом camera_setup (имитация плёнки + кривая/ДД + один из Clarity/Цвет/WB/Зерно + приём), минимум ТРИ семейства приёмов по списку (мультиэкспозиция ≤2 идеи, длинная выдержка, экстремальные кривые/Clarity/цвет/WB, расширенные фильтры, экспокоррекция), объяснение связи настройка→эффект, творческие сдвиги на базе гайда без «мусора».
+  - `vote_camera_setup_has_parameters()` + флаг `require_camera_keywords` в `_validate_idea`/`parse_ideas` — отбраковка camera_setup-отговорок (маркеры: имитац/тон/подсвет/тень/clarity/прозрачн/wb/баланс бел/зерн).
+  - `SURREAL_SAMPLING_PARAMS` (temp 0.95, top_p 0.95, freq_penalty 0.5, presence_penalty 0.3) + `storm_sampling_params(mode)`; `run_surreal_storm` передаёт `sampling=` в `get_ai_response_async`.
+  - `ai_engine._sync_ai_call`: qwen/openai-ветки собирают call_kwargs с sampling (температура по умолчанию 0.6/0.7 сохраняется, при sampling переопределяется; top_p/penalties добавляются только если заданы) — поведение standard-режима не изменилось.
+  - Тесты: +11 unit (keywords BVA, sampling проброс qwen/openai/async, storm_sampling_params) +BDD surreal_storm 6/6→8/8. Итог: **3317 passed**, flake8 0, mypy 0, bandit 73 (базлайн), behave 19 passed / 7 error (пре-существующие). Коммит: см. git log.
 
 
 ## Сделано (Done)
