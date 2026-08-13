@@ -17,6 +17,18 @@ def mem_dir(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def no_semantic_network(monkeypatch):
+    """Существующие тесты не должны ходить в Ollama (детерминизм).
+
+    Семантический слой мокается пустым; гибридные тесты переопределяют
+    search_similar вручную.
+    """
+    import services.memory_embeddings as me
+
+    monkeypatch.setattr(me, "search_similar", lambda query, user_id, limit=5: [])
+
+
 def _write_memories(tmp_path, user_id, memories):
     path = tmp_path / f"mem_{user_id}.json"
     path.write_text(json.dumps(memories, ensure_ascii=False), encoding="utf-8")
@@ -124,6 +136,113 @@ def test_retrieve_facts_fact_missing_key_skipped(mem_dir):
     _write_memories(mem_dir, 1, [{"other": "x"}, {"fact": "реальный факт"}])
     result = memory.retrieve_facts("реальный", 1)
     assert result == ["реальный факт"]
+
+
+# ─── retrieve_facts: гибрид keyword + семантика ───
+
+
+@pytest.fixture
+def fake_search(mem_dir, monkeypatch):
+    """Настраивает семантический слой: заданные результаты + запись вызовов."""
+    import services.memory_embeddings as me
+
+    calls = []
+
+    def _install(results):
+        def _search(query, user_id, limit=5):
+            calls.append((query, user_id, limit))
+            return results
+
+        monkeypatch.setattr(me, "search_similar", _search)
+        return calls
+
+    return _install
+
+
+def test_hybrid_appends_semantic_facts(mem_dir, fake_search):
+    _write_memories(
+        mem_dir, 1, [{"fact": "Люблю Python", "priority": 0, "access_count": 0}],
+    )
+    calls = fake_search([
+        {"fact": "Семантический факт", "_score": 0.9},
+    ])
+    result = memory.retrieve_facts("python", 1)
+    assert result == ["Люблю Python", "Семантический факт"]
+    assert calls == [("python", 1, 5)]
+
+
+def test_hybrid_keyword_first_then_semantic(mem_dir, fake_search):
+    _write_memories(
+        mem_dir, 1,
+        [
+            {"fact": "питон один", "priority": 0, "access_count": 0},
+            {"fact": "питон два", "priority": 5, "access_count": 0},
+        ],
+    )
+    fake_search([{"fact": "семантика три", "_score": 0.8}])
+    result = memory.retrieve_facts("питон", 1, max_results=3)
+    assert result == ["питон два", "питон один", "семантика три"]
+
+
+def test_hybrid_dedup_semantic_already_in_keyword(mem_dir, fake_search):
+    _write_memories(mem_dir, 1, [{"fact": "питон факт", "priority": 0}])
+    fake_search([
+        {"fact": "питон факт", "_score": 0.95},
+        {"fact": "новый факт", "_score": 0.9},
+    ])
+    result = memory.retrieve_facts("питон", 1)
+    assert result == ["питон факт", "новый факт"]
+
+
+def test_hybrid_semantic_empty_keeps_keyword(mem_dir, fake_search):
+    _write_memories(mem_dir, 1, [{"fact": "питон факт", "priority": 0}])
+    fake_search([])
+    result = memory.retrieve_facts("питон", 1)
+    assert result == ["питон факт"]
+
+
+def test_hybrid_semantic_error_falls_back(mem_dir, monkeypatch):
+    import services.memory_embeddings as me
+
+    def boom(query, user_id, limit=5):
+        raise RuntimeError("embed down")
+
+    monkeypatch.setattr(me, "search_similar", boom)
+    _write_memories(mem_dir, 1, [{"fact": "питон факт", "priority": 0}])
+    result = memory.retrieve_facts("питон", 1)
+    assert result == ["питон факт"]
+
+
+def test_hybrid_max_results_not_exceeded(mem_dir, fake_search):
+    facts = [{"fact": f"факт {i}", "priority": 0} for i in range(4)]
+    _write_memories(mem_dir, 1, facts)
+    fake_search([
+        {"fact": "сем1", "_score": 0.5},
+        {"fact": "сем2", "_score": 0.4},
+        {"fact": "сем3", "_score": 0.3},
+    ])
+    result = memory.retrieve_facts("факт", 1, max_results=5)
+    assert result == ["факт 0", "факт 1", "факт 2", "факт 3", "сем1"]
+
+
+def test_hybrid_semantic_item_without_fact_skipped(mem_dir, fake_search):
+    _write_memories(mem_dir, 1, [{"fact": "питон факт", "priority": 0}])
+    fake_search([
+        {"_score": 0.9},
+        {"fact": "", "_score": 0.8},
+        {"fact": "доп факт", "_score": 0.7},
+    ])
+    result = memory.retrieve_facts("питон", 1)
+    assert result == ["питон факт", "доп факт"]
+
+
+def test_hybrid_no_keyword_results_uses_semantic_only(mem_dir, fake_search):
+    _write_memories(mem_dir, 1, [{"fact": "Про кофе", "priority": 0}])
+    fake_search([
+        {"fact": "Семантика по смыслу", "_score": 0.7},
+    ])
+    result = memory.retrieve_facts("другое слово", 1)
+    assert result == ["Семантика по смыслу"]
 
 
 # ─── get_memory_context ───

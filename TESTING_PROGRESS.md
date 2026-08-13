@@ -3,8 +3,8 @@
 Прогресс по задаче «Проверить все файлы Telegram-бота через тестирование».
 
 ## Снимок состояния (обновлять каждую сессию)
-- Дата последнего обновления: 2026-08-12
-- Статус тестов: **3346 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
+- Дата последнего обновления: 2026-08-13
+- Статус тестов: **3377 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
 - Мутационное тестирование `services/file_index.py`: **742/757 killed, 14 survived + 1 timeout = 1.98%** (цель ≤10%). Прогон: `python3 -m mutmut run --max-children 1` (обязательно `--max-children 1` + чистка `mutants/services/*.meta` при изменении тестов).
 
 ## Сделано (Done)
@@ -46,6 +46,11 @@
   - `run_notes_agent` потребляет `_notes_discuss_ctx` — последующий вопрос после открытия заметки уходит агенту с контекстом «обсуждаем заметку <name> (id=...), прочитай через notes_read».
   - Тесты: +27 unit (collect/дедуп/пропуск чужих тулов, note_by_index BVA, discuss consume one-shot, build_open_rows 5/ряд + лимит 10, cb happy/expired/bad idx/read fail/split длинного/not allowed/no data, run_notes_agent с discuss и без, _note_title BVA+failure, storm edit-fail tolerant, session via message) → **handlers/notes_agent.py 100%**.
   - BDD `features/notes_discuss.feature` 6/6 (happy + 3 neg: expired/out-of-range/malformed + 2 edge: read fail с discuss on, follow-up с контекстом). Итог: **3346 passed**, flake8 0, mypy 0, bandit 73 (базлайн), behave 20 features passed / 7 error (пре-существующие, англ. шаги без реализаций).
+- **Agent_guide.md — Задание 5 «Внедрение векторного поиска» (2026-08-13, ВЫПОЛНЕНО)**: вариант «Гибрид на bge-m3» (выбран пользователем; ChromaDB+ST отклонён — 500MB и дублирование существующей реализации):
+  - NEW `services/memory_embeddings.py` (по образцу notes_embeddings, переиспользует `_call_embed`/`_cosine`/`is_model_available`/`EMBED_MODEL`/`EMBED_DIM`/`EmbeddingsError` — без дублирования): SQLite `DATA_DIR/memory_embeddings.sqlite`, таблица `memory_embeddings(user_id, fact, vector, model, PRIMARY KEY(user_id, fact))`, per-user изоляция; `build_index(user_id, force)` (батчи BATCH_SIZE=40, DELETE+INSERT OR REPLACE, skip wrong-dim, auto-rebuild по count-сверке `_index_matches`), `search_similar(query, user_id, limit)` (limit<1 → EmbeddingsError, пустой запрос → [], score>0, сорт по убыванию); graceful degradation: модель недоступна/ошибки embed/битый BLOB → [] (try/except ValueError вокруг np.frombuffer).
+  - `services/memory.py`: `retrieve_facts` → гибрид — keyword-результаты (порядок не изменился) + семантическое дополнение через `_extend_with_semantic` (дедуп по тексту факта, лимит max_results, любое исключение → только keyword). Поведение без модели идентично старому.
+  - Тесты: +25 unit в `tests/test_memory_embeddings.py` (build: vectors/empty/unavailable/force/wrong-dim/batches/user-isolation/db-error; search: sorted/limit/BVA 0/empty query/embed fail после build/не-утечка чужих юзеров/negative-score/битый BLOB; `_index_matches` db-error) + 8 гибридных в `tests/test_memory.py` (append/порядок keyword-first/dedup/пустой semantic/error-fallback/max_results/item без fact/no-keyword) + autouse-мок `search_similar` для детерминизма старых тестов. Покрытие: memory_embeddings **100%**, memory **99%** (2 недостижимых except). BDD `features/memory_hybrid.feature` **6/6** (happy + 3 neg: модель недоступна/ошибка слоя/пустой запрос + 2 edge: dedup один раз/лимит). Итог: **3377 passed**, flake8 0, mypy 0 (88 source files), bandit 73 (базлайн), behave 21 features passed / 7 error (пре-существующие).
+  - Статус остальных заданий Agent_guide.md: Задание 1 (backup+.gitignore) ✅ — правила в .gitignore:60-68, backup-файлов нет; Задание 2 (aiofiles) ✅ — коммит 37056e8 (memory.py async-пути; kv_store — sqlite3, async не использует); Задание 3 (json_parser) ✅ — services/json_parser.py + использование в kg_enricher/memory/brainstorm; Задание 4 (selectolax) ✅ — коммит 37056e8 (web_search.py:76-79, требования в requirements.txt).
 
 
 ## Сделано (Done)
@@ -63,7 +68,7 @@
 - **SQLite/файловые ResourceWarning — устранено**: `pytest -W error::ResourceWarning` даёт 0 предупреждений. Фикс: `services/logging_setup.py` закрывает FileHandler'ы при замене; тесты с `open(...).read()` переведены на `with`; синхронные моки для `save_bot_photo`; `coro.close()` в fake_create. Остались только 6 DeprecationWarning из библиотек (google/genai, swig) — не наш код.
 
 ## Открытые вопросы / Next steps
-- **Agent_guide.md** (создан 2026-08-08): ждёт выполнения после завершения всех шагов плана — по указанию пользователя.
+- **Agent_guide.md**: Задания 1–5 выполнены (1,2,3,4 — ранее, 5 — 2026-08-13 гибрид bge-m3). Остался итоговый чек-лист гайда: ручная проверка бота + .git-hooks/check_no_secrets.py.
 - Проверить после изменений:
   - `pytest -q tests/test_logging_setup.py`
   - `pytest -q -W error::ResourceWarning`

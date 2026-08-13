@@ -97,7 +97,34 @@ def retrieve_facts(query: str, user_id: int, max_results: int = 5) -> list[str]:
             scored.append((score + priority * 0.3, access, fact_text))
 
     scored.sort(key=lambda x: (-x[0], -x[1]))
-    return [f[2] for f in scored[:max_results]]
+    facts = [f[2] for f in scored[:max_results]]
+    return _extend_with_semantic(query, user_id, facts, max_results)
+
+
+def _extend_with_semantic(
+    query: str, user_id: int, facts: list[str], max_results: int,
+) -> list[str]:
+    """Гибрид: дополняет keyword-результаты семантическими фактами.
+
+    Graceful degradation: при любой ошибке семантического слоя возвращаются
+    только keyword-результаты (как раньше). Дедупликация по тексту факта.
+    """
+    try:
+        from services.memory_embeddings import search_similar
+
+        semantic = search_similar(query, user_id, limit=max_results)
+    except Exception:
+        return facts
+
+    seen = set(facts)
+    for item in semantic:
+        fact = item.get("fact")
+        if fact and fact not in seen:
+            seen.add(fact)
+            facts.append(fact)
+            if len(facts) >= max_results:
+                break
+    return facts[:max_results]
 
 
 def get_memory_context(query: str, user_id: int) -> str:
