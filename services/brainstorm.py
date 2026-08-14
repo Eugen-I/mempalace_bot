@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from services.apple_notes import AppleNotesError, list_notes, search_notes
+from services.camera_setup import format_camera_setup
 from services.json_parser import safe_parse_llm_json
 from services.palace_mcp import get_mcp
 
@@ -28,6 +29,7 @@ MAX_IDEAS = 7
 MIN_IDEAS = 5
 MAX_TITLE_LEN = 80
 CONTEXT_SOURCE_LIMIT = 4000
+GUIDE_CONTEXT_LIMIT = 24000  # гайд X-T4 — базовый справочник, входит целиком
 LINK_MIN_TOKEN_LEN = 4
 MAX_LINK_TEXT_LEN = 120
 MAX_LINKS = 5
@@ -61,6 +63,8 @@ SURREAL_SAMPLING_PARAMS = {
 
 _CAMERA_SETUP_KEYWORDS = (
     "имитац",
+    "монохром",
+    "acros",
     "тон",
     "подсвет",
     "тень",
@@ -69,8 +73,20 @@ _CAMERA_SETUP_KEYWORDS = (
     "wb",
     "баланс бел",
     "зерн",
+    "экспозамер",
+    "диафрагм",
+    "выдержк",
+    "резкост",
+    "шумоподавлен",
+    "цветной хром",
+    "минимакет",
+    "мини-макет",
+    "частичный цвет",
+    "динамический тон",
+    "мягкий фокус",
+    "wc/mg",
+    "фильтр",
 )
-
 SURREAL_STORM_SYSTEM_PROMPT = (
     "Ты — генератор сюрреалистичных фотоидей в личном пространстве MemPalace. "
     "Отвечай на русском.\n"
@@ -78,26 +94,38 @@ SURREAL_STORM_SYSTEM_PROMPT = (
     "разрыв с бытовой реальностью, неожиданные образы и сочетания на основе "
     "контекста из заметок пользователя.\n"
     "Правила:\n"
-    "- Придумай 5-7 конкретных фотоидей в сюрреалистичном стиле.\n"
+    "- Придумай 5–7 конкретных фотоидей в сюрреалистичном стиле.\n"
     "- Для КАЖДОЙ идеи подбери НАБОР настроек камеры Fujifilm X-T4 так, "
     "чтобы они усиливали именно эту идею: свет, движение, настроение, "
     "ощущение сна/искажения.\n"
     "- КАЖДЫЙ camera_setup обязан включать минимум:\n"
-    "  - выбор имитации плёнки;\n"
+    "  - выбор имитации плёнки (или монохромного режима);\n"
     "  - настройки тоновой кривой (Подсветка/Тень) и Динамического диапазона;\n"
+    "  - выбор типа баланса белого (Авто, Приоритет белого, Авто, Приоритет "
+    "среды, Цветовая температура, Дневной свет, Тень/Облака, Флуоресцентный "
+    "1–3, Лампы накаливания, Под водой) и, при необходимости, цветовую "
+    "температуру в Кельвинах (например, 2500K, 5500K, 9000K);\n"
+    "  - сдвиг баланса белого (WB Shift) R/B от −9 до +9;\n"
+    "  - выбор экспозамера (Точечный, Мульти, Центровзвешенный, "
+    "Средневзвешенный);\n"
     "  - как минимум ОДИН из параметров: Прозрачность (Clarity), Цвет, "
-    "сдвиг баланса белого (WB Shift) или Эффект зерна;\n"
+    "Эффект зерна (Выкл / Слабый / Сильный + Мелкое/Крупное), "
+    "Резкость (от −4 до +4), Монохромный цвет WC/MG;\n"
+    "  - при использовании ACROS или монохромного режима — указать фильтр "
+    "(+Ye / +R / +G), если он нужен для идеи;\n"
     "  - приём съёмки (например, мультиэкспозиция, длинная выдержка, "
     "расширенный фильтр), но мультиэкспозиция не должна быть единственным "
-    "приёмом.\n"
+    "приёмом;\n"
+    "  - примерные рекомендации по диафрагме (например, f/1.4–f/2.8 для "
+    "размытия фона, f/8–f/16 для резкости по всему кадру), "
+    "выдержке (например, 1/1000 для заморозки, 1″–30″ для смазывания), "
+    "ISO (например, 160 для чистого кадра, 3200–12800 для зернистости).\n"
     "- По всему списку идей ОБЯЗАТЕЛЬНО используй МИНИМУМ три разных "
     "семейства приёмов:\n"
     "  - мультиэкспозиция;\n"
     "  - длинная выдержка / смазывание движения;\n"
     "  - экстремальные кривые/Clarity/цвет и WB-сдвиг;\n"
     "  - встроенные расширенные фильтры.\n"
-    "  - экспозиция, яркость кадра или его темнота, переэкспонирование или "
-    "недоэкспонирование.\n"
     "  Не используй один и тот же приём (например, мультиэкспозицию) "
     "более чем в двух идеях.\n"
     "- В поле camera_setup для каждой идеи КРАТКО объясни, КАК каждый "
@@ -106,31 +134,58 @@ SURREAL_STORM_SYSTEM_PROMPT = (
     "должна быть понятной, не случайной.\n"
     "- Используй значения из файла FUJI_XT4_CREATIVE_GUIDE.md как базу, но "
     "разрешается творчески сдвигать отдельные параметры (кривая, Clarity, "
-    "Цвет, WB-сдвиг, ДД, зерно и т.п.) по всему доступному диапазону, "
-    "если это логично для идеи. Не делай бессмысленных крайностей, которые "
-    "превращают картинку в «мусор»: настройки должны давать интересный, "
-    "но фотографируемый результат.\n"
+    "Цвет, WB-сдвиг, ДД, зерно, резкость, WC/MG, фильтры и т.п.) по всему "
+    "доступному диапазону, если это логично для идеи. Не делай бессмысленных "
+    "крайностей, которые превращают картинку в «мусор»: настройки должны "
+    "давать интересный, но фотографируемый результат.\n"
     "- Никогда не давай идею без приложенных настроек камеры.\n"
-    "- У каждой идеи: title (до 60 символов); reason (1-2 предложения о "
+    "- У каждой идеи: title (до 60 символов); reason (1–2 предложения о "
     "сюрреалистичном образе и связи с заметками); camera_setup (приём(ы) + "
-    "точные настройки и объяснение эффекта, 2-6 предложений); steps "
-    "(1-3 первых шага реализации).\n"
+    "точные настройки и объяснение эффекта, 2–6 предложений); steps "
+    "(1–3 первых шага реализации).\n"
     "- Не выдумывай факты о пользователе, образы — придумывай свободно.\n"
+    "- Поле camera_setup — это JSON-ОБЪЕКТ, а не строка. Ключи и значения "
+    "пиши на РУССКОМ языке, без технических кодов и без чисел вместо "
+    "названий. Пример формы:\n"
+    '{"Имитация плёнки": "Classic Negative", "Динамический диапазон": '
+    '"DR400", "Тип баланса белого": "Дневной свет", "Цветовая температура": '
+    '"5500K", "Сдвиг баланса белого (R/B)": "R+3 / B-5", "Экспозамер": '
+    '"Точечный", "Эффект зерна": "Сильный+Крупное", "Резкость": "+2", '
+    '"Цвет": "+3", "Прозрачность (Clarity)": "-2", "Тоновая кривая '
+    '(Подсветка/Тень)": "Подсветка -1 / Тень +3", "Шумоподавление при '
+    'высоком ISO": "-4", "Приём съёмки": "Мультиэкспозиция", "Диафрагма": '
+    '"f/8", "Выдержка": "5\\"", "ISO": "3200"}\n'
+    "- В camera_setup заполняй максимум применимых параметров из списка: "
+    "имитация плёнки, динамический диапазон, тип баланса белого + "
+    "температура (K) + сдвиг R/B, экспозамер, эффект зерна (сила+размер), "
+    "резкость, цвет, шумоподавление, тоновая кривая, прозрачность, "
+    "монохромный тон WC/MG и ЧБ-фильтр (+Ye/+R/+G) для ACROS/монохрома, "
+    "дополнительные фильтры (Мини-макет, Частичный цвет, Динамический тон, "
+    "Мягкий фокус) как приём, рекомендуемые диафрагма, выдержка и ISO.\n"
+    "- Приём съёмки указывай словами («Мультиэкспозиция», «Длинная "
+    "выдержка»), не кодами.\n"
     "- Верни ТОЛЬКО JSON вида "
-    '{"ideas": [{"title": "...", "reason": "...", "camera_setup": "...", '
+    '{"ideas": [{"title": "...", "reason": "...", "camera_setup": {...}, '
     '"steps": "..."}]}.\n'
     "- Никакого текста вне JSON."
 )
 
 
-def _build_context_block(source_name: str, text: str) -> str:
+def _build_context_block(
+    source_name: str, text: str, limit: int = CONTEXT_SOURCE_LIMIT,
+) -> str:
     if not text.strip():
         return ""
-    return f"[{source_name}]\n{text[:CONTEXT_SOURCE_LIMIT]}\n"
+    return f"[{source_name}]\n{text[:limit]}\n"
 
 
 def build_storm_prompt(topic: str, context: dict) -> str:
-    """Собирает user-промпт: тема + блоки контекста из каждого источника."""
+    """Собирает user-промпт: тема + блоки контекста из каждого источника.
+
+    Гайд Fujifilm X-T4 — базовый справочник настроек: для него действует
+    GUIDE_CONTEXT_LIMIT (почти полный текст), прочие источники — стандартный
+    CONTEXT_SOURCE_LIMIT.
+    """
     blocks = [f"Тема штурма: {topic}\n"]
     for key, label in (
         ("notes", "Заметки Apple Notes"),
@@ -138,7 +193,8 @@ def build_storm_prompt(topic: str, context: dict) -> str:
         ("kg", "Факты графа знаний"),
         ("guide", "Руководство Fujifilm X-T4"),
     ):
-        block = _build_context_block(label, context.get(key, ""))
+        limit = GUIDE_CONTEXT_LIMIT if key == "guide" else CONTEXT_SOURCE_LIMIT
+        block = _build_context_block(label, context.get(key, ""), limit=limit)
         if block:
             blocks.append(block)
     if len(blocks) == 1:
@@ -244,12 +300,32 @@ def _clean_raw(raw: str) -> str:
 def _camera_setup_has_parameters(text: str) -> bool:
     """Проверка, что camera_setup упоминает хотя бы один ключевой параметр.
 
-    Не жёсткий парсер: любой из маркеров (имитация плёнки, кривая/тон,
-    подсветка/тень, Clarity/Прозрачность, WB/баланс белого, зерно) считается
-    подтверждением того, что идея содержит настройки камеры.
+    Не жёсткий парсер: любой из маркеров (имитация плёнки/монохром/ACROS,
+    кривая/тон, подсветка/тень, Clarity/Прозрачность, WB/баланс белого,
+    зерно, экспозамер, диафрагма, выдержка) считается подтверждением того,
+    что идея содержит настройки камеры.
     """
     lower = (text or "").lower()
     return any(keyword in lower for keyword in _CAMERA_SETUP_KEYWORDS)
+
+
+def _normalize_field_value(value) -> str | None:
+    """Приводит значение поля идеи к строке.
+
+    Локальные LLM иногда возвращают camera_setup JSON-объектом, а steps —
+    массивом (вместо строки из инструкции). Нормализуем в читаемый текст:
+    dict → "ключ: значение" по строкам, list → строки через перенос.
+    None — для типов, которые не могут быть осмысленным текстом (int и т.п.).
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return "\n".join(f"{k}: {v}" for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return "\n".join(str(v) for v in value)
+    if value is None:
+        return None
+    return None
 
 
 def _validate_idea(
@@ -262,18 +338,22 @@ def _validate_idea(
     title = item.get("title")
     if not isinstance(title, str) or not title.strip():
         return None
-    camera_setup = item.get("camera_setup")
-    if require_camera_setup and (
-        not isinstance(camera_setup, str) or not camera_setup.strip()
-    ):
+    raw_camera_setup = item.get("camera_setup")
+    camera_setup = _normalize_field_value(raw_camera_setup)
+    if camera_setup is None:
+        camera_setup = ""
+    if require_camera_setup and not camera_setup.strip():
         return None
     if require_camera_keywords and not _camera_setup_has_parameters(camera_setup):
         return None
+    reason = _normalize_field_value(item.get("reason")) or ""
+    steps = _normalize_field_value(item.get("steps")) or ""
     return {
         "title": title.strip()[:MAX_TITLE_LEN],
-        "reason": str(item.get("reason") or "").strip(),
-        "camera_setup": str(camera_setup or "").strip(),
-        "steps": str(item.get("steps") or "").strip(),
+        "reason": reason.strip(),
+        "camera_setup": camera_setup.strip(),
+        "camera_setup_raw": raw_camera_setup,
+        "steps": steps.strip(),
     }
 
 
@@ -354,10 +434,13 @@ def format_surreal_card(index: int, idea: dict) -> str:
         lines.append(
             f"🎭 <b>Почему сюрреалистично:</b> {safe_html_format(idea['reason'])}",
         )
-    if idea.get("camera_setup"):
-        lines.append(
-            f"📷 <b>Настройки камеры:</b>\n<code>{safe_html_format(idea['camera_setup'])}</code>",
-        )
+    camera_setup = idea.get("camera_setup_raw", idea.get("camera_setup"))
+    if camera_setup:
+        text = format_camera_setup(camera_setup)
+        if text:
+            lines.append(
+                f"📷 <b>Настройки камеры:</b>\n<code>{safe_html_format(text)}</code>",
+            )
     if idea.get("steps"):
         lines.append(f"➡️ <b>Первые шаги:</b> {safe_html_format(idea['steps'])}")
     return "\n".join(lines)

@@ -11,6 +11,7 @@ import re
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 _OBJECT_RE = re.compile(r"(\{[\s\S]*\}|\[[\s\S]*\])")
+_OBJECT_START_RE = re.compile(r"[{\[]")
 
 
 def _loads(text: str):
@@ -33,12 +34,11 @@ def extract_json_from_text(text: str):
     except json.JSONDecodeError:
         pass
 
-    fence = _FENCE_RE.search(text)
-    if fence:
+    for match in _FENCE_RE.finditer(text):
         try:
-            return _loads(fence.group(1).strip())
+            return _loads(match.group(1).strip())
         except json.JSONDecodeError:
-            pass
+            continue
 
     obj = _OBJECT_RE.search(text)
     if obj:
@@ -46,6 +46,18 @@ def extract_json_from_text(text: str):
             return _loads(obj.group(1))
         except json.JSONDecodeError:
             pass
+
+    # Финальный рубеж: модель «перезапустила» JSON посреди строки
+    # (локальные LLM, например qwen2.5, вставляют артефакт и продолжают
+    # новый блок). Пробуем raw_decode на каждой позиции '{'/'[' и берём
+    # первый объект, который парсится целиком.
+    decoder = json.JSONDecoder(strict=False)
+    for match in _OBJECT_START_RE.finditer(text):
+        try:
+            result, _ = decoder.raw_decode(text, match.start())
+        except json.JSONDecodeError:
+            continue
+        return result
 
     return None
 

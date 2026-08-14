@@ -147,3 +147,57 @@ def test_raw_newline_inside_fenced_json():
 
 def test_invalid_json_still_returns_none():
     assert safe_parse_llm_json('{"a": ', expected_type=dict) is None
+
+
+# ─── «Перезапущенный» JSON (реальный баг: qwen2.5 посреди строки
+#     вставляет китайский артефакт и начинает новый ```json-блок) ───
+
+def test_json_restart_with_artifact_mid_string():
+    """Первый блок обрезан на середине строки, второй — валидный."""
+    text = (
+        '```json\n'
+        '{"ideas": [{"title": "A", "reason": "незаконч'
+        '器误操作，继续生成JSON格式内容。\n'
+        '```json\n'
+        '{"ideas": [{"title": "B", "reason": "валидный"}]}\n'
+        '```'
+    )
+    result = safe_parse_llm_json(text, expected_type=dict)
+    assert result == {"ideas": [{"title": "B", "reason": "валидный"}]}
+
+
+def test_json_restart_without_fences():
+    """Артефакт посреди объекта без markdown-фенсов — raw_decode спасает."""
+    text = (
+        '{"ideas": [{"title": "A", "reason": "незаконч'
+        '器误操作继续生成\n'
+        '{"ideas": [{"title": "B", "reason": "валидный"}]}'
+    )
+    result = safe_parse_llm_json(text, expected_type=dict)
+    assert result == {"ideas": [{"title": "B", "reason": "валидный"}]}
+
+
+def test_json_restart_first_block_valid_preferred():
+    """Если первый блок валиден целиком — берём его, а не хвост."""
+    text = '{"a": 1} хвост {"b": 2}'
+    assert extract_json_from_text(text) == {"a": 1}
+
+
+def test_json_restart_artifact_keeps_full_surreal_ideas():
+    """Полный сюрреалистичный ответ: первый блок обрезан, хвост валиден."""
+    raw = (
+        '```json\n'
+        '{"ideas": [{"title": "Первый", "reason": "строка обрезана\nнезаконч'
+        '器误操作，继续生成JSON格式内容。\n'
+        '```json\n'
+        '{"ideas": [{"title": "Второй", "reason": "ок"}]}\n'
+        '```'
+    )
+    result = safe_parse_llm_json(raw, expected_type=dict)
+    assert result["ideas"][0]["title"] == "Второй"
+
+
+def test_multiple_broken_fences_returns_none():
+    """Все фенсы битые и объектов нет — по-прежнему None."""
+    text = '```json\n{"a": \n```\n```json\n{"b":\n```'
+    assert extract_json_from_text(text) is None

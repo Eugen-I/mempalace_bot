@@ -308,10 +308,75 @@ def test_camera_setup_has_parameters_variants():
     assert not bs._camera_setup_has_parameters("сюрреализм, свет, движение")
 
 
+def test_camera_setup_keywords_accept_new_prompt_vocabulary():
+    """Маркеры новых требований промпта: монохром, ACROS, экспозамер и т.д."""
+    assert bs._camera_setup_has_parameters("Монохромный режим ACROS R, фильтр +R")
+    assert bs._camera_setup_has_parameters("ACROS +Ye, зерно крупное")
+    assert bs._camera_setup_has_parameters("Экспозамер: точечный")
+    assert bs._camera_setup_has_parameters("Диафрагма f/8, выдержка 1/1000")
+    assert not bs._camera_setup_has_parameters("ночь, туман, полёт")
+    assert not bs._camera_setup_has_parameters("black and white, dream")
+
+
+def test_parse_ideas_keywords_accepts_monochrome_only_setup():
+    """Идея в монохромном режиме без слова «имитация плёнки» — валидна."""
+    ideas = bs.parse_ideas(
+        _surreal_setup_idea("ACROS, фильтр +G, тень -3, баланс белого 5500K"),
+        require_camera_setup=True, require_camera_keywords=True,
+    )
+    assert len(ideas) == 1
+
+
+def test_surreal_prompt_includes_new_required_fields():
+    p = bs.SURREAL_STORM_SYSTEM_PROMPT
+    assert "WB Shift" in p and "−9 до +9" in p
+    assert "экспозамер" in p.lower()
+    assert "флуоресцентный" in p.lower()
+    assert "диафрагм" in p.lower() and "выдержк" in p.lower() and "iso" in p.lower()
+    assert "монохромного режима" in p and "WC/MG" in p
+    assert "Резкость" in p and "Мелкое/Крупное" in p
+
+
 def test_parse_ideas_non_string_camera_setup_rejected():
     raw = '{"ideas": [{"title": "T", "camera_setup": 42}]}'
     with pytest.raises(ValueError, match="Нет валидных идей"):
         bs.parse_ideas(raw, require_camera_setup=True)
+
+
+def test_parse_ideas_dict_camera_setup_and_list_steps():
+    """qwen2.5:7b возвращает camera_setup объектом и steps массивом —
+    оба варианта нормализуются в читаемый текст и проходят валидацию."""
+    raw = ('{"ideas": [{"title": "Тень Юнга", "reason": "р", "camera_setup": '
+           '{"имитация плёнки": "Classic Chrome", "Тон.кривая (Подсветка/Тень)": "-2 / -1", '
+           '"Эффект зерна": "Слабый+Мелкое"}, '
+           '"steps": ["Шаг 1", "Шаг 2"]}]}')
+    ideas = bs.parse_ideas(
+        raw, require_camera_setup=True, require_camera_keywords=True,
+    )
+    assert len(ideas) == 1
+    assert ideas[0]["title"] == "Тень Юнга"
+    assert "Classic Chrome" in ideas[0]["camera_setup"]
+    assert "Эффект зерна: Слабый+Мелкое" in ideas[0]["camera_setup"]
+    assert ideas[0]["steps"] == "Шаг 1\nШаг 2"
+
+
+def test_parse_ideas_dict_camera_setup_without_keywords_rejected():
+    """Объект без ключевых параметров (только приём съёмки) — отбраковывается."""
+    raw = ('{"ideas": [{"title": "Т", "camera_setup": '
+           '{"приём": "Мультиэкспозиция"}}]}')
+    with pytest.raises(ValueError, match="Нет валидных идей"):
+        bs.parse_ideas(
+            raw, require_camera_setup=True, require_camera_keywords=True,
+        )
+
+
+def test_parse_ideas_dict_camera_setup_without_keywords_kept_on_standard():
+    """Обычный штурм: объект camera_setup нормализуется без keywords-фильтра."""
+    raw = ('{"ideas": [{"title": "Т", "camera_setup": '
+           '{"приём": "Мультиэкспозиция"}}]}')
+    ideas = bs.parse_ideas(raw, require_camera_setup=True)
+    assert len(ideas) == 1
+    assert ideas[0]["camera_setup"] == "приём: Мультиэкспозиция"
 
 
 # ─── storm_system_prompt: выбор промпта по mode ───
@@ -436,6 +501,33 @@ def test_build_storm_prompt_includes_guide_block():
 def test_build_storm_prompt_standard_skips_missing_guide():
     prompt = bs.build_storm_prompt("Тема", {"notes": "n", "palace": "", "kg": ""})
     assert "Руководство Fujifilm" not in prompt
+
+
+def test_build_storm_prompt_guide_uses_wider_limit():
+    """Гайд больше стандартного лимита входит в промпт (GUIDE_CONTEXT_LIMIT)."""
+    guide = "рецепт " * 4000  # 28000 символов — длиннее GUIDE_CONTEXT_LIMIT
+    ctx = {"notes": "заметка", "guide": guide}
+    prompt = bs.build_storm_prompt("Тема", ctx)
+    block = prompt.split("[Руководство Fujifilm X-T4]\n", 1)[1]
+    assert len(block) == bs.GUIDE_CONTEXT_LIMIT + 1, \
+        "гайд обрезается по GUIDE_CONTEXT_LIMIT, а не по CONTEXT_SOURCE_LIMIT"
+    assert bs.GUIDE_CONTEXT_LIMIT > bs.CONTEXT_SOURCE_LIMIT
+
+
+def test_build_storm_prompt_guide_shorter_than_limit_full():
+    ctx = {"notes": "заметка", "guide": "полный текст гайда"}
+    prompt = bs.build_storm_prompt("Тема", ctx)
+    assert "[Руководство Fujifilm X-T4]\nполный текст гайда" in prompt
+
+
+def test_build_storm_prompt_notes_still_uses_standard_limit():
+    """Прочие источники не затронуты отдельным лимитом гайда."""
+    ctx = {"notes": "н" * 5000, "palace": "п" * 5000, "kg": "", "guide": "г"}
+    prompt = bs.build_storm_prompt("Тема", ctx)
+    notes_block = prompt.split("[Заметки Apple Notes]\n", 1)[1].split("\n[", 1)[0]
+    palace_block = prompt.split("[Записи дворца]\n", 1)[1].split("\n[", 1)[0]
+    assert len(notes_block.rstrip("\n")) == bs.CONTEXT_SOURCE_LIMIT
+    assert len(palace_block.rstrip("\n")) == bs.CONTEXT_SOURCE_LIMIT
 
 
 def test_format_surreal_card():
