@@ -196,6 +196,23 @@ Bei der Antwort durchläuft die KI automatisch die Tunnel von gefundenen Quellen
 - `💬 Zitat` — Ausschnitt in beliebigen Raum speichern
 - `🗑️ Löschen` — mit Bestätigung, endgültig
 
+### 📝 Apple Notes — Notizen-Modus
+
+Der Button **«📝 Apple Notes»** im Hauptmenü startet den Notizen-Modus: Sie schreiben, was mit den Notizen zu tun ist — der Agent findet Notizen nach Titel, Ordner oder Text und zeigt sie als «📄 N»-Buttons.
+
+**Notiz ansehen** (eine Nachricht, Seite ≈1500 Zeichen):
+- ◀️/▶️ — lange Notizen seitenweise blättern (Anzeige «📍 N/M»)
+- «← Zur Liste» — zurück zur Liste der gefundenen Notizen
+
+**Aktionen bei geöffneter Notiz** (unter dem Notiztext):
+- 💬 **Mit dem Agenten besprechen** — der Agent wartet auf Ihre Frage und antwortet zum Inhalt der Notiz (und auch zur ganzen Ordner); der Kontext bleibt erhalten, bis «⏹ Diskussion beenden» gedrückt wird
+- 💡 **Brainstorm** — surreale Fotoideen mit genauen Fujifilm-X-T4-Einstellungen (Film-Emulation, Tonwertkurve, Clarity): Thema aus dem Notiztitel, Notiztext fließt in den Kontext
+- 💾 **In den Palast** — Notiztext im Wissenspalast speichern (Flügel/Raum wählen)
+
+**💡 Surreales Brainstorm:** «💡 Творческий штурм: <Thema>» im Notizen-Modus erzeugt surreale Fotoideen mit Fujifilm-X-T4-Einstellungen.
+
+**Schreiben in Notizen:** der Agent kann Notizen erstellen, ergänzen, löschen (in «Zuletzt gelöscht») und zwischen Ordnern verschieben — nur nach Ihrer Bestätigung.
+
 ---
 
 ### 📸 Fotos
@@ -270,6 +287,7 @@ Auf KI-Antworten reagieren:
 - **Circuit Breaker** — Schutz vor Kaskadenausfällen
 - **Warm-start Whisper** — Modell wird einmalig geladen
 - **SQLite KV Store** — persistente Sitzungen über Neustarts hinweg
+- **Datei-Index** — separater Volltext-Index (FTS5/BM25) über txt/md-Dateien, optional mit bge-m3-Embeddings
 - **Graceful Degradation** — 4 Betriebsstufen (FULL → EMERGENCY)
 - **Quellenangabe** — KI zitiert Fundstellen mit `[1]`, `[2]`...
 - **Strukturiertes Logging** — JSON-Log mit Rotation

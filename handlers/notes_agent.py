@@ -63,9 +63,14 @@ _waiting_for_notes_input: TtlDict = TtlDict()
 _notes_list_store: TtlDict = TtlDict(ttl=1800)
 # uid -> {"note_id", "name"} — заметка, выбранная для обсуждения с агентом
 _notes_discuss_ctx: TtlDict = TtlDict(ttl=900)
+# uid -> {"idx", "name", "folder", "pages": [...], "page"} — открытая заметка
+_notes_view_store: TtlDict = TtlDict(ttl=900)
 
-_NOTE_ROW_RE = re.compile(r"^-\s*(.*?)\s*\[id=([^\]]+)\]")
+_NOTE_ROW_RE = re.compile(
+    r"^-\s*(.*?)\s*\[id=([^\]]+)\](?:\s*\(папка:\s*([^)]*)\))?"
+)
 MAX_LIST_OPEN_BUTTONS = 10
+NOTE_PAGE_SIZE = 1500  # символов в одной странице просмотра заметки (1500 ± 200)
 
 
 def _collect_notes_from_result(result) -> list[dict]:
@@ -89,7 +94,11 @@ def _collect_notes_from_result(result) -> list[dict]:
                 if nid in seen:
                     continue
                 seen.add(nid)
-                notes.append({"id": nid, "name": m.group(1).strip() or "Заметка"})
+                notes.append({
+                    "id": nid,
+                    "name": m.group(1).strip() or "Заметка",
+                    "folder": (m.group(3) or "").strip(),
+                })
     return notes
 
 
@@ -104,13 +113,6 @@ def _current_discuss(uid: int) -> dict | None:
     if uid in _notes_discuss_ctx:
         return _notes_discuss_ctx.get(uid)
     return None
-
-
-def _consume_discuss(uid: int) -> dict | None:
-    ctx = _current_discuss(uid)
-    if ctx is not None:
-        _notes_discuss_ctx.pop(uid, None)
-    return ctx
 
 
 def _note_by_index(uid: int, idx: int) -> dict | None:
@@ -141,6 +143,77 @@ def _build_open_rows(uid: int) -> list[list[types.InlineKeyboardButton]]:
     if buttons:
         rows.append(buttons)
     return rows
+
+
+def _chunk_text(text: str, limit: int = NOTE_PAGE_SIZE) -> list[str]:
+    """Разбивает текст на страницы ≤ limit символов (предпочитая переносы строк).
+
+    Строки длиннее limit режутся по лимиту без потери текста; переносы строк
+    сохраняются (keepends), поэтому склейка страниц даёт исходный текст.
+    Пустой текст → пустой список.
+    """
+    if not text:
+        return []
+    chunks: list[str] = []
+    buf = ""
+    for line in text.splitlines(keepends=True):
+        if buf and len(buf) + len(line) > limit:
+            chunks.append(buf)
+            buf = ""
+        if len(line) > limit:
+            rest = line
+            while len(rest) > limit:
+                chunks.append(rest[:limit])
+                rest = rest[limit:]
+            buf = rest
+        else:
+            buf += line
+    if buf:
+        chunks.append(buf)
+    return chunks
+
+
+def _build_note_view_kb(
+    uid: int, idx: int, total: int = 1, page: int = 0,
+) -> InlineKeyboardBuilder:
+    """Клавиатура просмотра заметки: листание ◀️/📍/▶️, действия, «← К списку»."""
+    kb = InlineKeyboardBuilder()
+    if total > 1:
+        row = []
+        if page > 0:
+            row.append(types.InlineKeyboardButton(
+                text="◀️", callback_data=f"notes_page:{idx}:{page - 1}",
+            ))
+        row.append(types.InlineKeyboardButton(
+            text=f"📍 {page + 1}/{total}",
+            callback_data=f"notes_page:{idx}:{page}",
+        ))
+        if page < total - 1:
+            row.append(types.InlineKeyboardButton(
+                text="▶️", callback_data=f"notes_page:{idx}:{page + 1}",
+            ))
+        kb.row(*row)
+    kb.row(
+        types.InlineKeyboardButton(
+            text="💬 Обсудить с агентом", callback_data=f"notes_discuss:{idx}",
+        ),
+        types.InlineKeyboardButton(
+            text="💡 Штурм", callback_data=f"notes_storm:{idx}",
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="💾 В MemPalace", callback_data=f"notes_save:{idx}",
+        ),
+        types.InlineKeyboardButton(
+            text="← К списку", callback_data=f"notes_back:{idx}",
+        ),
+    )
+    if _current_discuss(uid):
+        kb.row(types.InlineKeyboardButton(
+            text="⏹ Завершить обсуждение", callback_data=f"notes_stop:{idx}",
+        ))
+    return kb
 
 
 def _status_edit(status_msg, text: str):
@@ -326,8 +399,17 @@ def _extract_storm_topic(text: str) -> str | None:
     return None
 
 
-async def run_surreal_storm(uid: int, status_msg, topic: str):
-    """Сюрреалистичный штурм: контекст notes+гайд → SURREAL промпт → карточки."""
+async def run_surreal_storm(
+    uid: int,
+    status_msg,
+    topic: str,
+    context: dict | None = None,
+):
+    """Сюрреалистичный штурм: контекст notes+гайд → SURREAL промпт → карточки.
+
+    context — готовый контекст ({"notes": ..., "guide": ...}); если задан,
+    сбор контекста пропускается (используется для штурма по тексту заметки).
+    """
     from services import brainstorm as bs
     from services.ai_engine import get_ai_response_async, get_current_ai
 
@@ -340,8 +422,9 @@ async def run_surreal_storm(uid: int, status_msg, topic: str):
         return
 
     try:
-        await _status_edit(status_msg, "🔍 Собираю контекст из заметок…")
-        context = await bs.collect_context(topic, mode="surreal")
+        if context is None:
+            await _status_edit(status_msg, "🔍 Собираю контекст из заметок…")
+            context = await bs.collect_context(topic, mode="surreal")
 
         await _status_edit(status_msg, "💭 Генерирую сюрреалистичные идеи…")
         engine, model = get_current_ai()
@@ -373,6 +456,15 @@ SESSION_INVITE = (
     "• «Сохрани в заметку: купить капучино»\n"
     "• «Найди мою заметку про Фудзи»\n"
     "• «Что там в заметках про поездку?»\n\n"
+    "📄 Найденные заметки открываются по кнопкам «📄 N». Под текстом заметки:\n"
+    "• ◀️/▶️ — листание длинных заметок (страница ≈1500 символов);\n"
+    "• «← К списку» — вернуться к списку найденных заметок;\n"
+    "• 💬 <b>Обсудить с агентом</b> — агент ждёт ваш вопрос и отвечает по "
+    "заметке (или всей папке), пока не нажата «⏹ Завершить»;\n"
+    "• 💡 <b>Штурм</b> — сюрреалистичные фотоидеи с настройками Fujifilm X-T4 "
+    "по тексту заметки;\n"
+    "• 💾 <b>В MemPalace</b> — сохранить текст заметки во Дворец "
+    "(с выбором крыла/комнаты).\n\n"
     "💡 <b>Творческий штурм:</b> «💡 Творческий штурм: ночные сны» — "
     "сюрреалистичные фотоидеи с точными настройками Fujifilm X-T4."
 )
@@ -427,8 +519,35 @@ async def cb_notes_cancel(cb: types.CallbackQuery):
 # ─── Открытие найденной заметки ───
 
 
-async def _show_note_content(cb: types.CallbackQuery, note: dict):
-    """Показывает заметку и включает режим обсуждения с агентом."""
+async def _render_note_view(msg, uid: int, idx: int) -> bool:
+    """Рисует текущую страницу открытой заметки одним edit (страница ≤1500 симв.)."""
+    state = _notes_view_store.get(uid)
+    if not state or state["idx"] != idx:
+        return False
+    total = len(state["pages"])
+    page = state["page"]
+    lines = [f"📄 <b>{safe_html_format(state['name'])}</b>"]
+    if state.get("folder"):
+        lines.append(f"📂 {safe_html_format(state['folder'])}")
+    lines.append("")
+    body = state["pages"][page]
+    lines.append(safe_html_format(body) if body else "<i>Текст недоступен.</i>")
+    lines.append("")
+    hint = f"Страница {page + 1}/{total} · " if total > 1 else ""
+    hint += "💬 Обсуждение включено — задайте вопрос или выберите действие:"
+    lines.append(hint)
+    kb = _build_note_view_kb(uid, idx, total, page)
+    return await safe_edit_text(
+        msg, "\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup(),
+    )
+
+
+async def _show_note_content(cb: types.CallbackQuery, note: dict, idx: int = 0):
+    """Открывает заметку одной постраничной страницей (≈1500 симв.) + клавиатура.
+
+    Длинные заметки листаются стрелками ◀️/▶️ и никогда не отправляются
+    несколькими сообщениями подряд.
+    """
     from services import apple_notes
 
     name = note.get("name") or "Заметка"
@@ -439,23 +558,24 @@ async def _show_note_content(cb: types.CallbackQuery, note: dict):
         logger.warning("[NOTES-AGENT] view note %s failed: %s", note.get("id"), exc)
         body = ""
 
-    _notes_discuss_ctx[cb.from_user.id] = {
+    uid = cb.from_user.id
+    _notes_discuss_ctx[uid] = {
         "note_id": note["id"], "name": name,
+        "folder": note.get("folder") or "",
     }
-    _waiting_for_notes_input[cb.from_user.id] = True
+    _waiting_for_notes_input[uid] = True
 
-    text = (
-        f"📄 <b>{safe_html_format(name)}</b>\n\n"
-        f"{safe_html_format(body) if body else '<i>Текст недоступен.</i>'}\n\n"
-        "💬 <b>Обсуждение включено:</b> задайте вопрос об этой заметке — "
-        "агент ответит с её текстом перед глазами."
-    )
-    from services.text_formatter import split_message
-
-    parts = split_message(text)
-    for part in parts[:-1]:
-        await cb.message.answer(part, parse_mode="HTML")
-    await safe_edit_text(cb.message, parts[-1], parse_mode="HTML")
+    pages = _chunk_text(body)
+    if not pages:
+        pages = [""]
+    _notes_view_store[uid] = {
+        "idx": idx,
+        "name": name,
+        "folder": note.get("folder") or "",
+        "pages": pages,
+        "page": 0,
+    }
+    await _render_note_view(cb.message, uid, idx)
 
 
 @router.callback_query(F.data.startswith("notes_view:"))
@@ -476,7 +596,216 @@ async def cb_notes_view(cb: types.CallbackQuery):
             "⏰ Список заметок устарел — повторите поиск в агентном режиме.",
         )
         return
-    await _show_note_content(cb, note)
+    await _show_note_content(cb, note, idx=idx)
+
+
+# ─── Действия с открытой заметкой: штурм / обсуждение / сохранение ───
+
+
+async def _note_action_guard(cb: types.CallbackQuery) -> tuple[int, dict] | None:
+    """Общий guard действий: idx из callback, заметка из кэша списка.
+
+    Возвращает (idx, note) или None (уже отредактировано сообщение с ошибкой).
+    """
+    if not cb.data:
+        return None
+    try:
+        idx = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await safe_edit_text(cb.message, "❌ Неверный запрос.")
+        return None
+    note = _note_by_index(cb.from_user.id, idx)
+    if not note:
+        await safe_edit_text(
+            cb.message,
+            "⏰ Список заметок устарел — повторите поиск в агентном режиме.",
+        )
+        return None
+    return idx, note
+
+
+@router.callback_query(F.data.startswith("notes_storm:"))
+@allowed_callback
+async def cb_notes_storm(cb: types.CallbackQuery):
+    """💡 Сюрреалистичный штурм по тексту открытой заметки (тема = название)."""
+    await cb.answer()
+    guard = await _note_action_guard(cb)
+    if guard is None:
+        return
+    idx, note = guard
+    from services import apple_notes
+
+    try:
+        data = await asyncio.to_thread(apple_notes.read_note, note["id"])
+        body = str(data.get("body") or "")
+    except Exception as exc:  # noqa: BLE001 — штурм по названию без текста
+        logger.warning("[NOTES-AGENT] storm note %s read failed: %s", note["id"], exc)
+        body = ""
+    if not body.strip():
+        await safe_edit_text(
+            cb.message,
+            "❌ Текст заметки недоступен — штурм невозможен.",
+        )
+        return
+
+    from services import brainstorm as bs
+
+    topic = note.get("name") or "без названия"
+    context = {
+        "notes": f"- {note.get('name', '?')}: {body}",
+        "guide": bs._load_fuji_guide(),
+    }
+    await safe_edit_text(cb.message, "💭 Запускаю сюрреалистичный штурм…")
+    await run_surreal_storm(cb.from_user.id, cb.message, topic, context=context)
+
+
+@router.callback_query(F.data.startswith("notes_page:"))
+@allowed_callback
+async def cb_notes_page(cb: types.CallbackQuery):
+    """◀️/▶️ Листание страниц открытой заметки (одна страница ≈1500 символов)."""
+    await cb.answer()
+    if not cb.data:
+        return
+    parts = cb.data.split(":")
+    if len(parts) != 3:
+        await safe_edit_text(cb.message, "❌ Неверный запрос.")
+        return
+    try:
+        idx, page = int(parts[1]), int(parts[2])
+    except ValueError:
+        await safe_edit_text(cb.message, "❌ Неверный запрос.")
+        return
+    uid = cb.from_user.id
+    state = _notes_view_store.get(uid)
+    if not state or state["idx"] != idx or not 0 <= page < len(state["pages"]):
+        await safe_edit_text(
+            cb.message,
+            "⏰ Сессия заметки истекла — откройте её заново из списка.",
+        )
+        return
+    state["page"] = page
+    await _render_note_view(cb.message, uid, idx)
+
+
+@router.callback_query(F.data.startswith("notes_back:"))
+@allowed_callback
+async def cb_notes_back(cb: types.CallbackQuery):
+    """← К списку: возвращает сообщение со списком найденных заметок."""
+    await cb.answer()
+    uid = cb.from_user.id
+    data = _notes_list_key(uid)
+    if not data or not data["items"]:
+        await safe_edit_text(
+            cb.message,
+            "⏰ Список заметок устарел — повторите поиск в агентном режиме.",
+        )
+        return
+    _notes_view_store.pop(uid, None)
+    from handlers.palace.action_bar import finalize_answer
+
+    rows = _build_open_rows(uid)
+    if _current_discuss(uid):
+        rows.append([types.InlineKeyboardButton(
+            text="⏹ Завершить обсуждение", callback_data="notes_stop:0",
+        )])
+    await finalize_answer(
+        uid,
+        cb.message.edit_text,
+        data["text"],
+        ctx={},
+        title="<b>📝 Apple Notes</b>",
+        extra_rows=rows,
+    )
+
+
+@router.callback_query(F.data.startswith("notes_discuss:"))
+@allowed_callback
+async def cb_notes_discuss(cb: types.CallbackQuery):
+    """💬 Включает режим обсуждения заметки с агентом (ждёт вопрос в чате)."""
+    await cb.answer()
+    guard = await _note_action_guard(cb)
+    if guard is None:
+        return
+    idx, note = guard
+    uid = cb.from_user.id
+    _notes_discuss_ctx[uid] = {
+        "note_id": note["id"],
+        "name": note.get("name") or "Заметка",
+        "folder": note.get("folder") or "",
+    }
+    _waiting_for_notes_input[uid] = True
+
+    state = _notes_view_store.get(uid)
+    if state and state["idx"] == idx:
+        await _render_note_view(cb.message, uid, idx)
+        return
+
+    folder = note.get("folder") or ""
+    where = f" (папка: {safe_html_format(folder)})" if folder else ""
+    kb = _build_note_view_kb(uid, idx)
+    await safe_edit_text(
+        cb.message,
+        f"💬 <b>Обсуждение включено:</b> заметка "
+        f"«{safe_html_format(note.get('name') or 'Заметка')}»{where}.\n\n"
+        "Напишите вопрос в чат — агент ответит по содержанию заметки "
+        "(можно спрашивать и про всю папку). Чтобы выйти — нажмите "
+        "«⏹ Завершить обсуждение».",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("notes_save:"))
+@allowed_callback
+async def cb_notes_save(cb: types.CallbackQuery):
+    """💾 Сохранение текста заметки в MemPalace (выбор крыла/комнаты)."""
+    await cb.answer()
+    guard = await _note_action_guard(cb)
+    if guard is None:
+        return
+    idx, note = guard
+    from services import apple_notes
+
+    try:
+        data = await asyncio.to_thread(apple_notes.read_note, note["id"])
+        body = str(data.get("body") or "")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[NOTES-AGENT] save note %s read failed: %s", note["id"], exc)
+        body = ""
+    if not body.strip():
+        await safe_edit_text(
+            cb.message,
+            "❌ Текст заметки недоступен — сохранить нечего.",
+        )
+        return
+
+    from handlers.palace import _save_state, _show_save_wings
+
+    header = f"📄 {note.get('name') or 'Заметка'}\n\n"
+    _save_state[cb.from_user.id] = {
+        "text": header + body,
+        "mode": "full",
+        "wing": "",
+        "room": "",
+        "wings": [],
+        "rooms": [],
+    }
+    await safe_edit_text(cb.message, "⏳ Загружаю крылья…")
+    await _show_save_wings(cb.message.edit_text, cb.from_user.id)
+
+
+@router.callback_query(F.data.startswith("notes_stop:"))
+@allowed_callback
+async def cb_notes_stop(cb: types.CallbackQuery):
+    """⏹ Завершает режим обсуждения заметки с агентом."""
+    await cb.answer()
+    uid = cb.from_user.id
+    _notes_discuss_ctx.pop(uid, None)
+    _waiting_for_notes_input.pop(uid, None)
+    await safe_edit_text(
+        cb.message,
+        "⏹ Обсуждение завершено. Дальнейшие вопросы пойдут в обычный чат.",
+    )
 
 
 # ─── Вход из обычного диалога ───
@@ -511,20 +840,30 @@ async def run_notes_agent(uid: int, status_msg, question: str):
 
     Сообщение «💡 Творческий штурм: <тема>» маршрутизируется в
     сюрреалистичный штурм вместо обычного агента. Если пользователь
-    только что открыл заметку кнопкой «📄 N», следующий вопрос уходит
-    агенту с контекстом обсуждаемой заметки.
+    открыл заметку (кнопки «📄 N» / «💬 Обсудить»), вопрос уходит агенту
+    с контекстом обсуждаемой заметки — контекст держится на последующие
+    сообщения, пока не нажата «⏹ Завершить обсуждение».
     """
     topic = _extract_storm_topic(question)
     if topic is not None:
         await run_surreal_storm(uid, status_msg, topic)
         return
-    discuss = _consume_discuss(uid)
+    discuss = _current_discuss(uid)
     if discuss:
         note_id = str(discuss.get("note_id", ""))
         name = str(discuss.get("name") or "заметка")
+        folder = str(discuss.get("folder") or "")
+        folder_hint = (
+            f" Заметка находится в папке «{folder}»: если вопрос про всю "
+            f"папку — перечитай список через notes_list(folder=\"{folder}\")."
+            if folder else ""
+        )
         question = (
-            f"Пользователь обсуждает заметку «{name}» (id={note_id}). "
+            f"Пользователь обсуждает заметку «{name}» (id={note_id})."
+            f"{folder_hint}\n"
             f"Прочитай её через notes_read и отвечай по содержанию заметки.\n\n"
             f"Вопрос пользователя: {question}"
         )
     await _run_notes_agent_reply(uid, status_msg, question)
+    if _current_discuss(uid) and not _extract_storm_topic(question):
+        _waiting_for_notes_input[uid] = True

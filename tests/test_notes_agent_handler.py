@@ -41,6 +41,7 @@ class FakeMessageLite:
         self.text = text
         self.answers = []
         self.edits = []
+        self.edits_reply_markup = None
 
     async def answer(self, text, parse_mode=None, reply_markup=None):
         self.answers.append(text)
@@ -48,6 +49,7 @@ class FakeMessageLite:
 
     async def edit_text(self, text, parse_mode=None, reply_markup=None):
         self.edits.append(text)
+        self.edits_reply_markup = reply_markup
 
 
 class FakeCbLite:
@@ -74,11 +76,13 @@ def clear_pending():
     na._waiting_for_notes_input.clear()
     na._notes_list_store.clear()
     na._notes_discuss_ctx.clear()
+    na._notes_view_store.clear()
     yield
     na._pending_confirm.clear()
     na._waiting_for_notes_input.clear()
     na._notes_list_store.clear()
     na._notes_discuss_ctx.clear()
+    na._notes_view_store.clear()
 
 
 def _token_from(status: FakeStatus) -> str:
@@ -653,9 +657,16 @@ ROW_1_DUP = "- Идеи для фото [id=AAA] (папка: Notes)"
 def test_collect_notes_from_result_happy():
     notes = na._collect_notes_from_result(_note_steps(f"{ROW_1}\n{ROW_2}"))
     assert notes == [
-        {"id": "AAA", "name": "Идеи для фото"},
-        {"id": "BBB", "name": "Покупки"},
+        {"id": "AAA", "name": "Идеи для фото", "folder": "Notes"},
+        {"id": "BBB", "name": "Покупки", "folder": "Дом"},
     ]
+
+
+def test_collect_notes_from_result_line_without_folder():
+    notes = na._collect_notes_from_result(
+        _note_steps("- Просто строка [id=CCC]"),
+    )
+    assert notes == [{"id": "CCC", "name": "Просто строка", "folder": ""}]
 
 
 def test_collect_notes_from_result_dedups_and_merges_notes_list():
@@ -714,12 +725,13 @@ def test_note_by_index_bounds():
     assert na._note_by_index(2, None) is None
 
 
-def test_current_discuss_and_consume():
+def test_current_discuss_and_persistent():
     assert na._current_discuss(7) is None
-    na._notes_discuss_ctx[7] = {"note_id": "A", "name": "X"}
-    assert na._current_discuss(7) == {"note_id": "A", "name": "X"}
-    assert na._consume_discuss(7) == {"note_id": "A", "name": "X"}
-    assert na._consume_discuss(7) is None
+    na._notes_discuss_ctx[7] = {"note_id": "A", "name": "X", "folder": ""}
+    assert na._current_discuss(7) == {"note_id": "A", "name": "X", "folder": ""}
+    assert na._current_discuss(7) == {"note_id": "A", "name": "X", "folder": ""}, \
+        "контекст обсуждения персистентен, пока не нажата ⏹"
+    na._notes_discuss_ctx.pop(7, None)
     assert na._current_discuss(7) is None
 
 
@@ -795,7 +807,7 @@ async def test_run_notes_agent_no_notes_clears_store(monkeypatch):
 
 async def test_cb_notes_view_happy(monkeypatch):
     na._notes_list_store[4242] = {
-        "items": [{"id": "AAA", "name": "Идеи"}], "text": "",
+        "items": [{"id": "AAA", "name": "Идеи", "folder": "Notes"}], "text": "",
     }
 
     def fake_read(note_id):
@@ -805,11 +817,26 @@ async def test_cb_notes_view_happy(monkeypatch):
 
     cb = FakeCbLite(4242, "notes_view:0")
     await na.cb_notes_view(cb)
-    assert na._current_discuss(4242) == {"note_id": "AAA", "name": "Идеи"}
+    assert na._current_discuss(4242) == {
+        "note_id": "AAA", "name": "Идеи", "folder": "Notes",
+    }
     assert na.is_waiting_for_notes_input(4242)
-    joined = "\n".join(cb.message.edits)
+    assert not cb.message.answers, "короткая заметка — одно сообщение"
+    joined = cb.message.edits[-1]
     assert "Идеи" in joined and "рассвете" in joined
     assert "Обсуждение включено" in joined
+    assert "Notes" in joined, "имя папки видно в заголовке заметки"
+    markup = cb.message.edits_reply_markup
+    assert markup is not None, "у открытой заметки есть кнопки действий"
+    actions = [
+        b.callback_data for row in markup.inline_keyboard for b in row
+    ]
+    assert "notes_discuss:0" in actions
+    assert "notes_storm:0" in actions
+    assert "notes_save:0" in actions
+    assert "notes_back:0" in actions, "кнопка возврата к списку"
+    assert not any(d.startswith("notes_page:") for d in actions), \
+        "короткая заметка листания не требует"
 
 
 async def test_cb_notes_view_expired_list(monkeypatch):
@@ -844,11 +871,14 @@ async def test_cb_notes_view_read_failure_falls_back(monkeypatch):
 
     cb = FakeCbLite(4242, "notes_view:0")
     await na.cb_notes_view(cb)
-    assert na._current_discuss(4242) == {"note_id": "AAA", "name": "Идеи"}
+    assert na._current_discuss(4242) == {
+        "note_id": "AAA", "name": "Идеи", "folder": "",
+    }
     assert "Текст недоступен" in cb.message.edits[-1]
 
 
 async def test_cb_notes_view_split_long_body(monkeypatch):
+    """Длинная заметка: ОДНО сообщение-страница (≈1500 симв), листание стрелками."""
     na._notes_list_store[4242] = {
         "items": [{"id": "AAA", "name": "Длинная"}], "text": "",
     }
@@ -860,8 +890,23 @@ async def test_cb_notes_view_split_long_body(monkeypatch):
 
     cb = FakeCbLite(4242, "notes_view:0")
     await na.cb_notes_view(cb)
-    assert cb.message.answers, "длинный текст разбивается на несколько сообщений"
-    assert len(na._notes_discuss_ctx.get(4242) or {}) == 2
+    assert not cb.message.answers, "длинная заметка НЕ разбивается на несколько сообщений"
+    assert len(cb.message.edits) == 1, "открытие заметки — один edit"
+    joined = cb.message.edits[0]
+    assert "Страница 1/8" in joined
+    body_chunk = joined.split("\n\n")[1]
+    assert len(body_chunk) <= na.NOTE_PAGE_SIZE + 100, "страница ≈1500 символов"
+    assert na._notes_view_store.get(4242) is not None, "состояние листания сохранено"
+    state = na._notes_view_store.get(4242)
+    assert len(state["pages"]) == 8 and state["page"] == 0
+    assert len(na._notes_discuss_ctx.get(4242) or {}) == 3
+
+    markup = cb.message.edits_reply_markup
+    cbs = [b.callback_data for row in markup.inline_keyboard for b in row]
+    assert "notes_page:0:1" in cbs, "есть стрелка ▶️ на следующую страницу"
+    assert "notes_page:0:0" in cbs, "есть индикатор страницы"
+    assert "notes_back:0" in cbs, "есть кнопка «← К списку»"
+    assert "notes_page:0:-1" not in cbs, "на первой странице нет ◀️"
 
 
 async def test_run_notes_agent_discusses_opened_note(monkeypatch):
@@ -893,13 +938,51 @@ async def test_run_notes_agent_discusses_opened_note(monkeypatch):
     monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
     monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
 
-    na._notes_discuss_ctx[4242] = {"note_id": "AAA", "name": "Идеи"}
+    na._notes_discuss_ctx[4242] = {"note_id": "AAA", "name": "Идеи", "folder": "Notes"}
     status = FakeStatus()
     await na.run_notes_agent(4242, status, "что там про рассвет?")
     assert "Идеи" in captured["question"]
     assert "AAA" in captured["question"]
     assert "что там про рассвет" in captured["question"]
-    assert na._current_discuss(4242) is None, "контекст потребляется однократно"
+    assert "Notes" in captured["question"], "папка подсказывается агенту"
+    assert na._current_discuss(4242) is not None, \
+        "контекст обсуждения не потребляется — он держится до кнопки ⏹"
+    assert na.is_waiting_for_notes_input(4242), \
+        "после ответа бот снова ждёт вопрос по заметке"
+
+
+async def test_run_notes_agent_discuss_next_question_keeps_context(monkeypatch):
+    from handlers.palace import action_bar
+
+    captured = {}
+
+    async def fake_finalize(uid, edit_func, text, **kwargs):
+        pass
+
+    async def fake_run_agent(system, question, **kwargs):
+        captured["question"] = question
+        return na.ae.AgentResult(final_answer="Ответ", finished_reason="done")
+
+    monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
+    monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
+
+    na._notes_discuss_ctx[4242] = {"note_id": "AAA", "name": "Идеи", "folder": ""}
+    status = FakeStatus()
+    await na.run_notes_agent(4242, status, "вопрос раз")
+    await na.run_notes_agent(4242, status, "вопрос два")
+    assert "вопрос два" in captured["question"]
+    assert "Идеи" in captured["question"], \
+        "второй вопрос тоже идёт с контекстом заметки"
+
+
+async def test_cb_notes_stop_ends_discussion():
+    na._notes_discuss_ctx[4242] = {"note_id": "AAA", "name": "Идеи", "folder": ""}
+    na._waiting_for_notes_input[4242] = True
+    cb = FakeCbLite(4242, "notes_stop:0")
+    await na.cb_notes_stop(cb)
+    assert na._current_discuss(4242) is None
+    assert not na.is_waiting_for_notes_input(4242)
+    assert "Обсуждение завершено" in cb.message.edits[-1]
 
 
 async def test_run_notes_agent_without_discuss_context(monkeypatch):
@@ -941,3 +1024,404 @@ async def test_cb_notes_view_missing_callback_data():
     cb = FakeCbLite(4242, None)
     await na.cb_notes_view(cb)
     assert not cb.message.edits, "без callback_data не показываем ничего"
+
+
+# ─── 💬 Действия с открытой заметкой: клавиатура и callback-хендлеры ───
+
+
+def _action_data(uid: int, idx: int = 0, total: int = 1, page: int = 0) -> list:
+    kb = na._build_note_view_kb(uid, idx, total=total, page=page)
+    markup = kb.as_markup()
+    return [b.callback_data for row in markup.inline_keyboard for b in row]
+
+
+def test_build_note_view_kb_actions_and_back_when_no_discussion():
+    data = _action_data(4242)
+    assert "notes_discuss:0" in data
+    assert "notes_storm:0" in data
+    assert "notes_save:0" in data
+    assert "notes_back:0" in data, "кнопка «← К списку» всегда есть"
+    assert not any(d.startswith("notes_stop:") for d in data), \
+        "⏹ видна только при активном обсуждении"
+    assert not any(d.startswith("notes_page:") for d in data), \
+        "на одной странице стрелок нет"
+
+
+def test_build_note_view_kb_arrows_on_first_page():
+    data = _action_data(4242, total=3, page=0)
+    assert "notes_page:0:1" in data, "▶️ на следующую страницу"
+    assert "notes_page:0:0" in data, "индикатор страницы"
+    assert not any(d == "notes_page:0:-1" for d in data), "на 1-й нет ◀️"
+
+
+def test_build_note_view_kb_arrows_on_middle_page():
+    data = _action_data(4242, total=3, page=1)
+    assert "notes_page:0:0" in data, "◀️ на предыдущую страницу"
+    assert "notes_page:0:2" in data, "▶️ на следующую страницу"
+    assert "notes_page:0:1" in data, "индикатор текущей страницы"
+
+
+def test_build_note_view_kb_arrows_on_last_page():
+    data = _action_data(4242, total=3, page=2)
+    assert "notes_page:0:1" in data, "◀️ на предыдущую страницу"
+    assert "notes_page:0:2" in data, "индикатор страницы"
+    assert not any(d == "notes_page:0:3" for d in data), "на последней нет ▶️"
+
+
+def test_build_note_view_kb_indicator_uses_given_idx():
+    data = _action_data(4242, idx=3, total=2, page=1)
+    assert "notes_page:3:0" in data
+    assert "notes_page:3:1" in data
+    assert "notes_back:3" in data
+
+
+def test_build_note_view_kb_stop_shown_while_discussing():
+    na._notes_discuss_ctx[4242] = {"note_id": "A", "name": "X", "folder": ""}
+    data = _action_data(4242, idx=3)
+    assert "notes_stop:3" in data
+
+
+def test_chunk_text_empty_and_short():
+    assert na._chunk_text("") == []
+    assert na._chunk_text("короткая заметка") == ["короткая заметка"]
+
+
+def test_chunk_text_exact_limit_and_plus_one():
+    assert len(na._chunk_text("а" * na.NOTE_PAGE_SIZE)) == 1
+    assert len(na._chunk_text("а" * (na.NOTE_PAGE_SIZE + 1))) == 2
+
+
+def test_chunk_text_long_line_hard_split_without_loss():
+    text = "б" * 3200
+    chunks = na._chunk_text(text)
+    assert len(chunks) == 3
+    assert sum(len(c) for c in chunks) == 3200, "текст не теряется"
+    assert all(len(c) <= na.NOTE_PAGE_SIZE for c in chunks)
+
+
+def test_chunk_text_prefers_newline_boundaries():
+    text = "\n".join(["строка" * 20] * 30)  # 30 строк по 100 символов
+    chunks = na._chunk_text(text)
+    assert len(chunks) == 3, "страницы режутся по границам строк"
+    assert all(len(c) <= na.NOTE_PAGE_SIZE for c in chunks)
+    assert all("\n" in c for c in chunks), "граница страницы — перенос строки"
+
+
+def test_chunk_text_reconstructs_original_text():
+    text = "первая строка\nвторая строка длинная " + "x" * 3000 + "\nхвост"
+    chunks = na._chunk_text(text)
+    assert "".join(chunks) == text, "склейка страниц даёт исходный текст"
+    assert all(len(c) <= na.NOTE_PAGE_SIZE for c in chunks)
+
+
+async def test_cb_notes_page_happy(monkeypatch):
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Длинная", "folder": "Notes"}], "text": "",
+    }
+    na._notes_view_store[4242] = {
+        "idx": 0, "name": "Длинная", "folder": "Notes",
+        "pages": ["страница один", "страница два"], "page": 0,
+    }
+    cb = FakeCbLite(4242, "notes_page:0:1")
+    await na.cb_notes_page(cb)
+    assert "Страница 2/2" in cb.message.edits[-1]
+    assert "страница два" in cb.message.edits[-1]
+    assert na._notes_view_store.get(4242)["page"] == 1
+
+
+async def test_cb_notes_page_on_indicator_keeps_page():
+    na._notes_view_store[4242] = {
+        "idx": 1, "name": "X", "folder": "",
+        "pages": ["a", "b", "c"], "page": 1,
+    }
+    cb = FakeCbLite(4242, "notes_page:1:1")
+    await na.cb_notes_page(cb)
+    assert "Страница 2/3" in cb.message.edits[-1]
+    assert na._notes_view_store.get(4242)["page"] == 1
+
+
+async def test_cb_notes_page_stale_session():
+    cb = FakeCbLite(4242, "notes_page:0:1")
+    await na.cb_notes_page(cb)
+    assert "Сессия заметки истекла" in cb.message.edits[-1]
+
+
+async def test_cb_notes_page_idx_mismatch_is_stale():
+    na._notes_view_store[4242] = {
+        "idx": 1, "name": "X", "folder": "",
+        "pages": ["a", "b"], "page": 0,
+    }
+    cb = FakeCbLite(4242, "notes_page:0:1")
+    await na.cb_notes_page(cb)
+    assert "Сессия заметки истекла" in cb.message.edits[-1]
+
+
+async def test_cb_notes_page_out_of_range_is_stale():
+    na._notes_view_store[4242] = {
+        "idx": 0, "name": "X", "folder": "",
+        "pages": ["a", "b"], "page": 0,
+    }
+    cb = FakeCbLite(4242, "notes_page:0:9")
+    await na.cb_notes_page(cb)
+    assert "Сессия заметки истекла" in cb.message.edits[-1]
+
+
+async def test_cb_notes_page_bad_format():
+    for data in ("notes_page:abc", "notes_page:0", "notes_page:0:1:2"):
+        cb = FakeCbLite(4242, data)
+        await na.cb_notes_page(cb)
+        assert "Неверный запрос" in cb.message.edits[-1], data
+
+
+async def test_cb_notes_page_missing_data():
+    cb = FakeCbLite(4242, None)
+    await na.cb_notes_page(cb)
+    assert not cb.message.edits
+
+
+async def test_cb_notes_back_restores_list(monkeypatch):
+    from handlers.palace import action_bar
+
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Идеи"}, {"id": "BBB", "name": "Покупки"}],
+        "text": "вот что нашёл",
+    }
+    na._notes_view_store[4242] = {
+        "idx": 0, "name": "Идеи", "folder": "",
+        "pages": ["a"], "page": 0,
+    }
+    na._notes_discuss_ctx[4242] = {"note_id": "AAA", "name": "Идеи", "folder": ""}
+    captured = {}
+
+    async def fake_finalize(uid, edit, answer, ctx=None, title="", extra_rows=None):
+        captured["answer"] = answer
+        captured["rows"] = extra_rows
+
+    monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
+
+    cb = FakeCbLite(4242, "notes_back:0")
+    await na.cb_notes_back(cb)
+    assert captured["answer"] == "вот что нашёл"
+    cbs = [b.callback_data for row in captured["rows"] for b in row]
+    assert "notes_view:0" in cbs and "notes_view:1" in cbs, cbs
+    assert "notes_stop:0" in cbs, "⏹ остаётся доступным при активном обсуждении"
+    assert 4242 not in na._notes_view_store, "состояние листания очищено"
+    assert na._current_discuss(4242) is not None, "обсуждение не сбрасывается"
+
+
+async def test_cb_notes_back_stale_list():
+    cb = FakeCbLite(4242, "notes_back:0")
+    await na.cb_notes_back(cb)
+    assert "устарел" in cb.message.edits[-1]
+
+
+async def test_cb_notes_page_not_allowed():
+    na._notes_view_store[777] = {
+        "idx": 0, "name": "X", "folder": "",
+        "pages": ["a"], "page": 0,
+    }
+    cb = FakeCbLite(777, "notes_page:0:0")
+    await na.cb_notes_page(cb)
+    assert not cb.message.edits, "неавторизованный пользователь ничего не получает"
+
+
+async def test_cb_notes_back_not_allowed():
+    na._notes_list_store[777] = {"items": [{"id": "A", "name": "x"}], "text": ""}
+    cb = FakeCbLite(777, "notes_back:0")
+    await na.cb_notes_back(cb)
+    assert not cb.message.edits, "неавторизованный пользователь ничего не получает"
+
+
+async def test_cb_notes_discuss_happy(monkeypatch):
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Идеи", "folder": "Notes"}], "text": "",
+    }
+    cb = FakeCbLite(4242, "notes_discuss:0")
+    await na.cb_notes_discuss(cb)
+    assert na._current_discuss(4242) == {
+        "note_id": "AAA", "name": "Идеи", "folder": "Notes",
+    }
+    assert na.is_waiting_for_notes_input(4242)
+    joined = "\n".join(cb.message.edits)
+    assert "Обсуждение включено" in joined
+    assert "Notes" in joined
+
+
+async def test_cb_notes_discuss_stale_list():
+    cb = FakeCbLite(4242, "notes_discuss:0")
+    await na.cb_notes_discuss(cb)
+    assert "устарел" in cb.message.edits[-1]
+    assert na._current_discuss(4242) is None
+
+
+async def test_cb_notes_discuss_bad_index():
+    cb = FakeCbLite(4242, "notes_discuss:abc")
+    await na.cb_notes_discuss(cb)
+    assert "Неверный запрос" in cb.message.edits[-1]
+
+
+async def test_cb_notes_storm_happy(monkeypatch):
+    from services import brainstorm as bs
+    from services import ai_engine
+
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Ночные сны", "folder": ""}], "text": "",
+    }
+
+    def fake_read(note_id):
+        return {"name": "Ночные сны", "body": "парящие дома"}
+
+    monkeypatch.setattr("services.apple_notes.read_note", fake_read)
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
+    monkeypatch.setattr(bs, "collect_context", lambda *a, **k: _fake_coro({}))
+
+    async def fake_response(engine, model, msgs, **kwargs):
+        return ('{"ideas": [{"title": "Т", "camera_setup": "Имитация плёнки ACROS, тени -2", '
+                '"reason": "р", "steps": "s"}]}')
+
+    monkeypatch.setattr(ai_engine, "get_ai_response_async", fake_response)
+
+    cb = FakeCbLite(4242, "notes_storm:0")
+    await na.cb_notes_storm(cb)
+    joined = "\n".join(cb.message.edits)
+    assert "Сюрреалистичный штурм" in joined
+    assert "ACROS" in joined
+
+
+async def test_cb_notes_storm_injects_note_text_as_context(monkeypatch):
+    from services import brainstorm as bs
+    from services import ai_engine
+
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Фудзи", "folder": ""}], "text": "",
+    }
+    captured = {}
+
+    def fake_read(note_id):
+        return {"name": "Фудзи", "body": "вид на гору в тумане"}
+
+    monkeypatch.setattr("services.apple_notes.read_note", fake_read)
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
+    monkeypatch.setattr(bs, "collect_context", lambda *a, **k: _fake_coro({}))
+
+    async def fake_response(engine, model, msgs, **kwargs):
+        captured["msgs"] = msgs
+        return ('{"ideas": [{"title": "Т", "camera_setup": "Имитация плёнки ACROS, тени -2", '
+                '"reason": "р", "steps": "s"}]}')
+
+    monkeypatch.setattr(ai_engine, "get_ai_response_async", fake_response)
+
+    cb = FakeCbLite(4242, "notes_storm:0")
+    await na.cb_notes_storm(cb)
+    assert any("вид на гору в тумане" in str(m) for m in captured.get("msgs", [])), \
+        "текст заметки попадает в контекст штурма"
+
+
+async def test_cb_notes_storm_empty_body(monkeypatch):
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Пустая", "folder": ""}], "text": "",
+    }
+
+    def fake_read(note_id):
+        return {"name": "Пустая", "body": ""}
+
+    monkeypatch.setattr("services.apple_notes.read_note", fake_read)
+
+    cb = FakeCbLite(4242, "notes_storm:0")
+    await na.cb_notes_storm(cb)
+    assert "Текст заметки недоступен" in cb.message.edits[-1]
+
+
+async def test_cb_notes_storm_read_failure(monkeypatch):
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Сломана", "folder": ""}], "text": "",
+    }
+
+    def boom(note_id):
+        raise RuntimeError("osascript down")
+
+    monkeypatch.setattr("services.apple_notes.read_note", boom)
+
+    cb = FakeCbLite(4242, "notes_storm:0")
+    await na.cb_notes_storm(cb)
+    assert "Текст заметки недоступен" in cb.message.edits[-1]
+
+
+async def test_cb_notes_storm_stale_list():
+    cb = FakeCbLite(4242, "notes_storm:0")
+    await na.cb_notes_storm(cb)
+    assert "устарел" in cb.message.edits[-1]
+
+
+async def test_cb_notes_save_happy(monkeypatch):
+    from handlers.palace import _save_state
+
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Идея", "folder": ""}], "text": "",
+    }
+
+    def fake_read(note_id):
+        return {"name": "Идея", "body": "снять на плёнку"}
+
+    monkeypatch.setattr("services.apple_notes.read_note", fake_read)
+
+    async def fake_save_wings(edit_func, uid):
+        await edit_func("выбери крыло", parse_mode="HTML")
+
+    monkeypatch.setattr("handlers.palace._show_save_wings", fake_save_wings)
+
+    cb = FakeCbLite(4242, "notes_save:0")
+    await na.cb_notes_save(cb)
+    state = _save_state.get(4242)
+    assert state is not None, "сохранение из заметки заполняет _save_state"
+    assert "снять на плёнку" in state["text"]
+    assert "Идея" in state["text"]
+    assert state["mode"] == "full"
+    _save_state.pop(4242, None)
+
+
+async def test_cb_notes_save_empty_body(monkeypatch):
+    from handlers.palace import _save_state
+
+    na._notes_list_store[4242] = {
+        "items": [{"id": "AAA", "name": "Пусто", "folder": ""}], "text": "",
+    }
+
+    def fake_read(note_id):
+        return {"name": "Пусто", "body": "   "}
+
+    monkeypatch.setattr("services.apple_notes.read_note", fake_read)
+
+    cb = FakeCbLite(4242, "notes_save:0")
+    await na.cb_notes_save(cb)
+    assert "Текст заметки недоступен" in cb.message.edits[-1]
+    assert 4242 not in _save_state
+
+
+async def test_cb_notes_save_stale_list():
+    from handlers.palace import _save_state
+
+    cb = FakeCbLite(4242, "notes_save:0")
+    await na.cb_notes_save(cb)
+    assert "устарел" in cb.message.edits[-1]
+    assert 4242 not in _save_state
+
+
+async def test_cb_notes_actions_not_allowed(monkeypatch):
+    na._notes_list_store[777] = {"items": [{"id": "A", "name": "x"}], "text": ""}
+    na._notes_view_store[777] = {
+        "idx": 0, "name": "x", "folder": "",
+        "pages": ["a", "b"], "page": 0,
+    }
+    handlers = {
+        "notes_storm:0": na.cb_notes_storm,
+        "notes_discuss:0": na.cb_notes_discuss,
+        "notes_save:0": na.cb_notes_save,
+        "notes_stop:0": na.cb_notes_stop,
+        "notes_page:0:1": na.cb_notes_page,
+        "notes_back:0": na.cb_notes_back,
+    }
+    for data, handler in handlers.items():
+        cb = FakeCbLite(777, data)
+        await handler(cb)
+        assert not cb.message.edits, f"{data}: неавторизованный ничего не получает"

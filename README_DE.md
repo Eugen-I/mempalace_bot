@@ -83,7 +83,7 @@ MEMPALACE_DATA_DIR=/pfad/zu/ihrem/mempalace
 python3 main.py
 ```
 
-Erwartete Ausgabe: `🦾 MemPalace запущен.`  
+Erwartete Ausgabe: `🦾 MemPalace запущен.`
 Dann in Telegram den Bot öffnen und `/start` senden.
 
 ---
@@ -216,6 +216,23 @@ Reaktion auf eine Bot-Nachricht:
 - `💬 Zitat` — Fragment auswählen und speichern
 - `🗑️ Löschen` — mit Bestätigung, endgültig
 
+### 📝 Apple Notes — Notizen-Modus
+
+Der Button **„📝 Apple Notes"** im Hauptmenü startet den Notizen-Modus: Sie schreiben, was mit den Notizen zu tun ist — der Agent findet Notizen nach Titel, Ordner oder Text und zeigt sie als „📄 N"-Buttons.
+
+**Notiz ansehen** (eine Nachricht, Seite ≈1500 Zeichen):
+- ◀️/▶️ — lange Notizen seitenweise blättern (Anzeige „📍 N/M")
+- „← Zur Liste" — zurück zur Liste der gefundenen Notizen
+
+**Aktionen bei geöffneter Notiz** (unter dem Notiztext):
+- 💬 **Mit dem Agenten besprechen** — der Agent wartet auf Ihre Frage und antwortet zum Inhalt der Notiz (und auch zur ganzen Ordner); der Kontext bleibt erhalten, bis „⏹ Diskussion beenden" gedrückt wird
+- 💡 **Brainstorm** — surreale Fotoideen mit genauen Fujifilm-X-T4-Einstellungen (Film-Emulation, Tonwertkurve, Clarity): Thema aus dem Notiztitel, Notiztext fließt in den Kontext
+- 💾 **In den Palast** — Notiztext im Wissenspalast speichern (Flügel/Raum wählen)
+
+**💡 Surreales Brainstorm:** „💡 Творческий штурм: <Thema>" im Notizen-Modus erzeugt surreale Fotoideen mit Fujifilm-X-T4-Einstellungen.
+
+**Schreiben in Notizen:** der Agent kann Notizen erstellen, ergänzen, löschen (in „Zuletzt gelöscht") und zwischen Ordnern verschieben — nur nach Ihrer Bestätigung.
+
 ### 📸 Fotos
 
 - Auto-Speicherung gesendeter Fotos in `photos/`
@@ -282,6 +299,18 @@ Reaktion auf Bot-Nachricht:
 - `/search anfrage` — Globale Suche in MemPalace
 - `/search --wing dreams anfrage` — Suche in bestimmtem Flügel
 - `📖 Einträge lesen` — Volltext der gefundenen Ergebnisse anzeigen
+- `🗂️ Dateien` — Suche in deinen txt/md-Dateien (CLI: `/files search <anfrage>`)
+
+### 🗂️ Datei-Index
+
+Ein separater Volltext-Index über deine Dateien (txt/md — Notizen, Apple-Notes-Exporte, Dokumente):
+
+- **Chunking** — Dateien werden in Fragmente à 800 Zeichen (Überlappung 80) zerlegt und in einer eigenen SQLite-Datenbank mit FTS5 gespeichert
+- **BM25-Suche** — rankierte Volltextsuche mit Kontextausschnitt; bei ungültiger Abfrage automatischer LIKE-Fallback
+- **Hybride Suche** — semantische Embeddings bge-m3 (via Ollama) + Volltext; ist das Modell nicht verfügbar, funktioniert die Suche rein textbasiert weiter
+- **Ohne Duplikate** — erneute Indizierung erzeugt keine Duplikate (Erkennung per sha256)
+- **Auto-Indizierung** — läuft bei der Notiz-Anreicherung (`/enrich` in der CLI)
+- **Befehle**: `/files search`, `/files stats`, `/files index`, `/files del`, `/files embeddings`
 
 ### 💻 CLI-Schnittstelle
 
@@ -300,6 +329,15 @@ Vollwertiger Terminal-Client mit Syntax-Highlighting, Verlauf und allen Palast-/
 | `/wakeup` | Palast in aktiven Kontext laden |
 | `/repair` | Vektorindex neu aufbauen |
 | `/compress` | Speicher komprimieren |
+
+**Datei-Index-Befehle (CLI):**
+| Befehl | Aktion |
+|--------|--------|
+| `/files index [verzeichnis]` | txt/md-Dateien indizieren (Standard: Notizordner) |
+| `/files search <anfrage>` | Suche in Dateien (BM25, mit Kontextausschnitt) |
+| `/files stats` | Index-Statistik (Dateien, Chunks, Embeddings) |
+| `/files del <file_id>` | Datei aus dem Index entfernen |
+| `/files embeddings` | Semantische Embeddings erstellen (bge-m3) |
 
 ---
 
