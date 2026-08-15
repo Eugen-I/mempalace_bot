@@ -167,6 +167,23 @@ def when_guide_requested_twice(context):
     context.second = bs._load_fuji_guide()
 
 
+@when("модель возвращает идеи с полем description (место, предметы, образ)")
+def when_model_returns_ideas_with_description(context):
+    raw = json.dumps({
+        "ideas": [
+            {
+                "title": "Сонный вокзал",
+                "description": "Пустой вокзал в 3 часа ночи, чемоданы без "
+                               "владельцев, стрелки часов назад.",
+                "reason": "время замерло",
+                "camera_setup": "ACROS, тени -2",
+                "steps": "снять длинной выдержкой",
+            }
+        ],
+    }, ensure_ascii=False)
+    context.ideas = bs.parse_ideas(raw, require_camera_setup=True)
+
+
 # ─── Then ───
 
 @then('пользователь видит карточки "💡 Идея" с заголовком "Сюрреалистичный штурм"')
@@ -202,6 +219,35 @@ def then_no_valid_ideas_error(context):
 def then_prompt_requires_diverse_techniques(context):
     assert "МИНИМУМ три разных" in context.prompt
     assert "не должна быть единственным" in context.prompt
+
+
+@then("промпт запрещает настраиваемые параметры для приёма «Расширенный фильтр»")
+def then_prompt_blocks_settings_for_advanced_filter(context):
+    assert "Расширенный фильтр" in context.prompt
+    assert "Advanced Filter" in context.prompt
+    assert "Toy Camera" in context.prompt and "Pop Color" in context.prompt
+    assert "ADV" in context.prompt
+    assert "НАСТРОЙКА ПРИВОДА" in context.prompt
+    assert "ДОП. НАСТРОЙКА ФИЛЬТРА" in context.prompt
+    for blocked in ("имитацию плёнки", "Тоновую кривую", "Баланс белого"):
+        assert blocked in context.prompt
+    assert "полный набор параметров" in context.prompt
+
+
+@then("промпт требует описание образа (место, предметы) с критериями приёмки")
+def then_prompt_requires_description_and_criteria(context):
+    assert "description" in context.prompt
+    assert "место" in context.prompt and "предметы" in context.prompt
+    assert "пошаговый план" in context.prompt
+    assert "Критерии приёмки" in context.prompt
+
+
+@then('пользователь видит блок "🎨 Образ" с местом и предметами')
+def then_see_description_block(context):
+    text = bs.format_surreal_ideas_text("ночные сны", context.ideas)
+    assert "🎨" in text and "<b>Образ:</b>" in text
+    assert "вокзал в 3 часа ночи" in text
+    assert "чемоданы без владельцев" in text
 
 
 @then("для сюрреалистичного штурма заданы креативные параметры выборки")

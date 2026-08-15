@@ -449,3 +449,102 @@ async def test_assistant_and_tool_messages_protocol(fake_model):
     assert tool["role"] == "tool"
     assert tool["tool_call_id"] == "call_xyz"
     assert "20" in tool["content"]
+
+
+# ─── Вызов инструмента, написанный текстом (content вместо tool_calls) ───
+
+
+async def test_text_embedded_tool_call_is_executed(fake_model, cleanup):
+    """qwen иногда пишет «søker {"name": ..., "arguments": ...}» в content —
+    такой вызов должен выполняться, а не показываться пользователю сырым."""
+    _register_test_tool()
+    fake_model.script.append(
+        _content('søker {"name": "test_tool", "arguments": {"value": "abc"}}'),
+    )
+    fake_model.script.append(_content("Готово"))
+
+    result = await ae.run_agent("sys", "user", engine="qwen", model="m")
+    assert result.final_answer == "Готово"
+    assert len(result.steps) == 1
+    assert result.steps[0].calls[0]["name"] == "test_tool"
+    assert result.steps[0].results[0]["ok"] is True
+    assert result.steps[0].results[0]["output"] == "got:abc"
+
+
+async def test_text_embedded_tool_call_string_arguments(fake_model, cleanup):
+    """arguments строкой (JSON внутри) — проходит тот же путь, что и обычный вызов."""
+    _register_test_tool()
+    fake_model.script.append(
+        _content('{"name": "test_tool", "arguments": "{\\"value\\": \\"x\\"}"}'),
+    )
+    fake_model.script.append(_content("Готово"))
+
+    result = await ae.run_agent("sys", "user", engine="qwen", model="m")
+    assert result.steps[0].results[0]["ok"] is True
+    assert result.steps[0].results[0]["output"] == "got:x"
+    assert result.final_answer == "Готово"
+
+
+async def test_text_embedded_unknown_tool_is_plain_answer(fake_model, cleanup):
+    """Неизвестный инструмент в JSON текста — обычный ответ, без выполнения."""
+    _register_test_tool()
+    text = 'хочу так: {"name": "no_such_tool", "arguments": {}}'
+    fake_model.script.append(_content(text))
+
+    result = await ae.run_agent("sys", "user", engine="qwen", model="m")
+    assert result.finished_reason == "answer"
+    assert result.steps == []
+    assert result.final_answer == text
+
+
+async def test_text_embedded_not_a_tool_call_is_plain_answer(fake_model, cleanup):
+    """JSON без name/arguments (или с аргументами не того типа) — не вызов."""
+    _register_test_tool()
+    cases = [
+        '{"result": "ok"}',
+        '{"name": "test_tool", "arguments": 42}',
+        '{"name": 7, "arguments": {}}',
+        "просто текст без json",
+        "[]",
+    ]
+    for text in cases:
+        fake_model.script.append(_content(text))
+        result = await ae.run_agent("sys", "user", engine="qwen", model="m")
+        assert result.finished_reason == "answer"
+        assert result.steps == [], text
+        assert result.final_answer == text
+        assert fake_model.script == []
+
+
+# ─── _extract_tool_call_from_content: BVA ───
+
+
+def test_extract_tool_call_from_content_happy(fake_model):
+    _register_test_tool()
+    tool_map = {"test_tool": object()}
+    call = ae._extract_tool_call_from_content(
+        'søker {"name": "test_tool", "arguments": {"value": "abc"}}', tool_map,
+    )
+    assert call["name"] == "test_tool"
+    assert call["arguments"] == {"value": "abc"}
+    assert call["id"] == "call_text"
+
+
+def test_extract_tool_call_from_content_bva(fake_model):
+    _register_test_tool()
+    tool_map = {"test_tool": object()}
+    assert ae._extract_tool_call_from_content("", tool_map) is None
+    assert ae._extract_tool_call_from_content(None, tool_map) is None
+    assert ae._extract_tool_call_from_content("   ", tool_map) is None
+    assert ae._extract_tool_call_from_content(
+        '{"name": "nope", "arguments": {}}', tool_map,
+    ) is None
+    assert ae._extract_tool_call_from_content(
+        '{"name": "test_tool"}', tool_map,
+    ) is None
+    assert ae._extract_tool_call_from_content(
+        '{"arguments": {}}', tool_map,
+    ) is None
+    assert ae._extract_tool_call_from_content(
+        '{"name": "test_tool", "arguments": "{\\"value\\": \\"x\\"}"}', tool_map,
+    )["arguments"] == '{"value": "x"}'

@@ -16,10 +16,11 @@ import re
 import secrets
 
 from aiogram import F, Router, types
+from aiogram.types import InaccessibleMessage
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import allowed_callback
-from handlers.palace._utils import safe_edit_text
+from handlers.palace._utils import safe_answer_returning_message, safe_edit_text
 from services import agent_engine as ae
 from services.agent_tools import CAT_NOTES
 from services.text_formatter import safe_html_format
@@ -69,6 +70,7 @@ _notes_view_store: TtlDict = TtlDict(ttl=900)
 _NOTE_ROW_RE = re.compile(
     r"^-\s*(.*?)\s*\[id=([^\]]+)\](?:\s*\(папка:\s*([^)]*)\))?"
 )
+_ID_MARKER_RE = re.compile(r"\s*\[id=[^\]]+\]")
 MAX_LIST_OPEN_BUTTONS = 10
 NOTE_PAGE_SIZE = 1500  # символов в одной странице просмотра заметки (1500 ± 200)
 
@@ -100,6 +102,17 @@ def _collect_notes_from_result(result) -> list[dict]:
                     "folder": (m.group(3) or "").strip(),
                 })
     return notes
+
+
+def _clean_notes_text(text: str) -> str:
+    """Убирает технические маркеры [id=...] из ответа, показываемого пользователю.
+
+    ID нужны агенту внутри цикла (инструменты возвращают «- Название [id=...]»),
+    но в тексте для пользователя они не нужны — открытие идёт кнопками «📄 N».
+    """
+    if not text:
+        return text
+    return _ID_MARKER_RE.sub("", text)
 
 
 def _notes_list_key(uid: int) -> dict | None:
@@ -362,16 +375,18 @@ async def _run_notes_agent_reply(uid: int, status_msg, question: str):
 
     notes = _collect_notes_from_result(result)
     if notes:
-        _notes_list_store[uid] = {"items": notes, "text": result.final_answer}
+        display_text = _clean_notes_text(result.final_answer)
+        _notes_list_store[uid] = {"items": notes, "text": display_text}
         extra_rows = _build_open_rows(uid)
     else:
         _notes_list_store.pop(uid, None)
+        display_text = result.final_answer
         extra_rows = None
 
     await finalize_answer(
         uid,
         status_msg.edit_text,
-        result.final_answer,
+        display_text,
         ctx={},
         title="<b>📝 Apple Notes</b>",
         extra_rows=extra_rows,
@@ -435,7 +450,19 @@ async def run_surreal_storm(
         sampling = bs.storm_sampling_params("surreal")
         raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
 
-        ideas = bs.parse_ideas(raw, require_camera_setup=True, require_camera_keywords=True)
+        try:
+            ideas = bs.parse_ideas(
+                raw, require_camera_setup=True, require_camera_keywords=True,
+            )
+        except ValueError:
+            logger.warning(
+                "[SURREAL] первый ответ не прошёл парсинг, повторяем: %r", raw[:300],
+            )
+            await _status_edit(status_msg, "💭 Ответ не подошёл, пробую ещё раз…")
+            raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
+            ideas = bs.parse_ideas(
+                raw, require_camera_setup=True, require_camera_keywords=True,
+            )
     except Exception as exc:  # noqa: BLE001 — показываем пользователю текст ошибки
         logger.error("[SURREAL] run failed: %s", exc, exc_info=True)
         await _status_edit(status_msg, f"❌ Ошибка штурма: {exc}")
@@ -655,8 +682,19 @@ async def cb_notes_storm(cb: types.CallbackQuery):
         "notes": f"- {note.get('name', '?')}: {body}",
         "guide": bs._load_fuji_guide(),
     }
-    await safe_edit_text(cb.message, "💭 Запускаю сюрреалистичный штурм…")
-    await run_surreal_storm(cb.from_user.id, cb.message, topic, context=context)
+    # Заметка остаётся на месте: штурм уходит в отдельное сообщение,
+    # чтобы пользователь не потерял текст открытой заметки.
+    storm_msg = await safe_answer_returning_message(
+        cb.message, "💭 Запускаю сюрреалистичный штурм…",
+    )
+    if storm_msg is None:
+        await safe_edit_text(cb.message, "💭 Запускаю сюрреалистичный штурм…")
+        if isinstance(cb.message, InaccessibleMessage):
+            return
+        storm_msg = cb.message
+    if storm_msg is None:
+        return
+    await run_surreal_storm(cb.from_user.id, storm_msg, topic, context=context)
 
 
 @router.callback_query(F.data.startswith("notes_page:"))
@@ -790,8 +828,18 @@ async def cb_notes_save(cb: types.CallbackQuery):
         "wings": [],
         "rooms": [],
     }
-    await safe_edit_text(cb.message, "⏳ Загружаю крылья…")
-    await _show_save_wings(cb.message.edit_text, cb.from_user.id)
+    # Заметка остаётся на месте: выбор крыла/комнаты идёт в новом сообщении.
+    wings_msg = await safe_answer_returning_message(
+        cb.message, "⏳ Загружаю крылья…",
+    )
+    if wings_msg is None:
+        await safe_edit_text(cb.message, "⏳ Загружаю крылья…")
+        if isinstance(cb.message, InaccessibleMessage):
+            return
+        wings_msg = cb.message
+    if wings_msg is None:
+        return
+    await _show_save_wings(wings_msg.edit_text, cb.from_user.id)
 
 
 @router.callback_query(F.data.startswith("notes_stop:"))

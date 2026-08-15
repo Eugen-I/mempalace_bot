@@ -29,9 +29,13 @@ class FakeMessage:
         self.answers = []
         self.edits = []
         self.reply_markup = None
+        self.last_answer = None
 
     async def answer(self, text, parse_mode=None, reply_markup=None):
         self.answers.append(text)
+        sent = FakeMessage()
+        self.last_answer = sent
+        return sent
 
     async def edit_text(self, text, parse_mode=None, reply_markup=None):
         self.edits.append(text)
@@ -191,6 +195,7 @@ def step_discussion_enabled(context, note_id):
 def step_click_button(context, data):
     context.last_cb = FakeCb(data)
     if data.startswith("notes_view:"):
+        context.last_note_message = context.last_cb.message
         _run(na.cb_notes_view(context.last_cb))
     elif data.startswith("notes_discuss:"):
         _run(na.cb_notes_discuss(context.last_cb))
@@ -257,6 +262,43 @@ def step_send_question(context, question):
     try:
         status = FakeMessage()
         _run(na.run_notes_agent(TEST_UID, status, question))
+    finally:
+        na.ae.run_agent = orig_run_agent
+        action_bar.finalize_answer = orig_finalize
+
+
+@when("the notes agent finalizes the list answer with ids")
+def step_finalize_list_with_ids(context):
+    from types import SimpleNamespace
+
+    from handlers.palace import action_bar
+
+    rows = (
+        "- Идеи для фото [id=AAA] (папка: Notes)\n"
+        "- Покупки [id=BBB] (папка: Дом)"
+    )
+    step = SimpleNamespace(
+        calls=[{"id": "c1", "name": "notes_search", "arguments": "{}"}],
+        results=[{"name": "notes_search", "ok": True, "output": rows}],
+    )
+    result = na.ae.AgentResult(
+        final_answer=f"Нашёл заметки:\n{rows}", finished_reason="done", steps=[step],
+    )
+
+    async def fake_run_agent(*args, **kwargs):
+        return result
+
+    async def fake_finalize(uid, edit_func, text, **kwargs):
+        context.list_answer = text
+        context.list_rows = kwargs.get("extra_rows")
+
+    orig_run_agent = na.ae.run_agent
+    orig_finalize = action_bar.finalize_answer
+    na.ae.run_agent = fake_run_agent
+    action_bar.finalize_answer = fake_finalize
+    try:
+        status = FakeMessage()
+        _run(na._run_notes_agent_reply(TEST_UID, status, "найди заметки"))
     finally:
         na.ae.run_agent = orig_run_agent
         action_bar.finalize_answer = orig_finalize
@@ -341,8 +383,37 @@ def step_back_to_list(context, first, second):
     _restore_read(context)
 
 
+@then("the shown notes list has no ids and only button rows")
+def step_list_has_no_ids(context):
+    answer = getattr(context, "list_answer", None)
+    assert answer is not None, "финальный список не отрисован"
+    assert "id=" not in answer and "[id=" not in answer, answer
+    assert "- Идеи для фото (папка: Notes)" in answer, answer
+    assert "- Покупки (папка: Дом)" in answer, answer
+    rows = context.list_rows or []
+    cbs = [b.callback_data for row in rows for b in row]
+    assert "notes_view:0" in cbs and "notes_view:1" in cbs, cbs
+    _restore_read(context)
+
+
 @then('the storm prompt contains "{body}"')
 def step_storm_prompt_contains(context, body):
     assert getattr(context, "storm_prompt", None), "промпт штурма не перехвачен"
     assert body in context.storm_prompt, context.storm_prompt
+    _restore_read(context)
+
+
+@then('the storm arrives as a new message and the note "{name}" body is still shown')
+def step_storm_new_message_and_note_stays(context, name):
+    assert context.last_cb.message.answers, "штурм должен прийти новым сообщением"
+    storm_view = "\n".join(context.last_cb.message.last_answer.edits)
+    assert "Сюрреалистичный штурм" in storm_view, storm_view
+    note_msg = getattr(context, "last_note_message", None)
+    assert note_msg is not None, "заметка не была открыта"
+    note_view = "\n".join(note_msg.edits)
+    assert name in note_view, "заметка не должна заменяться штурмом"
+    assert "Сюрреалистичный штурм" not in note_view, \
+        "штурм не должен попадать в сообщение заметки"
+    assert note_msg.reply_markup is not None, \
+        "клавиатура заметки должна остаться на месте"
     _restore_read(context)

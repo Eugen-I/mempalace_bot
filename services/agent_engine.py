@@ -95,6 +95,31 @@ def _qwen_tool_call(model: str, messages: list[dict], tools: list[dict]) -> dict
     }
 
 
+def _extract_tool_call_from_content(content: str, tool_map: dict) -> dict | None:
+    """Извлекает «инструмент, написанный текстом» из ответа модели.
+
+    qwen2.5 иногда возвращает JSON вызова инструмента не в структурированном
+    tool_calls, а прямо в тексте content («søker {"name": "notes_search",
+    "arguments": {...}}») — такой ответ сейчас уходит пользователю сырым.
+    Извлекаем объект только если name — зарегистрированный инструмент и
+    arguments — dict/строка; иначе None (обычный текстовый ответ).
+    """
+    if not content:
+        return None
+    from services.json_parser import extract_json_from_text
+
+    obj = extract_json_from_text(content)
+    if not isinstance(obj, dict):
+        return None
+    name = obj.get("name")
+    arguments = obj.get("arguments")
+    if not isinstance(name, str) or name not in tool_map:
+        return None
+    if not isinstance(arguments, (dict, str)):
+        return None
+    return {"id": "call_text", "name": name, "arguments": arguments}
+
+
 async def run_agent(
     system_prompt: str,
     user_prompt: str,
@@ -172,20 +197,29 @@ async def run_agent(
         calls = resp.get("tool_calls") or []
         content = (resp.get("content") or "").strip()
         if not calls:
-            if content:
+            embedded = _extract_tool_call_from_content(content, tool_map)
+            if embedded is not None:
+                logger.info(
+                    "[AGENT] модель написала вызов инструмента текстом: %s",
+                    embedded["name"],
+                )
+                embedded["id"] = f"call_text_{i}"
+                calls = [embedded]
+            elif content:
                 return AgentResult(
                     final_answer=content,
                     steps=steps,
                     iterations=i,
                     finished_reason="answer",
                 )
-            return AgentResult(
-                final_answer="",
-                steps=steps,
-                iterations=i,
-                finished_reason="error",
-                error="Модель вернула пустой ответ.",
-            )
+            else:
+                return AgentResult(
+                    final_answer="",
+                    steps=steps,
+                    iterations=i,
+                    finished_reason="error",
+                    error="Модель вернула пустой ответ.",
+                )
 
         step = AgentStep(index=i)
         for tc in calls:

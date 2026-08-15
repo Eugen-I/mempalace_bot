@@ -12,6 +12,12 @@ Feature: Notes found list — open, discuss, storm and save a note
     And the action buttons include "notes_discuss:0"
     And discussion of note "AAA" is enabled
 
+  @notes @smoke @regression
+  Scenario: The list answer hides note ids — notes open via inline buttons
+    Given no notes list is cached
+    When the notes agent finalizes the list answer with ids
+    Then the shown notes list has no ids and only button rows
+
   @notes @negative
   Scenario: Notes list expired — user is asked to search again
     Given no notes list is cached
@@ -78,6 +84,14 @@ Feature: Notes found list — open, discuss, storm and save a note
     And note "CCC" body is "вид на гору в тумане"
     When I click the "notes_storm:0" button and the model answers
     Then the storm prompt contains "вид на гору в тумане"
+
+  @notes @smoke @regression
+  Scenario: Storm keeps the open note visible — it comes in a separate message
+    Given the notes agent found notes ["Фудзи [id=CCC]"]
+    And note "CCC" body is "вид на гору в тумане"
+    When I click the "notes_view:0" button
+    And I click the "notes_storm:0" button and the model answers
+    Then the storm arrives as a new message and the note "Фудзи" body is still shown
 
   @notes @edge
   Scenario: Stop button ends the discussion

@@ -135,6 +135,12 @@ def step_script_plain_text(context):
     context.script = [_text_reply("привет, я qwen2.5")]
 
 
+@given("the model writes the tool call as text '{text}' and then returns \"{answer}\"")
+def step_script_text_tool_call(context, text, answer):
+    """qwen иногда пишет JSON вызова инструмента прямо в content."""
+    context.script = [_text_reply(text), _text_reply(answer)]
+
+
 @given('the model script calls the unknown tool "no_such_tool"')
 def step_script_unknown_tool(context):
     context.script = [

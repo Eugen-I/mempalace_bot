@@ -7,6 +7,7 @@
 
 import asyncio
 import json
+import logging
 
 import pytest
 
@@ -69,6 +70,28 @@ def test_parse_ideas_not_json():
 def test_parse_ideas_missing_ideas_key():
     with pytest.raises(ValueError, match="нет массива ideas"):
         bs.parse_ideas('{"title": "не та структура"}')
+
+
+def test_parse_ideas_missing_ideas_key_logs_raw(caplog):
+    """Сбой «нет массива ideas» обязан логировать сырой ответ (диагностика)."""
+    raw = '{"title": "не та структура"}'
+    with caplog.at_level(logging.ERROR, logger="Brainstorm"):
+        with pytest.raises(ValueError, match="нет массива ideas"):
+            bs.parse_ideas(raw)
+    log_text = caplog.text
+    assert "нет массива ideas" in log_text
+    assert "не та структура" in log_text, "сырой ответ должен попасть в лог"
+
+
+def test_parse_ideas_not_json_logs_raw(caplog):
+    """Сбой «не является JSON» тоже обязан логировать фрагмент сырого ответа."""
+    raw = "просто текст без json"
+    with caplog.at_level(logging.ERROR, logger="Brainstorm"):
+        with pytest.raises(ValueError, match="не является JSON"):
+            bs.parse_ideas(raw)
+    log_text = caplog.text
+    assert "не является JSON" in log_text
+    assert "просто текст" in log_text, "фрагмент ответа должен попасть в лог"
 
 
 def test_parse_ideas_invalid_items_only():
@@ -318,6 +341,47 @@ def test_camera_setup_keywords_accept_new_prompt_vocabulary():
     assert not bs._camera_setup_has_parameters("black and white, dream")
 
 
+def test_camera_setup_keywords_accept_advanced_filter_names():
+    """camera_setup идеи «Расширенный фильтр» содержит только название
+    фильтра (без имитации плёнки и др. заблокированных параметров) —
+    такие настройки НЕ отбраковываются keywords-валидацией."""
+    assert bs._camera_setup_has_parameters("Приём съёмки: Расширенный фильтр")
+    assert bs._camera_setup_has_parameters("Toy Camera")
+    assert bs._camera_setup_has_parameters("Pop Color")
+    assert bs._camera_setup_has_parameters("High-Key, Dynamic Tone")
+    assert bs._camera_setup_has_parameters("Partial Color + цвет")
+
+
+def test_parse_ideas_description_passed_through():
+    """description (место, предметы, образ) прокидывается через parse_ideas."""
+    raw = ('{"ideas": [{"title": "Сонный вокзал", "description": "Пустой вокзал '
+           'в 3 часа ночи, чемоданы без владельцев, стрелки часов назад.", '
+           '"reason": "р", "camera_setup": {"Приём съёмки": "Расширенный фильтр", '
+           '"Фильтр": "Toy Camera"}, "steps": "Перевести диск в ADV и выбрать '
+           'Toy Camera в меню НАСТРОЙКА ПРИВОДА"}]}')
+    ideas = bs.parse_ideas(
+        raw, require_camera_setup=True, require_camera_keywords=True,
+    )
+    assert len(ideas) == 1
+    assert ideas[0]["description"] == (
+        "Пустой вокзал в 3 часа ночи, чемоданы без владельцев, стрелки часов "
+        "назад."
+    )
+
+
+def test_format_surreal_card_shows_description():
+    idea = {
+        "title": "Туманный сад",
+        "description": "Заброшенный сад, статуи с закрытыми лицами, туман.",
+        "reason": "р",
+        "camera_setup": "ACROS, тени -2",
+        "steps": "s",
+    }
+    text = bs.format_surreal_card(1, idea)
+    assert "🎨" in text and "<b>Образ:</b>" in text
+    assert "Заброшенный сад, статуи с закрытыми лицами, туман." in text
+
+
 def test_parse_ideas_keywords_accepts_monochrome_only_setup():
     """Идея в монохромном режиме без слова «имитация плёнки» — валидна."""
     ideas = bs.parse_ideas(
@@ -335,6 +399,42 @@ def test_surreal_prompt_includes_new_required_fields():
     assert "диафрагм" in p.lower() and "выдержк" in p.lower() and "iso" in p.lower()
     assert "монохромного режима" in p and "WC/MG" in p
     assert "Резкость" in p and "Мелкое/Крупное" in p
+
+
+def test_surreal_prompt_advanced_filter_rules():
+    """Приём «Расширенный фильтр»: запрет заблокированных параметров,
+    только название фильтра + включение через ADV."""
+    p = bs.SURREAL_STORM_SYSTEM_PROMPT
+    assert "Расширенный фильтр" in p
+    assert "Advanced Filter" in p
+    assert "Toy Camera" in p and "Miniature" in p and "Pop Color" in p
+    assert "High-Key" in p and "Low-Key" in p and "Dynamic Tone" in p
+    assert "Soft Focus" in p and "Partial Color" in p
+    assert "ADV" in p
+    assert "НАСТРОЙКА ПРИВОДА" in p and "ДОП. НАСТРОЙКА ФИЛЬТРА" in p
+    blocked = ("имитацию плёнки", "Резкость", "Тоновую кривую", "Баланс белого")
+    for frag in blocked:
+        assert frag in p
+    assert "полный набор параметров" in p and "имитацию плёнки" in p
+
+
+def test_surreal_prompt_description_and_acceptance_criteria():
+    """Идея обязана содержать описание образа (место, предметы) +
+    пошаговый план и критерии приёмки."""
+    p = bs.SURREAL_STORM_SYSTEM_PROMPT
+    assert "description" in p
+    assert "место" in p and "предметы" in p
+    assert "пошаговый план" in p
+    assert "Критерии приёмки" in p
+    for frag in ("1) место и обстановка сцены", "2) предметы и детали в кадре",
+                 "3) описание сюрреалистичного образа",
+                 "4) приём съёмки и полный camera_setup", "5) steps"):
+        assert frag in p
+    for frag in ("место, предметы и описание образа",
+                 "camera_setup соответствует приёму",
+                 "каждый параметр камеры усиливает",
+                 "steps реалистичны и конкретны"):
+        assert frag in p
 
 
 def test_parse_ideas_non_string_camera_setup_rejected():

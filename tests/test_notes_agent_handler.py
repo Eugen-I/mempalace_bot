@@ -42,10 +42,13 @@ class FakeMessageLite:
         self.answers = []
         self.edits = []
         self.edits_reply_markup = None
+        self.last_answer = None
 
     async def answer(self, text, parse_mode=None, reply_markup=None):
         self.answers.append(text)
-        return text
+        sent = FakeMessageLite(self.from_user.id)
+        self.last_answer = sent
+        return sent
 
     async def edit_text(self, text, parse_mode=None, reply_markup=None):
         self.edits.append(text)
@@ -533,6 +536,65 @@ async def test_run_surreal_storm_ai_error(monkeypatch):
     assert "Ошибка штурма" in status.edits[-1]
 
 
+async def test_run_surreal_storm_retries_malformed_json(monkeypatch):
+    """Первый ответ модели без массива ideas → ретрай → карточки показаны."""
+    from services import brainstorm as bs
+    from services import ai_engine
+
+    monkeypatch.setattr(
+        bs, "collect_context",
+        lambda topic, mode="standard", folder=None: _fake_coro({"notes": "", "guide": ""}),
+    )
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
+    calls = []
+
+    async def malformed_then_ok(engine, model, msgs, **kwargs):
+        calls.append(kwargs.get("sampling"))
+        if len(calls) == 1:
+            return '{"title": "не та структура"}'
+        camera = "Имитация плёнки ACROS, тени -2"
+        return ('{"ideas": [{"title": "Сон", "reason": "р", '
+                f'"camera_setup": "{camera}", "steps": "s"}}]}}')
+
+    monkeypatch.setattr(ai_engine, "get_ai_response_async", malformed_then_ok)
+
+    status = FakeStatus()
+    await na.run_surreal_storm(4242, status, "сны")
+    assert len(calls) == 2, "должен быть ровно один ретрай"
+    assert status.edits, "карточки должны быть показаны после ретрая"
+    joined = "\n".join(status.edits)
+    assert "🌪" in joined and "Сон" in joined
+    assert not any("Ошибка штурма" in e for e in status.edits), \
+        "после успешного ретрая ошибки быть не должно"
+    assert any("ещё раз" in e for e in status.edits), \
+        "статус должен сообщить о повторной попытке"
+
+
+async def test_run_surreal_storm_retry_fails_shows_error(monkeypatch):
+    """Сырой ответ без ideas, ретрай тоже без ideas → ошибка пользователю."""
+    from services import brainstorm as bs
+    from services import ai_engine
+
+    monkeypatch.setattr(
+        bs, "collect_context",
+        lambda topic, mode="standard", folder=None: _fake_coro({"notes": "", "guide": ""}),
+    )
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
+    calls = []
+
+    async def always_malformed(engine, model, msgs, **kwargs):
+        calls.append(1)
+        return '{"заголовок": "снова без ideas"}'
+
+    monkeypatch.setattr(ai_engine, "get_ai_response_async", always_malformed)
+
+    status = FakeStatus()
+    await na.run_surreal_storm(4242, status, "сны")
+    assert len(calls) == 2, "ровно один ретрай, не бесконечный"
+    assert "Ошибка штурма" in status.edits[-1]
+    assert "нет массива ideas" in status.edits[-1]
+
+
 async def test_run_surreal_storm_rejects_ideas_without_camera_setup(monkeypatch):
     from services import brainstorm as bs
     from services import ai_engine
@@ -708,6 +770,37 @@ def test_collect_notes_from_result_line_without_id_ignored():
     assert na._collect_notes_from_result(_note_steps("")) == []
 
 
+def test_clean_notes_text_strips_id_markers():
+    text = (
+        "Нашёл заметки:\n"
+        "- Идеи для фото [id=AAA] (папка: Notes)\n"
+        "- Покупки [id=BBB] (папка: Дом)"
+    )
+    assert na._clean_notes_text(text) == (
+        "Нашёл заметки:\n"
+        "- Идеи для фото (папка: Notes)\n"
+        "- Покупки (папка: Дом)"
+    )
+
+
+def test_clean_notes_text_no_markers_unchanged():
+    text = "Заметок не найдено.\nПопробуйте другой запрос."
+    assert na._clean_notes_text(text) == text
+
+
+def test_clean_notes_text_empty_and_none():
+    assert na._clean_notes_text("") == ""
+    assert na._clean_notes_text(None) is None
+
+
+def test_clean_notes_text_marker_without_preceding_space():
+    assert na._clean_notes_text("фото[id=X]") == "фото"
+
+
+def test_clean_notes_text_multiple_markers_in_line():
+    assert na._clean_notes_text("- A [id=1] и B [id=2]") == "- A и B"
+
+
 def test_notes_list_key_and_note_by_index():
     assert na._notes_list_key(1) is None
     na._notes_list_store[1] = {"items": [{"id": "A", "name": "X"}], "text": ""}
@@ -772,6 +865,7 @@ async def test_run_notes_agent_stores_notes_and_passes_rows(monkeypatch):
 
     async def fake_finalize(uid, edit, answer, ctx=None, title="", extra_rows=None):
         captured["rows"] = extra_rows
+        captured["answer"] = answer
 
     monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
     monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
@@ -782,6 +876,47 @@ async def test_run_notes_agent_stores_notes_and_passes_rows(monkeypatch):
     assert [b.callback_data for row in captured["rows"] for b in row] == ["notes_view:0"]
     assert na._notes_list_key(4242)["items"][0]["id"] == "AAA"
     assert "Ищу в заметках" in status.edits[-1]
+
+
+async def test_run_notes_agent_strips_ids_from_displayed_list(monkeypatch):
+    from handlers.palace import action_bar
+
+    captured = {}
+    raw_answer = (
+        "Нашёл заметки:\n"
+        f"{ROW_1}\n"
+        f"{ROW_2}"
+    )
+
+    async def fake_run_agent(*args, **kwargs):
+        from types import SimpleNamespace
+
+        step = SimpleNamespace(
+            calls=[{"id": "c1", "name": "notes_search", "arguments": "{}"}],
+            results=[{"name": "notes_search", "ok": True, "output": f"{ROW_1}\n{ROW_2}"}],
+        )
+        return na.ae.AgentResult(final_answer=raw_answer, steps=[step])
+
+    async def fake_finalize(uid, edit, answer, ctx=None, title="", extra_rows=None):
+        captured["answer"] = answer
+        captured["rows"] = extra_rows
+
+    monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
+    monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
+
+    status = FakeStatus()
+    await na._run_notes_agent_reply(4242, status, "найди про фудзи")
+    assert "[id=" not in captured["answer"], captured["answer"]
+    assert captured["answer"] == (
+        "Нашёл заметки:\n"
+        "- Идеи для фото (папка: Notes)\n"
+        "- Покупки (папка: Дом)"
+    )
+    assert captured["rows"], "кнопки открытия остаются в списке"
+    stored = na._notes_list_key(4242)
+    assert stored["text"] == captured["answer"], \
+        "«← К списку» показывает тот же текст без id"
+    assert "Идеи" in stored["text"] and "Покупки" in stored["text"]
 
 
 async def test_run_notes_agent_no_notes_clears_store(monkeypatch):
@@ -1283,7 +1418,9 @@ async def test_cb_notes_storm_happy(monkeypatch):
 
     cb = FakeCbLite(4242, "notes_storm:0")
     await na.cb_notes_storm(cb)
-    joined = "\n".join(cb.message.edits)
+    assert not cb.message.edits, "заметка НЕ заменяется штурмом"
+    assert cb.message.last_answer is not None, "штурм уходит в новое сообщение"
+    joined = "\n".join(cb.message.last_answer.edits)
     assert "Сюрреалистичный штурм" in joined
     assert "ACROS" in joined
 
@@ -1377,6 +1514,9 @@ async def test_cb_notes_save_happy(monkeypatch):
     assert "снять на плёнку" in state["text"]
     assert "Идея" in state["text"]
     assert state["mode"] == "full"
+    assert not cb.message.edits, "заметка НЕ заменяется мастером сохранения"
+    assert cb.message.last_answer is not None, \
+        "выбор крыла уходит в новое сообщение"
     _save_state.pop(4242, None)
 
 

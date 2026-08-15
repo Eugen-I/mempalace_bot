@@ -11,6 +11,10 @@ from services.prompts.focus_modules import (
 from services.prompts.mixing_rules import PROMPT_MIXING_RULES, get_smart_prompt
 from services.prompts.pdf_prompts import PDF_CHUNK_PROMPT, PDF_COMBINE_PROMPT
 from services.prompts.summary import get_summary_prompt
+from services.prompts.surreal_storm_prompts import (
+    STORM_SYSTEM_PROMPT,
+    SURREAL_STORM_SYSTEM_PROMPT,
+)
 
 __all__ = [
     "BASE_RULES",
@@ -26,4 +30,6 @@ __all__ = [
     "PDF_CHUNK_PROMPT",
     "PDF_COMBINE_PROMPT",
     "get_summary_prompt",
+    "STORM_SYSTEM_PROMPT",
+    "SURREAL_STORM_SYSTEM_PROMPT",
 ]
