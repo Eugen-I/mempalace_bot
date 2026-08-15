@@ -4,11 +4,20 @@
 
 ## Снимок состояния (обновлять каждую сессию)
 - Дата последнего обновления: 2026-08-15
-- Статус тестов: **3478 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
+- Статус тестов: **3507 passed**, общее покрытие 99%. Остаточные 99%/96% — структурно недостижимые guard'ы (задокументированы) и артефакт coverage на Python 3.14 (cli/utils.py:173, cli_ask.py:126->61, cli/commands.py 612->622, 613->612).
+- **chromadb auto-update**: `services/deps_guard.py` при старте бота сверяет версию chromadb с PyPI и ставит новую при наличии (закроет CVE-2026-45829 автоматически, когда выйдет фикс; пока <1.6.0 — warning в логе). Покрытие 100%, BDD `features/deps_guard.feature` 6/6.
 - Мутационное тестирование `services/file_index.py`: **742/757 killed, 14 survived + 1 timeout = 1.98%** (цель ≤10%). Прогон: `python3 -m mutmut run --max-children 1` (обязательно `--max-children 1` + чистка `mutants/services/*.meta` при изменении тестов).
 - Мутационное тестирование `services/camera_setup.py`: **330/330 killed, 0 survived = 0%** (цель ≤10%). Прогон: временно `source_paths=['services/camera_setup.py']` в pyproject.toml (после — вернуть!), `--max-children 4`.
 
 ## Сделано (Done)
+
+### Автообновление chromadb при старте бота (2026-08-15)
+- **Зачем**: CVE-2026-45829 (PYSEC-2026-311, критическая 9.3) — фикса ещё нет (issue chroma-core/chroma#6717 открыт, последняя затронутая 1.5.9). Векторы (REST-API pre-auth / отравленная конфигурация коллекции) в этой конфигурации недостижимы: mempalace использует `PersistentClient` (embedded, без HTTP-сервера — проверено по исходникам пакета) и всегда передаёт свою embedding function (`_resolve_embedding_function`). Решение пользователя: автообновление только chromadb.
+- **Код (`services/deps_guard.py`, новый)**: `auto_update_chromadb()` — установленная версия (`importlib.metadata`) → последняя с PyPI (`urllib.request`, timeout 8s) → если новее — `pip install --upgrade chromadb` (subprocess, фиксированный список аргументов, timeout 240s) → после обновления повторная проверка версии. Если <1.6.0 — warning с номером CVE. Модуль никогда не бросает исключений (все сбои → лог). Подключён в `main.py::main()` перед polling (обёрнут в try/except, как whisper/ollama pre-warm). bandit: 0 новых (nosec B404 на import, nosec B603/B310 на run/urlopen с обоснованием).
+- **Тесты**: +25 unit в `tests/test_deps_guard.py` (покрытие **100%**): parse_version BVA (пустая/мусорная/dev-суффикс/1.5.10>1.5.9), installed/latest (ok/не установлен/метаданные сломаны/сеть/мальформированный JSON/нет info-ключа), pip_upgrade (успех/returncode 1/timeout/неожиданная ошибка/фиксированная команда), auto_update (happy: upgrade + CVE закрыта; upgrade до всё ещё уязвимой версии — warning; up_to_date; установленная новее latest; сеть недоступна — check_failed + warning; pip упал — upgrade_failed + warning; не установлен — ничего не делаем; сломанные метаданные — без исключений).
+- **BDD**: `features/deps_guard.feature` 6/6 (1 happy + 3 neg: сеть/pip-фейл/не установлен + 2 edge: уже latest/мальформированный PyPI) + шаги `features/steps/deps_guard_steps.py` (реальные `auto_update_chromadb` с mock'ами источников версий; сброс `_calls` в when-шаге — environment-хук не работает, т.к. behave грузит шаги отдельным модулем).
+- **QA**: 3507 passed (+25; базлайн 3482 collected — +4 к записанным утром 3478 это дрейф от pip-апгрейдов aiogram 3.30 в тех же файлах, не от изменений репо), flake8 0, mypy 0 (91 source file), bandit 73 (базлайн, новых нет), deps_guard coverage 100%, behave 22 features passed / 145 scenarios (+6) / 634 steps, 7 error / 45 error / 154 undefined — предсуществующие. Полный behave при stash -u моих файлов даёт 139 passed — +1 к 138 утренних также дрейф от aiogram 3.27→3.30 (один сценарий в англоязычной фиче-заглушке перестал падать).
+
 
 ### Чистка репозитория и аудит зависимостей (2026-08-15)
 - **76 пустых файлов `*.py,cover` удалены из git** (артефакт coverage-прогона, закоммиченный в f395060): `git rm` + удалены с диска, в `.gitignore` добавлено правило `*.py,cover` — повторный мусор невозможен.

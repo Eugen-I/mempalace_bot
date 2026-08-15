@@ -209,6 +209,13 @@ async def main():
     except Exception as e:
         logger.warning(f"Ollama pre-warm setup failed: {e}")
 
+    try:
+        from services.deps_guard import auto_update_chromadb
+
+        auto_update_chromadb()
+    except Exception as e:
+        logger.warning(f"chromadb auto-update check failed: {e}")
+
     logger.info("Bot polling started.")
 
     from services.reminder_scheduler import start_scheduler
