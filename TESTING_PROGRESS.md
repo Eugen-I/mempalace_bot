@@ -10,6 +10,16 @@
 
 ## Сделано (Done)
 
+### Чистка репозитория и аудит зависимостей (2026-08-15)
+- **76 пустых файлов `*.py,cover` удалены из git** (артефакт coverage-прогона, закоммиченный в f395060): `git rm` + удалены с диска, в `.gitignore` добавлено правило `*.py,cover` — повторный мусор невозможен.
+- **pip-audit: 46 уязвимостей → 0 исправимых**:
+  - `pypdf 6.10.2` (5 PYSEC/GHSA) — **удалён**: в коде не используется (PDF — через fitz/pdf2image/pytesseract), standalone-пакет.
+  - `urllib3 2.6.3` → 2.7.0, `setuptools 82.0.1` → 84.0.0, `aiohttp 3.13.5` → 3.14.3 (**aiogram 3.27.0 → 3.30.0** — 3.27 пинил aiohttp<3.14, фикс уязвимости был только в 3.14.x), `cryptography 46.0.7` → 50.0.0, `idna 3.12` → 3.15, `pillow 12.2.0` → 12.3.0, `pyasn1 0.6.3` → 0.6.4, `chromadb 1.5.8` → 1.5.9.
+  - **Остаток: `chromadb 1.5.9` PYSEC-2026-311 (CVE-2026-45829, CVSS 9.3, фикса НЕТ)** — НЕ удаляем: runtime-требование пакета `mempalace` (бэкенд поиска дворца, `services/palace_bridge.py:164` → `mempalace.backends.chroma` — попытка удаления ломала `import mempalace.searcher`). Смягчение: chromadb работает **embedded** (`PersistentClient`, без HTTP-API) — вектор эксплуатации (pre-auth через REST `/api/v2/tenants/...`) в этой конфигурации недостижим. Pre-existing (была и на 1.5.8).
+  - `pydantic-settings` удалён (зависил только от chromadb; chromadb 1.5.9 его не тянет).
+- **requirements.txt**: добавлен блок «Безопасные минимумы транзитивных зависимостей (pip-audit, 2026-08-15)» — aiohttp>=3.14.3, cryptography>=49.0.0, idna>=3.15, pillow>=12.3.0, pyasn1>=0.6.4, urllib3>=2.7.0, setuptools>=83.0.0. Разрешимость проверена `pip install --dry-run` (aiogram 3.30.0 + aiohttp 3.14.3).
+- **QA после обновлений**: 3478 passed, flake8 0, mypy 0 (90 source files), bandit 73 (базлайн, новых нет), `pip check` чист, behave 21 features passed / 7 error / 45 error / 154 undefined — идентично бейзлайну. Бот работает (nohup.out, 11:05–11:08, фикс «вызов инструмента текстом» подтверждён вживую).
+
 ### qwen пишет вызов инструмента текстом в content — теперь выполняется, а не показывается сырым (2026-08-15)
 - **Симптом (лог пользователя 2026-08-15 10:57)**: «Найди заметку Признания и проклятия…» → в чат пришло «📝 Apple Notes / søker {"name": "notes_search", "arguments": {"query": "Признания и проклятия"}}» — сырой JSON вместо поиска. `_qwen_tool_call` вернул content с JSON вызова, но БЕЗ структурированных `tool_calls` → `run_agent` принял content за финальный ответ.
 - **Фикс (`services/agent_engine.py`)**: `_extract_tool_call_from_content(content, tool_map)` — через `services/json_parser.extract_json_from_text` достаёт JSON-объект и принимает его за вызов ТОЛЬКО если `name` — зарегистрированный инструмент и `arguments` — dict/строка (иначе None → обычный текстовый ответ как раньше). В `run_agent` при пустом `tool_calls`: извлечённый вызов выполняется как обычный шаг (`id=call_text_{i}`, логируется «модель написала вызов инструмента текстом»), затем цикл продолжается.

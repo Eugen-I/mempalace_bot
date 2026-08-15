@@ -31,6 +31,7 @@ nohup.out
 .coverage
 coverage.xml
 bot.pid
+*.py,cover
 
 # Логи
 *.log
