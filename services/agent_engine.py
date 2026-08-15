@@ -14,6 +14,7 @@ tool_timeout (по умолчанию 60с).
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -99,25 +100,36 @@ def _extract_tool_call_from_content(content: str, tool_map: dict) -> dict | None
     """Извлекает «инструмент, написанный текстом» из ответа модели.
 
     qwen2.5 иногда возвращает JSON вызова инструмента не в структурированном
-    tool_calls, а прямо в тексте content («søker {"name": "notes_search",
-    "arguments": {...}}») — такой ответ сейчас уходит пользователю сырым.
-    Извлекаем объект только если name — зарегистрированный инструмент и
-    arguments — dict/строка; иначе None (обычный текстовый ответ).
+    tool_calls, а прямо в тексте content. Поддерживаем две формы:
+      - {"name": "notes_search", "arguments": {...}}  («søker {…}»)
+      - notes_search {"query": ...}                    («)&&(notes_search {…}»)
+    Принимаем вызов только зарегистрированного инструмента; иначе None.
     """
     if not content:
         return None
     from services.json_parser import extract_json_from_text
 
     obj = extract_json_from_text(content)
+    if isinstance(obj, dict):
+        name = obj.get("name")
+        arguments = obj.get("arguments")
+        if (
+            isinstance(name, str) and name in tool_map
+            and isinstance(arguments, (dict, str))
+        ):
+            return {"id": "call_text", "name": name, "arguments": arguments}
+
+    names = "|".join(map(re.escape, sorted(tool_map, key=len, reverse=True)))
+    m = re.search(
+        rf"(?:^|[\s()&;,+!]+)(?P<name>{names})\s*(?:\(\s*)?(?P<json>\{{)",
+        content,
+    )
+    if not m:
+        return None
+    obj = extract_json_from_text(content[m.start("json"):])
     if not isinstance(obj, dict):
         return None
-    name = obj.get("name")
-    arguments = obj.get("arguments")
-    if not isinstance(name, str) or name not in tool_map:
-        return None
-    if not isinstance(arguments, (dict, str)):
-        return None
-    return {"id": "call_text", "name": name, "arguments": arguments}
+    return {"id": "call_text", "name": m.group("name"), "arguments": obj}
 
 
 async def run_agent(

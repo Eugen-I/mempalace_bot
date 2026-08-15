@@ -471,6 +471,47 @@ async def test_text_embedded_tool_call_is_executed(fake_model, cleanup):
     assert result.steps[0].results[0]["output"] == "got:abc"
 
 
+async def test_text_embedded_tool_call_name_json_form(fake_model, cleanup):
+    """qwen пишет «)&&(notes_search {"query": ...}» — имя инструмента + JSON."""
+    _register_test_tool()
+    fake_model.script.append(
+        _content(')&&(test_tool {"value": "abc"})'),
+    )
+    fake_model.script.append(_content("Готово"))
+
+    result = await ae.run_agent("sys", "user", engine="qwen", model="m")
+    assert result.final_answer == "Готово"
+    assert len(result.steps) == 1
+    assert result.steps[0].calls[0]["name"] == "test_tool"
+    assert result.steps[0].calls[0]["arguments"] == {"value": "abc"}
+    assert result.steps[0].results[0]["output"] == "got:abc"
+
+
+async def test_text_embedded_tool_call_parenthesized_json(fake_model, cleanup):
+    _register_test_tool()
+    fake_model.script.append(_content('test_tool({"value": "x"})'))
+    fake_model.script.append(_content("Готово"))
+
+    result = await ae.run_agent("sys", "user", engine="qwen", model="m")
+    assert result.steps[0].results[0]["ok"] is True
+    assert result.steps[0].results[0]["output"] == "got:x"
+    assert result.final_answer == "Готово"
+
+
+async def test_text_embedded_tool_name_without_json_is_plain_answer(
+    fake_model, cleanup,
+):
+    """Имя инструмента в прозе без JSON после него — обычный ответ."""
+    _register_test_tool()
+    text = "могу вызвать test_tool, но не сейчас"
+    fake_model.script.append(_content(text))
+
+    result = await ae.run_agent("sys", "user", engine="qwen", model="m")
+    assert result.finished_reason == "answer"
+    assert result.steps == []
+    assert result.final_answer == text
+
+
 async def test_text_embedded_tool_call_string_arguments(fake_model, cleanup):
     """arguments строкой (JSON внутри) — проходит тот же путь, что и обычный вызов."""
     _register_test_tool()
@@ -548,3 +589,31 @@ def test_extract_tool_call_from_content_bva(fake_model):
     assert ae._extract_tool_call_from_content(
         '{"name": "test_tool", "arguments": "{\\"value\\": \\"x\\"}"}', tool_map,
     )["arguments"] == '{"value": "x"}'
+
+
+def test_extract_tool_call_from_content_name_json_form_bva(fake_model):
+    _register_test_tool()
+    tool_map = {"test_tool": object(), "notes_search": object()}
+    call = ae._extract_tool_call_from_content(
+        ')&&(notes_search {"query": "Признания и проклятия"})', tool_map,
+    )
+    assert call["name"] == "notes_search"
+    assert call["arguments"] == {"query": "Признания и проклятия"}
+    assert ae._extract_tool_call_from_content(
+        'notes_search {"query": "x"}', tool_map,
+    )["name"] == "notes_search"
+    assert ae._extract_tool_call_from_content(
+        "notes_search", tool_map,
+    ) is None
+    assert ae._extract_tool_call_from_content(
+        'в тексте notes_search но json далеко {"a": 1}', tool_map,
+    ) is None
+    assert ae._extract_tool_call_from_content(
+        "notes_search {bad", tool_map,
+    ) is None
+    assert ae._extract_tool_call_from_content(
+        'xnotes_search {"a": 1}', tool_map,
+    ) is None
+    assert ae._extract_tool_call_from_content(
+        'notes_search [1, 2]', tool_map,
+    ) is None

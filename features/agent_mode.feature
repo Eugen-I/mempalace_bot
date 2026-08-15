@@ -24,6 +24,16 @@ Feature: Agent Mode (qwen2.5 with tools)
     And the tool "mp_kg_stats" is executed with valid arguments
     And the final answer contains the text "Комнат в дворце: 7"
 
+  @agent @smoke @regression
+  Scenario: Model writes the tool call as name+json text — it is executed, not shown raw
+    Given the agent is enabled in my settings
+    And a tool "mp_kg_stats" is registered that returns "Комнат в дворце: 7"
+    And the model writes the tool call as text ')&&(mp_kg_stats {"scope": "all"})' and then returns "Комнат в дворце: 7"
+    When I run the agent with the user prompt "сколько у меня комнат"
+    Then I see the step status "🔧 Шаг 1/5: mp_kg_stats…"
+    And the tool "mp_kg_stats" is executed with valid arguments
+    And the final answer contains the text "Комнат в дворце: 7"
+
   @agent @negative
   Scenario: Agent disabled — routing sends the message to ordinary AI
     Given the agent is disabled in my settings
