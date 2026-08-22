@@ -11,6 +11,7 @@ from aiogram import types
 from config import (
     ADMIN_ID, CHATS_DIR, DATA_DIR,
     INSIGHTS_DIR, NOTES_DIR, PHOTOS_DIR, RESEARCH_DIR,
+    AUTO_ATTACH_PHOTOS,
 )
 from handlers.chat import load_chat, save_chat, user_sessions, waiting_for_name
 from handlers.palace import process_mcp_text_input, suggest_tunnel_hint
@@ -183,7 +184,7 @@ async def process_user_message(message: types.Message):
 
             await st.edit_text("✅ Аудио готово. Отправляю...")
             await message.answer_audio(types.FSInputFile(path))
-            sid = secrets.token_hex(4)
+            sid = secrets.token_hex(16)
             _yt_audio_cache[sid] = {"path": path, "title": raw_title}
             kb = InlineKeyboardBuilder()
             kb.row(
@@ -653,7 +654,7 @@ async def process_user_message(message: types.Message):
             "picture", "analyze photo",
         ]
         wants_photo_analysis = any(kw in clean_q.lower() for kw in photo_keywords)
-        if wants_photo_analysis and check_capability(_model, "multimodal"):
+        if wants_photo_analysis and check_capability(_model, "multimodal") and AUTO_ATTACH_PHOTOS:
             recent_photos = list_photos()[:2]
             for p in recent_photos:
                 b64 = encode_image_to_base64(os.path.join(PHOTOS_DIR, p))

@@ -76,8 +76,9 @@ def create_calendar_event(
     AppleScript собирается в одну строку (osascript -e падает на переносах
     внутри properties).
     """
-    title_safe = (title or "").replace("\\", "").replace('"', '\\"')
-    notes_safe = (notes or "").replace("\\", "").replace('"', '\\"')
+    # AppleScript экранирует кавычки удвоением ("" = один " внутри строки)
+    title_safe = (title or "").replace('"', '""')
+    notes_safe = (notes or "").replace('"', '""')
     start_dt = datetime.fromtimestamp(start_ts)
     end_dt = start_dt + timedelta(minutes=max(1, int(duration_minutes)))
     props = (

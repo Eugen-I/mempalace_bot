@@ -208,8 +208,6 @@ def _sync_ai_call(
             # ✅ АГРЕССИВНАЯ ОЧИСТКА ДЛЯ DEEPSEEK/R1
             if response_text:
                 # 1. Удаляем теги мышления DeepSeek (если они просочились)
-                import re
-
                 # Удаляем всё внутри <think>...</think> или аналогичных конструкций
                 response_text = re.sub(
                     r"<think>.*?</think>", "", response_text, flags=re.DOTALL,

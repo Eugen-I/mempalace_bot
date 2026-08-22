@@ -45,7 +45,8 @@ def test_create_escapes_quotes(monkeypatch):
     monkeypatch.setattr(ac.subprocess, "run", _run)
     ac.create_calendar_event('Текст "с кавычками"', 1700000000.0)
     script = captured["cmd"][-1]
-    assert 'summary:"Текст \\"с кавычками\\""' in script
+    # AppleScript экранирует кавычки удвоением: " -> ""
+    assert 'summary:"Текст ""с кавычками"""' in script
 
 
 def test_create_min_duration_clamped(monkeypatch):

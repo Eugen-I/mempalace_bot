@@ -36,8 +36,8 @@ from handlers.messages import process_user_message  # noqa: E402
 def _safe_include(router):
     try:
         dp.include_router(router)
-    except RuntimeError:
-        pass
+    except RuntimeError as e:
+        logger.warning("Router %s already included: %s", getattr(router, "name", router), e)
 
 
 _safe_include(chat.router)
@@ -210,11 +210,11 @@ async def main():
         logger.warning(f"Ollama pre-warm setup failed: {e}")
 
     try:
-        from services.deps_guard import auto_update_chromadb
+        from services.deps_guard import check_chromadb_version
 
-        auto_update_chromadb()
+        check_chromadb_version()
     except Exception as e:
-        logger.warning(f"chromadb auto-update check failed: {e}")
+        logger.warning(f"chromadb version check failed: {e}")
 
     logger.info("Bot polling started.")
 

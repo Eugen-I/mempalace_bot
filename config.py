@@ -51,6 +51,9 @@ if "=" in raw_dir:
 
 DATA_DIR = os.path.expanduser(raw_dir.strip())
 
+# 🔒 Privacy: auto-attach photos to AI context (default: False)
+AUTO_ATTACH_PHOTOS = os.getenv("AUTO_ATTACH_PHOTOS", "false").lower() in ("1", "true", "yes", "on")
+
 CHATS_DIR = os.path.join(DATA_DIR, "chats")
 NOTES_DIR = os.path.join(DATA_DIR, "my_notes")
 INSIGHTS_DIR = os.path.join(DATA_DIR, "insights")
@@ -62,8 +65,8 @@ CONFIG_AI_FILE = os.path.join(DATA_DIR, ".current_ai")
 MODELS_CONFIG_PATH = os.path.join(DATA_DIR, "models.json")
 VOICE_REPLY_CONFIG = os.path.join(DATA_DIR, ".voice_reply_users.json")
 PROMPTS_FILE = os.path.join(DATA_DIR, "pdf_prompts.json")
-PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
 TRANSKRIPT_DIR = os.path.join(DATA_DIR, "transkript")
+PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
 
 # 🛠️ Создание папок при старте
 for d in [
@@ -78,6 +81,15 @@ for d in [
     TRANSKRIPT_DIR,
 ]:
     os.makedirs(d, exist_ok=True)
+
+
+# 🔒 Вспомогательная функция для получения ALLOWED_IDS (для тестов и перезагрузки)
+def get_allowed_ids():
+    admin = int(os.getenv("ADMIN_ID", "0"))
+    users_str = os.getenv("ALLOWED_USERS", "")
+    allowed = {uid.strip() for uid in users_str.split(",") if uid.strip()}
+    allowed.add(str(admin))
+    return {int(uid) for uid in allowed if uid.isdigit()}
 
 
 # 🛡️ Декораторы доступа
@@ -102,18 +114,4 @@ def allowed_callback(func):
     return wrapper
 
 
-# 📸 Папка для общих фотографий (CLI + Bot)
-PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
-os.makedirs(PHOTOS_DIR, exist_ok=True)
 
-
-# 🔒 Строгий кэш разрешенных ID (без fallback на 0)
-def get_allowed_ids():
-    admin = int(os.getenv("ADMIN_ID", "0"))
-    users_str = os.getenv("ALLOWED_USERS", "")
-    allowed = {uid.strip() for uid in users_str.split(",") if uid.strip()}
-    allowed.add(str(admin))
-    return {int(uid) for uid in allowed if uid.isdigit()}
-
-
-ALLOWED_IDS = get_allowed_ids()

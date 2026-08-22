@@ -1403,6 +1403,7 @@ def test_ai_coding_mode_files(monkeypatch, tmp_path):
 
 def test_ai_photo_analysis(monkeypatch, tmp_path):
     data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(messages, "AUTO_ATTACH_PHOTOS", True)
     prompts = {}
     monkeypatch.setattr(messages, "get_smart_prompt", lambda **kw: prompts.update(kw) or "P")
     monkeypatch.setattr(messages, "check_capability", lambda m, c: True)

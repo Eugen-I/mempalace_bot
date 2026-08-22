@@ -22,17 +22,18 @@ from services.palace_bridge import (
 )
 from services.prompts import get_summary_prompt
 from services.text_formatter import safe_html_format, split_message
+from services.ttl_dict import TtlDict
 
 logger = logging.getLogger("ChatHandler")
 
 router = Router()
 user_sessions: dict = {}
 waiting_for_name: dict = {}
-_chat_callback_cache: dict[str, str] = {}
+_chat_callback_cache: TtlDict[str, str] = TtlDict(ttl=1800)
 
 
 def _short_id(fname: str) -> str:
-    sid = secrets.token_hex(4)
+    sid = secrets.token_hex(16)
     _chat_callback_cache[sid] = fname
     return sid
 

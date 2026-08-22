@@ -6,6 +6,7 @@
 import asyncio
 import logging
 import os
+import secrets
 import sys
 
 import pydub
@@ -32,7 +33,8 @@ def _process_audio_sync(ogg_path: str, wav_path: str) -> str:
 @allowed_only
 async def handle_voice(message: types.Message):
     status = await message.answer("🎧 Транскрибирую...")
-    ogg = os.path.join(TEMP_DIR, f"v_{message.message_id}.ogg")
+    random_suffix = secrets.token_hex(4)
+    ogg = os.path.join(TEMP_DIR, f"v_{message.chat.id}_{message.message_id}_{random_suffix}.ogg")
     wav = ogg.replace(".ogg", ".wav")
 
     try:

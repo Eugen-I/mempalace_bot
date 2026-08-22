@@ -326,7 +326,7 @@ def _make_confirm_write(uid: int, status_msg):
             first = await _ask_once(
                 uid, status_msg,
                 f"{card}\n\nУдалить заметку {who}?",
-                secrets.token_hex(8),
+                secrets.token_hex(16),
             )
             if not first:
                 return False
@@ -335,9 +335,9 @@ def _make_confirm_write(uid: int, status_msg):
                 "⚠️ <b>Двойное подтверждение.</b>\n"
                 "Заметка будет перемещена в «Recently Deleted» (восстановимо "
                 "30 дней). Продолжить?",
-                secrets.token_hex(8),
+                secrets.token_hex(16),
             )
-        return await _ask_once(uid, status_msg, card, secrets.token_hex(8))
+        return await _ask_once(uid, status_msg, card, secrets.token_hex(16))
 
     return confirm_write
 
