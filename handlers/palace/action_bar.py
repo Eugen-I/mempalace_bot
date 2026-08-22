@@ -124,6 +124,11 @@ def build_action_bar(answer: Answer, page_idx: int) -> InlineKeyboardBuilder:
     kb.row(types.InlineKeyboardButton(
         text="🤖 Агент", callback_data=f"ab_agent:{answer.sid}",
     ))
+    if answer.ctx.get("_is_button_mode"):
+        kb.row(types.InlineKeyboardButton(
+            text="⏹ Завершить диалог с агентом",
+            callback_data=f"ab_agent_stop:{answer.sid}",
+        ))
     if answer.total_pages > 1:
         nav_row = []
         if page_idx > 0:

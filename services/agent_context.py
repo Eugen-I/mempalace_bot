@@ -8,7 +8,6 @@ Two backends:
 import json
 import os
 import secrets
-from typing import Any
 from config import CHATS_DIR
 from services.kv_store import get_kv_store
 from handlers.chat import user_sessions
@@ -39,7 +38,10 @@ class AgentContextStore:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             msgs = data.get("messages", [])
-            return [{"role": m["role"], "content": m["content"]} for m in msgs[-MAX_ALWAYS_ON_HISTORY:]]
+            return [
+                {"role": m["role"], "content": m["content"]}
+                for m in msgs[-MAX_ALWAYS_ON_HISTORY:]
+            ]
         except Exception:
             return []
 
@@ -65,15 +67,29 @@ class AgentContextStore:
 
     def create_button_session(self, answer_sid: str) -> str:
         session_id = secrets.token_hex(8)
-        self._kv.set(f"answer_sid:{answer_sid}", session_id, namespace=AGENT_CTX_NAMESPACE, ttl=BUTTON_SESSION_TTL)
-        self._kv.set(self._session_key(session_id), [], namespace=AGENT_CTX_NAMESPACE, ttl=BUTTON_SESSION_TTL)
+        self._kv.set(
+            f"answer_sid:{answer_sid}",
+            session_id,
+            namespace=AGENT_CTX_NAMESPACE,
+            ttl=BUTTON_SESSION_TTL,
+        )
+        self._kv.set(
+            self._session_key(session_id),
+            [],
+            namespace=AGENT_CTX_NAMESPACE,
+            ttl=BUTTON_SESSION_TTL,
+        )
         return session_id
 
     def get_button_session_id(self, answer_sid: str) -> str | None:
-        return self._kv.get(f"answer_sid:{answer_sid}", namespace=AGENT_CTX_NAMESPACE)
+        return self._kv.get(
+            f"answer_sid:{answer_sid}", namespace=AGENT_CTX_NAMESPACE
+        )
 
     def get_button_context(self, session_id: str) -> list[dict]:
-        history = self._kv.get(self._session_key(session_id), namespace=AGENT_CTX_NAMESPACE, default=[])
+        history = self._kv.get(
+            self._session_key(session_id), namespace=AGENT_CTX_NAMESPACE, default=[]
+        )
         return history if isinstance(history, list) else []
 
     def append_button_context(self, session_id: str, role: str, content: str) -> None:
@@ -81,25 +97,35 @@ class AgentContextStore:
         history.append({"role": role, "content": content})
         if len(history) > MAX_BUTTON_HISTORY:
             history = history[-MAX_BUTTON_HISTORY:]
-        self._kv.set(self._session_key(session_id), history, namespace=AGENT_CTX_NAMESPACE, ttl=BUTTON_SESSION_TTL)
+        self._kv.set(
+            self._session_key(session_id),
+            history,
+            namespace=AGENT_CTX_NAMESPACE,
+            ttl=BUTTON_SESSION_TTL,
+        )
 
     def end_button_session(self, session_id: str) -> None:
         self._kv.delete(self._session_key(session_id), namespace=AGENT_CTX_NAMESPACE)
 
     def has_active_button_session(self, uid: int) -> str | None:
         session_id = self._kv.get(f"uid:{uid}", namespace=AGENT_CTX_NAMESPACE)
-        if session_id and self._kv.get(self._session_key(session_id), namespace=AGENT_CTX_NAMESPACE):
+        if session_id and self._kv.get(
+            self._session_key(session_id), namespace=AGENT_CTX_NAMESPACE
+        ):
             return session_id
         return None
 
     def bind_button_session_to_uid(self, uid: int, session_id: str) -> None:
-        self._kv.set(f"uid:{uid}", session_id, namespace=AGENT_CTX_NAMESPACE, ttl=BUTTON_SESSION_TTL)
+        self._kv.set(
+            f"uid:{uid}", session_id, namespace=AGENT_CTX_NAMESPACE, ttl=BUTTON_SESSION_TTL
+        )
 
     def unbind_button_session_from_uid(self, uid: int) -> None:
         self._kv.delete(f"uid:{uid}", namespace=AGENT_CTX_NAMESPACE)
 
 
 _agent_ctx_store: AgentContextStore | None = None
+
 
 def get_agent_context_store() -> AgentContextStore:
     global _agent_ctx_store

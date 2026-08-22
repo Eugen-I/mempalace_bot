@@ -143,6 +143,7 @@ async def run_agent(
     max_iterations: int = MAX_ITERATIONS,
     tool_timeout: float = TOOL_TIMEOUT,
     confirm_write: Callable[[str, dict], Awaitable[bool]] | None = None,
+    conversation_history: list[dict] | None = None,
 ) -> AgentResult:
     """Запускает агентный цикл и возвращает итоговый ответ.
 
@@ -178,8 +179,10 @@ async def run_agent(
 
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
     ]
+    if conversation_history:
+        messages.extend(conversation_history)
+    messages.append({"role": "user", "content": user_prompt})
     steps: list[AgentStep] = []
 
     for i in range(1, max_iterations + 1):

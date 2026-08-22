@@ -70,11 +70,13 @@ def mock_run_agent(monkeypatch):
         system_prompt, user_prompt, engine=None, model=None,
         include_write=False, allowed_categories=None, status_cb=None,
         max_iterations=5, tool_timeout=60.0,
+        conversation_history=None,
     ):
         fake_run_agent.calls.append({
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
             "include_write": include_write,
+            "conversation_history": conversation_history,
         })
         return fake_run_agent.result
 
@@ -264,11 +266,14 @@ async def test_status_edit_edit_failure_logs_warning(caplog):
     assert any("[AGENT] status edit failed" in r.message for r in caplog.records)
 
 
-async def test_run_agent_reply_status_cb_uses_status_edit(monkeypatch, mock_run_agent):
+async def test_run_agent_reply_status_cb_uses_status_edit(monkeypatch):
+    status = FakeStatus()
+
     async def fake_run_agent(
         system_prompt, user_prompt, engine=None, model=None,
         include_write=False, allowed_categories=None, status_cb=None,
         max_iterations=5, tool_timeout=60.0,
+        conversation_history=None,
     ):
         await status_cb("🔧 Шаг 1/5: test…")
         return ae.AgentResult(final_answer="Готово")

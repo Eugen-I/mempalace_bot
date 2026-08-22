@@ -7,9 +7,11 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from services.agent_context import AgentContextStore
 
+# Module-level imports that execute code
 palace = importlib.import_module("handlers.palace")
-from handlers.palace import navigation, shared as sh
+from handlers.palace import shared as sh  # noqa: E402
 
 
 class FakeUser:
@@ -212,7 +214,13 @@ def test_cb_palace_main_menu_fallback_import(monkeypatch):
 # ---------- no action ----------
 
 
-def test_process_mcp_text_input_no_action():
+def test_process_mcp_text_input_no_action(monkeypatch):
+    # Mock agent context store to avoid hitting real KV store
+    mock_store = AgentContextStore()
+    # Clear any existing sessions for this uid
+    mock_store._kv.clear("agent_context")
+    monkeypatch.setattr("services.agent_context.get_agent_context_store", lambda: mock_store)
+
     result, msg, _ = _run_process(None, 4242, "привет")
     assert result is False
     assert msg.answers == []

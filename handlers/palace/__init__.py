@@ -103,6 +103,40 @@ async def cb_palace_main_menu(cb: types.CallbackQuery):
 
 
 async def process_mcp_text_input(uid: int, text: str, answer_func):
+    # Check for active button-mode agent session first
+    from services.agent_context import get_agent_context_store
+    from handlers.agent import _run_agent_reply, AGENT_SYSTEM_PROMPT
+
+    ctx_store = get_agent_context_store()
+    session_id = ctx_store.has_active_button_session(uid)
+    if session_id:
+        # User is in button-mode agent dialog
+        # Add user message to history first
+        ctx_store.append_button_context(session_id, "user", text)
+        history = ctx_store.get_button_context(session_id)
+        status = await answer_func("🤖 Агент думает…")
+        prompt = (
+            AGENT_SYSTEM_PROMPT
+            + "\n\nПродолжай диалог с пользователем на основе истории выше."
+        )
+        result = await _run_agent_reply(
+            uid, status, prompt, text, ctx={}, conversation_history=history
+        )
+
+        # Save assistant response to button session
+        if result.final_answer:
+            ctx_store.append_button_context(session_id, "assistant", result.final_answer)
+
+        # Check for end dialog keywords
+        end_keywords = ("закончить", "stop", "end", "выход", "завершить")
+        if any(kw in text.lower() for kw in end_keywords):
+            ctx_store.end_button_session(session_id)
+            ctx_store.unbind_button_session_from_uid(uid)
+            await status.edit_text(
+                "⏹ Диалог с агентом завершён. Возвращаюсь в обычный режим."
+            )
+        return True
+
     state = fsm.get_state(uid)
 
     # Try action from FSM data first (MCP_INPUT state)

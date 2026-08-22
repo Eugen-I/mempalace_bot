@@ -16,6 +16,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import allowed_callback, allowed_only
 from services import agent_engine as ae
+from services.agent_context import get_agent_context_store
 from services.text_formatter import safe_html_format
 from services.ttl_dict import TtlDict
 
@@ -55,7 +56,8 @@ async def _run_agent_reply(
     question: str,
     ctx: dict | None = None,
     include_write: bool = False,
-):
+    conversation_history: list[dict] | None = None,
+) -> ae.AgentResult:
     """Общая логика: статус → run_agent (со статус-колбэком) → finalize_answer."""
     from handlers.palace.action_bar import finalize_answer
 
@@ -67,6 +69,7 @@ async def _run_agent_reply(
             system_prompt, question,
             include_write=include_write,
             status_cb=status_cb,
+            conversation_history=conversation_history,
         )
     except ae.AgentEngineError as exc:
         await _status_edit(status_msg, f"⚠️ {exc}")
@@ -81,7 +84,7 @@ async def _run_agent_reply(
         return
     if result.finished_reason == "max_iterations":
         await _status_edit(status_msg, f"⚠️ {result.error or 'Лимит итераций'}")
-        return
+        return result
 
     await finalize_answer(
         uid,
@@ -90,6 +93,7 @@ async def _run_agent_reply(
         ctx=ctx or {},
         title="<b>🤖 Агент</b>",
     )
+    return result
 
 
 def _build_scope_prompt(wing: str, room: str) -> str:
@@ -145,6 +149,16 @@ async def cb_ab_agent(cb: types.CallbackQuery):
     if not answer:
         await cb.answer("Сессия истекла. Откройте заново.", show_alert=True)
         return
+
+    # Create button-mode session
+    ctx_store = get_agent_context_store()
+    session_id = ctx_store.create_button_session(answer.sid)
+    ctx_store.bind_button_session_to_uid(cb.from_user.id, session_id)
+
+    # Store session_id in answer.ctx for follow-up routing
+    answer.ctx["_agent_session_id"] = session_id
+    answer.ctx["_is_button_mode"] = True
+
     wing = (answer.ctx or {}).get("wing", "")
     room = (answer.ctx or {}).get("room", "")
     status = await cb.message.answer("🤖 Запускаю агента…")
@@ -155,7 +169,16 @@ async def cb_ab_agent(cb: types.CallbackQuery):
     )
     ctx = dict(answer.ctx or {})
     ctx["_origin_sid"] = answer.sid
-    await _run_agent_reply(cb.from_user.id, status, prompt, question, ctx=ctx)
+    ctx["_agent_session_id"] = session_id
+    ctx["_is_button_mode"] = True
+
+    result = await _run_agent_reply(
+        cb.from_user.id, status, prompt, question, ctx=ctx, conversation_history=[]
+    )
+
+    # Save agent response to button session history
+    if result.final_answer:
+        ctx_store.append_button_context(session_id, "assistant", result.final_answer)
 
 
 # ─── 🤖 Агент на странице комнаты (скоуп крыло/комната) ───
@@ -213,6 +236,30 @@ async def run_room_agent(uid: int, status_msg, key: str, question: str):
     prompt = _build_scope_prompt(wing, room)
     ctx = {"wing": wing, "room": room, "parent_cb": "p_rdb"}
     await _run_agent_reply(uid, status_msg, prompt, question, ctx=ctx)
+
+
+# ─── ⏹ Завершить диалог с агентом (button mode) ───
+
+
+@router.callback_query(F.data.startswith("ab_agent_stop:"))
+@allowed_callback
+async def cb_ab_agent_stop(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    sid = cb.data.split(":", 1)[1]
+    from handlers.palace.action_bar import get_answer
+
+    answer = get_answer(sid)
+    if not answer:
+        await cb.answer("Сессия истекла.", show_alert=True)
+        return
+    session_id = answer.ctx.get("_agent_session_id")
+    if session_id:
+        ctx_store = get_agent_context_store()
+        ctx_store.end_button_session(session_id)
+        ctx_store.unbind_button_session_from_uid(cb.from_user.id)
+    await cb.message.edit_text("⏹ Диалог с агентом завершён. Возвращаюсь в обычный режим.")
 
 
 # ─── Справка ───

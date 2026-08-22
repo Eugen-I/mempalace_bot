@@ -520,13 +520,19 @@ async def process_user_message(message: types.Message):
 
     if agent_on:
         from handlers.agent import AGENT_SYSTEM_PROMPT, _build_scope_prompt, _run_agent_reply
+        from services.agent_context import get_agent_context_store
 
         status = await message.answer("🤖 Запускаю агента…")
         ctx = dict(_user_context.get(uid) or {})
         wing = ctx.get("wing", "")
         room = ctx.get("room", "")
         prompt = _build_scope_prompt(wing, room) if wing and room else AGENT_SYSTEM_PROMPT
-        await _run_agent_reply(uid, status, prompt, clean_q, ctx=ctx)
+
+        # Load always-on conversation history
+        ctx_store = get_agent_context_store()
+        history = ctx_store.get_always_on_context(uid)
+
+        await _run_agent_reply(uid, status, prompt, clean_q, ctx=ctx, conversation_history=history)
         return None
 
     # === 🧠 ЯДРО ИИ (со стримингом) ===

@@ -414,7 +414,9 @@ def test_agent_mode_enabled_routes_to_agent(monkeypatch):
     )
     calls = []
 
-    async def fake_run(uid, status, prompt, question, ctx=None, include_write=False):
+    async def fake_run(
+        uid, status, prompt, question, ctx=None, include_write=False, conversation_history=None
+    ):
         calls.append({
             "uid": uid, "prompt": prompt, "question": question, "ctx": ctx,
         })
@@ -452,7 +454,9 @@ def test_agent_mode_scoped_by_user_context(monkeypatch):
     )
     calls = []
 
-    async def fake_run(uid, status, prompt, question, ctx=None, include_write=False):
+    async def fake_run(
+        uid, status, prompt, question, ctx=None, include_write=False, conversation_history=None
+    ):
         calls.append({"prompt": prompt, "ctx": ctx})
 
     monkeypatch.setattr("handlers.agent._run_agent_reply", fake_run)
