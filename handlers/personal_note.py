@@ -13,6 +13,7 @@ from services.ai_engine import get_ai_response_async, get_current_ai
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 from handlers.palace.shared import _pending_mcp_input
+from services.error_formatter import format_user_error
 
 logger = logging.getLogger("PersonalNote")
 router = Router()
@@ -162,9 +163,9 @@ async def process_note_input(uid: int, raw_text: str, answer_func):
         }
 
     except Exception as e:
-        logger.error(f"Personal note error: {e}", exc_info=True)
+        logger.error("Personal note error: %s", e, exc_info=True)
         try:
-            await status.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+            await status.edit_text(format_user_error(e, "personal_note_create"))
         except Exception:
             pass
 
@@ -515,8 +516,8 @@ async def _show_pn_page(msg_or_cb, edit_func, wing: str, room: str, offset: int)
         )
 
     except Exception as e:
-        logger.error(f"List personal notes error: {e}", exc_info=True)
-        await edit_func(f"❌ Ошибка: {str(e)[:200]}")
+        logger.error("List personal notes error: %s", e, exc_info=True)
+        await edit_func(format_user_error(e, "personal_note_list"))
 
 
 @router.callback_query(F.data.startswith("pn_p:"))
@@ -604,8 +605,8 @@ async def cb_pn_view(callback: types.CallbackQuery):
         )
 
     except Exception as e:
-        logger.error(f"View note error: {e}", exc_info=True)
-        await callback.message.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+        logger.error("View note error: %s", e, exc_info=True)
+        await callback.message.edit_text(format_user_error(e, "personal_note_view"))
 
 
 @router.callback_query(F.data == "pn_r")
@@ -652,8 +653,8 @@ async def cb_pn_read_full(callback: types.CallbackQuery):
         )
 
     except Exception as e:
-        logger.error(f"Read full note error: {e}", exc_info=True)
-        await callback.message.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+        logger.error("Read full note error: %s", e, exc_info=True)
+        await callback.message.edit_text(format_user_error(e, "personal_note_read_full"))
 
 
 @router.callback_query(F.data == "pn_bl")
@@ -725,8 +726,8 @@ async def cb_pn_to_palace(callback: types.CallbackQuery):
         await _show_save_wings(callback.message.edit_text, uid)
 
     except Exception as e:
-        logger.error(f"Save to palace error: {e}", exc_info=True)
-        await callback.message.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+        logger.error("Save to palace error: %s", e, exc_info=True)
+        await callback.message.edit_text(format_user_error(e, "personal_note_save_palace"))
 
 
 _quote_waiting: TtlDict = TtlDict()
@@ -759,8 +760,8 @@ async def cb_pn_quote_prompt(callback: types.CallbackQuery):
         )
 
     except Exception as e:
-        logger.error(f"Quote prompt error: {e}", exc_info=True)
-        await callback.message.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+        logger.error("Quote prompt error: %s", e, exc_info=True)
+        await callback.message.edit_text(format_user_error(e, "personal_note_quote"))
 
 
 @router.callback_query(F.data == "pn_del")
@@ -806,8 +807,8 @@ async def cb_pn_delete_execute(callback: types.CallbackQuery):
         else:
             await callback.message.edit_text(f"❌ Ошибка: {raw[:200]}")
     except Exception as e:
-        logger.error(f"Delete note error: {e}", exc_info=True)
-        await callback.message.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+        logger.error("Delete note error: %s", e, exc_info=True)
+        await callback.message.edit_text(format_user_error(e, "personal_note_delete"))
 
 
 async def _save_quote_to_palace(uid: int, quote_text: str, answer_func):

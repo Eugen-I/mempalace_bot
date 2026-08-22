@@ -20,6 +20,7 @@
 """
 
 import logging
+import re
 
 from aiogram.types import InaccessibleMessage, Message
 
@@ -223,3 +224,30 @@ async def safe_send(
     except Exception as e:
         _log_error("safe_send", e)
         return False
+
+
+WING_NAME_PATTERN = re.compile(r"^[a-z0-9_-]{1,64}$")
+
+
+def sanitize_wing_name(name: str) -> str:
+    """Санитизирует имя крыла: убирает path traversal (.., /, \\) и argument injection (-flag).
+
+    Args:
+        name: Сырое имя крыла от пользователя.
+
+    Returns:
+        Санитизированное имя крыла (сохраняет unicode буквы, цифры, _, -, пробелы -> _).
+
+    Raises:
+        ValueError: Если имя невалидно (пустое, начинается с -, содержит .. или / или \\).
+    """
+    if not name or not isinstance(name, str):
+        raise ValueError("Wing name cannot be empty")
+    # Приводим к нижнему регистру, заменяем пробелы на _
+    sanitized = name.strip().lower().replace(" ", "_")
+    # Проверяем на path traversal и argument injection
+    if sanitized.startswith("-") or ".." in sanitized or "/" in sanitized or "\\" in sanitized:
+        raise ValueError("Invalid wing name")
+    if not sanitized or len(sanitized) > 64:
+        raise ValueError("Wing name contains no valid characters or too long")
+    return sanitized

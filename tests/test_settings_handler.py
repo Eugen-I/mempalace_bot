@@ -301,7 +301,8 @@ async def test_cmd_callback_analyze_photo_ai_error(monkeypatch, tmp_path):
     )
     cb = FakeCb(4242, data="cmd:analyze_photo")
     await st.cmd_callback_handler(cb)
-    assert "Ошибка анализа" in cb.message.status.edits[0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in cb.message.status.edits[0]
 
 
 async def test_build_settings_kb_ai_file_empty(monkeypatch, tmp_path):

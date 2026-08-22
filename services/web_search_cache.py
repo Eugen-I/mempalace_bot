@@ -1,9 +1,23 @@
 import json
+import re
 import time
 import uuid
 from pathlib import Path
 
 from config import DATA_DIR
+
+
+SEARCH_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{8,32}$")
+
+
+def validate_search_id(search_id: str) -> bool:
+    """Валидация search_id: только alphanumeric, _, -; длина 8-32; без path traversal."""
+    if not SEARCH_ID_PATTERN.match(search_id):
+        return False
+    if ".." in search_id or "/" in search_id or "\\" in search_id:
+        return False
+    return True
+
 
 # Временная папка для сохранения результатов поиска
 WEB_SEARCH_CACHE_DIR = Path(DATA_DIR) / "web_search_cache"
@@ -37,6 +51,8 @@ def save_web_search_with_id(
     search_id: str, query: str, sources: list[dict], ai_summary: str = "",
 ) -> str:
     """Сохранить результаты поиска с указанным ID."""
+    if not validate_search_id(search_id):
+        raise ValueError("Invalid search_id")
     cache_file = WEB_SEARCH_CACHE_DIR / f"{search_id}.json"
 
     data = {
@@ -56,6 +72,8 @@ def save_web_search_with_id(
 
 def load_web_search(search_id: str) -> dict | None:
     """Загрузить сохранённый поиск."""
+    if not validate_search_id(search_id):
+        return None
     cache_file = WEB_SEARCH_CACHE_DIR / f"{search_id}.json"
     if not cache_file.exists():
         return None

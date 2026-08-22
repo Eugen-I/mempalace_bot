@@ -331,7 +331,8 @@ async def test_cb_yt_quality_error(monkeypatch, tmp_path):
 
     monkeypatch.setattr(yt, "download_video", fake_download)
     await yt.cb_yt_quality(cb)
-    assert cb.message.answers[-1][0] == "❌ Ошибка: dl failed"
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in cb.message.answers[-1][0]
 
 
 # ---------- transcribe callback ----------
@@ -406,7 +407,8 @@ async def test_cb_yt_transcribe_error(monkeypatch, tmp_path):
     monkeypatch.setattr(yt, "transcribe_audio", fake_transcribe)
     cb = FakeCb(4242, data="yt_tr:sid4:yes")
     await yt.cb_yt_transcribe(cb)
-    assert cb.message.answers[-1][0] == "❌ Ошибка транскрибации: no whisper"
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in cb.message.answers[-1][0]
     assert not os.path.exists(audio)
 
 

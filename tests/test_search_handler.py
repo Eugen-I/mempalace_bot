@@ -280,7 +280,8 @@ async def test_cmd_search_error(monkeypatch):
     monkeypatch.setattr(sh, "search_palace_with_sources", boom)
     msg = FakeMessage(4242, text="/search сон")
     await sh.cmd_search(msg)
-    assert msg.status.edited == ["❌ Ошибка поиска: search down"]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert msg.status.edited == ["❌ Ошибка выполнения"]
 
 
 @pytest.mark.asyncio

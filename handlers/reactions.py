@@ -7,6 +7,7 @@ from aiogram.types import MessageReactionUpdated, ReactionTypeEmoji
 
 from config import ALLOWED_IDS, INSIGHTS_DIR, NOTES_DIR, RESEARCH_DIR
 from services.ai_cache import _ai_msg_cache
+from services.error_formatter import format_user_error
 
 logger = logging.getLogger("Reactions")
 router = Router()
@@ -89,5 +90,5 @@ async def handle_ai_reaction(event: MessageReactionUpdated):
             )
 
     except Exception as e:
-        logger.error(f"[REACTION_SAVE] Error: {e}", exc_info=True)
-        await event.bot.send_message(chat_id, f"❌ Ошибка сохранения: {str(e)[:100]}")
+        logger.error("[REACTION_SAVE] Error: %s", e, exc_info=True)
+        await event.bot.send_message(chat_id, format_user_error(e, "reaction_save"))

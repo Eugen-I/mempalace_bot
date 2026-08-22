@@ -12,6 +12,7 @@ from services.palace_bridge import search_palace_with_sources
 from services.palace_mcp import get_mcp
 from services.sender import send_text_only
 from services.text_formatter import split_message
+from services.error_formatter import format_user_error
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +180,7 @@ async def cmd_search(message: types.Message):
         for p in parts[1:]:
             await send_text_only(message, p)
     except Exception as e:
-        await st.edit_text(f"❌ Ошибка поиска: {str(e)[:100]}")
+        await st.edit_text(format_user_error(e, "search"))
     return None
 
 

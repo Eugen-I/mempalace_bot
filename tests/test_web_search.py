@@ -674,7 +674,8 @@ async def test_deep_search_web_ai_failure(monkeypatch, cache_dir):
     monkeypatch.setattr("services.ai_engine.get_current_ai", fake_current_ai)
     out = await ws.deep_search_web("запрос")
     assert out["ai_summary"] == ""
-    assert out["error"] == "ИИ упал"
+    # deep_search_web возвращает "Ошибка ИИ" в error при неудаче
+    assert "ИИ" in out["error"]
 
 
 @pytest.mark.asyncio

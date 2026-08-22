@@ -56,6 +56,7 @@ from services.wing_classifier import classify_wing
 from services.youtube import download_audio
 
 from services.logging_setup import setup_logging
+from services.error_formatter import format_user_error
 
 logger = setup_logging(DATA_DIR)
 
@@ -198,7 +199,7 @@ async def process_user_message(message: types.Message):
                 reply_markup=kb.as_markup(),
             )
         except Exception as e:
-            await st.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+            await st.edit_text(format_user_error(e, "youtube_download"))
         return None
 
     # 0a. Ожидание текстового ввода для MCP-инструментов
@@ -273,7 +274,7 @@ async def process_user_message(message: types.Message):
                 reply_markup=kb.as_markup(),
             )
         except Exception as e:
-            await st.edit_text(f"❌ Ошибка поиска: {str(e)[:100]}")
+            await st.edit_text(format_user_error(e, "wing_search"))
         return None
 
 # 0e. Ожидание текста для поиска в интернете
@@ -321,7 +322,7 @@ async def process_user_message(message: types.Message):
             else:
                 await message.answer("❌ Ошибка: неожиданный формат ответа поиска")
         except Exception as e:
-            await st.edit_text(f"❌ Ошибка поиска: {str(e)[:200]}")
+            await st.edit_text(format_user_error(e, "deep_web_search"))
         return None
 
     # 1. 💻 Mac команды
@@ -467,7 +468,7 @@ async def process_user_message(message: types.Message):
             if not clean_q:
                 return None
         except Exception as e:
-            await st.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+            await st.edit_text(format_user_error(e, "insight_save"))
             return None
 
     # 6.5 🌐 Поиск в интернете
@@ -869,8 +870,8 @@ async def process_user_message(message: types.Message):
         )
 
     except Exception as e:
-        logger.error(f"❌ Ошибка процесса ИИ: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {str(e)[:100]}", parse_mode="HTML")
+        logger.error("❌ Ошибка процесса ИИ: %s", e, exc_info=True)
+        await message.answer(format_user_error(e, "ai_process"), parse_mode="HTML")
     finally:
         try:
             await bot.delete_message(message.chat.id, status.message_id)

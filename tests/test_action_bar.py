@@ -508,7 +508,8 @@ def test_cb_ab_web_empty_query_error(monkeypatch):
     msg = FakeMessage()
     cb = FakeCallback(f"ab_web:{SID}", msg)
     asyncio.run(ab.cb_ab_web(cb))
-    assert "Ошибка" in msg.edited[-1]
+    # format_user_error для ValueError возвращает "❌ Некорректные данные"
+    assert "Некорректные данные" in msg.edited[-1]
 
 
 def test_cb_ab_web_go_runs_search(monkeypatch):
@@ -671,7 +672,8 @@ def test_cb_ab_sv_notes_error(tmp_path, monkeypatch):
     msg = FakeMessage()
     cb = FakeCallback(f"ab_sv_n:{SID}", msg)
     asyncio.run(ab.cb_ab_sv_notes(cb))
-    assert "Ошибка" in msg.edited[-1]
+    # format_user_error для PermissionError возвращает "❌ Нет прав доступа"
+    assert "Нет прав доступа" in msg.edited[-1]
 
 
 # ─── 🔙 Возврат ───
@@ -1334,7 +1336,8 @@ def test_run_web_search_finalize_search_error(monkeypatch):
     answer = Answer(sid=SID, text="т", pages=["т"], ctx={})
     msg = FakeMessage()
     asyncio.run(ab._run_web_search_finalize(TEST_UID, msg.edit_text, answer, "q"))
-    assert "❌ Ошибка поиска: search fail" in msg.edited[-1]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in msg.edited[-1]
 
 
 def test_run_web_search_finalize_double_error_logs(caplog):

@@ -651,7 +651,8 @@ async def test_cb_tr_links_error(monkeypatch, tmp_path):
     monkeypatch.setattr("services.palace_bridge.search_palace_with_sources", boom)
     cb = FakeCb(data="tr_links")
     await tr.cb_tr_links(cb)
-    assert "Ошибка поиска связей" in cb.message.status.edits[0][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in cb.message.status.edits[0][0]
 
 
 # ---------- cb_tr_del / cb_tr_del_yes ----------
@@ -703,7 +704,8 @@ async def test_cb_tr_del_yes_remove_error(monkeypatch, tmp_path):
     monkeypatch.setattr(tr.os, "remove", boom)
     cb = FakeCb(data="tr_del_yes")
     await tr.cb_tr_del_yes(cb)
-    assert "Ошибка удаления" in cb.message.edits[0][0]
+    # format_user_error для PermissionError возвращает "❌ Нет прав доступа"
+    assert "Нет прав доступа" in cb.message.edits[0][0]
 
 
 # ---------- _answer_tr_ai / handle_tr_ai_question ----------

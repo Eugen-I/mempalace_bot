@@ -327,7 +327,8 @@ def test_process_note_input_error(monkeypatch):
     import asyncio
 
     asyncio.run(pn.process_note_input(4242, "сыро", msg.answer))
-    assert "❌ Ошибка: ai упал" in msg.edits[0][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in msg.edits[0][0]
 
 
 def test_process_note_input_error_edit_fails_too(monkeypatch):
@@ -832,7 +833,8 @@ def test_show_pn_page_error(monkeypatch):
     asyncio.run(
         pn._show_pn_page(msg, msg.answer, wing="личные_мысли", room="inbox", offset=0),
     )
-    assert "❌ Ошибка: mcp упал" in msg.answers[0][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in msg.answers[0][0]
 
 
 # ---------- cb_pn_page / cb_pn_list_back ----------
@@ -1007,7 +1009,8 @@ def test_cb_pn_view_error(monkeypatch):
     import asyncio
 
     asyncio.run(pn.cb_pn_view(cb))
-    assert "❌ Ошибка: mcp упал" in cb.message.edits[-1][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in cb.message.edits[-1][0]
 
 
 # ---------- cb_pn_read_full ----------
@@ -1052,7 +1055,8 @@ def test_cb_pn_read_full_error(monkeypatch):
     import asyncio
 
     asyncio.run(pn.cb_pn_read_full(cb))
-    assert "❌ Ошибка: mcp упал" in cb.message.edits[-1][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in cb.message.edits[-1][0]
 
 
 # ---------- cb_pn_back_to_list / cb_pn_back_to_view ----------
@@ -1163,7 +1167,8 @@ def test_cb_pn_to_palace_error(monkeypatch):
     import asyncio
 
     asyncio.run(pn.cb_pn_to_palace(cb))
-    assert "❌ Ошибка: mcp упал" in cb.message.edits[-1][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in cb.message.edits[-1][0]
 
 
 # ---------- cb_pn_quote_prompt ----------
@@ -1218,7 +1223,8 @@ def test_cb_pn_quote_prompt_error(monkeypatch):
     import asyncio
 
     asyncio.run(pn.cb_pn_quote_prompt(cb))
-    assert "❌ Ошибка: mcp упал" in cb.message.edits[-1][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in cb.message.edits[-1][0]
 
 
 # ---------- cb_pn_delete_confirm / cb_pn_delete_execute ----------
@@ -1309,7 +1315,8 @@ def test_cb_pn_delete_execute_error(monkeypatch):
     import asyncio
 
     asyncio.run(pn.cb_pn_delete_execute(cb))
-    assert "❌ Ошибка: mcp упал" in cb.message.edits[-1][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in cb.message.edits[-1][0]
 
 
 # ---------- _save_quote_to_palace ----------

@@ -143,8 +143,8 @@ async def test_handle_photo_unexpected_error(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ph, "save_bot_photo", fake_save)
     await ph.handle_photo(msg)
-    assert msg.answers[0][0].startswith("❌ Ошибка обработки")
-    assert "db down" in msg.answers[0][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in msg.answers[0][0]
 
 
 @pytest.mark.asyncio
@@ -209,7 +209,8 @@ async def test_cb_analyze_last_photo_no_base64(monkeypatch, tmp_path):
     monkeypatch.setattr(ph, "check_capability", lambda model, feat: True)
     monkeypatch.setattr(ph, "encode_image_to_base64", lambda path: "")
     await ph.cb_analyze_last_photo(cb)
-    assert any("❌ Ошибка" in (b[0] if isinstance(b, tuple) else b) for b in cb.message.answers)
+    # format_user_error для ValueError возвращает "❌ Некорректные данные"
+    assert any("Некорректные данные" in (b[0] if isinstance(b, tuple) else b) for b in cb.message.answers)
 
 
 @pytest.mark.asyncio
@@ -356,8 +357,8 @@ async def test_handle_photo_download_no_file(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ph, "save_bot_photo", fake_save)
     await ph.handle_photo(msg)
-    assert "❌ Ошибка обработки" in msg.answers[0][0]
-    assert "не появился" in msg.answers[0][0]
+    # format_user_error для FileNotFoundError возвращает "❌ Файл не найден"
+    assert "Файл не найден" in msg.answers[0][0]
 
 
 @pytest.mark.asyncio
@@ -371,8 +372,8 @@ async def test_handle_photo_save_returns_empty(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ph, "save_bot_photo", fake_save)
     await ph.handle_photo(msg)
-    assert "❌ Ошибка обработки" in msg.answers[0][0]
-    assert "пустой путь" in msg.answers[0][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in msg.answers[0][0]
 
 
 def test_get_ai_response_sync_wrapper_calls_sync_ai_call(monkeypatch):

@@ -432,7 +432,7 @@ async def deep_search_web(query: str) -> dict:
         }
 
     except Exception as e:
-        logger.error(f"Deep search AI failed: {e}")
+        logger.error("Deep search AI failed: %s", e)
         search_id = save_web_search(query, all_sources, "")
         return {
             "search_id": search_id,
@@ -440,5 +440,5 @@ async def deep_search_web(query: str) -> dict:
             "sources": all_sources,
             "ai_summary": "",
             "total_sources": len(all_sources),
-            "error": str(e),
+            "error": "Ошибка ИИ при глубоком поиске",
         }

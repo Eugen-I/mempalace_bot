@@ -71,3 +71,4 @@ TZ_*.md
 # Артефакты behave-прогонов (медиа/транскрипты — временные)
 features/_behave_media/
 features/_behave_tr/
+bandit-report.json

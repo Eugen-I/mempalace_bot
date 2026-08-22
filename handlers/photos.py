@@ -26,6 +26,7 @@ from services.multimodal import (
 from services.palace_bridge import search_palace_context
 from services.prompts import get_smart_prompt
 from services.text_formatter import safe_html_format, split_message
+from services.error_formatter import format_user_error
 
 router = Router()
 logger = logging.getLogger("PhotosHandler")
@@ -103,8 +104,8 @@ async def handle_photo(message: types.Message):
         logger.info("📤 [PHOTO] Ответ отправлен пользователю.")
 
     except Exception as e:
-        logger.error(f"🚨 [PHOTO] Критическая ошибка: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка обработки: {str(e)[:100]}")
+        logger.error("🚨 [PHOTO] Критическая ошибка: %s", e, exc_info=True)
+        await message.answer(format_user_error(e, "photo_upload"))
 
 
 @router.callback_query(F.data == "photo_analyze_last")
@@ -172,8 +173,8 @@ async def cb_analyze_last_photo(cb: types.CallbackQuery):
                     await cb.message.answer(part, parse_mode=None)
 
     except Exception as e:
-        logger.error(f"Ошибка анализа фото: {e}", exc_info=True)
-        await cb.message.answer(f"❌ Ошибка: {str(e)[:200]}")
+        logger.error("Ошибка анализа фото: %s", e, exc_info=True)
+        await cb.message.answer(format_user_error(e, "photo_analysis"))
     finally:
         try:
             await status_msg.delete()
@@ -257,9 +258,16 @@ async def cb_del_photo(cb: types.CallbackQuery):
     if len(parts) < 3:
         return await cb.answer("❌ Неверный формат запроса", show_alert=True)
 
-    uid = parts[1]
+    # Безопасность: используем реальный uid пользователя, а не из callback_data
+    actual_uid = str(cb.from_user.id)
+    callback_uid = parts[1]
     short_id = parts[2]
-    cache_key = f"{uid}:{short_id}"
+
+    # Проверяем, что uid в callback соответствует текущему пользователю
+    if callback_uid != actual_uid:
+        return await cb.answer("❌ Нет доступа к чужой сессии", show_alert=True)
+
+    cache_key = f"{actual_uid}:{short_id}"
 
     fname = _photo_delete_cache.get(cache_key)
     if not fname:
@@ -286,13 +294,13 @@ async def cb_del_photo(cb: types.CallbackQuery):
 
             kb = InlineKeyboardBuilder()
             for p in new_photos:
-                short_id = hashlib.sha256(f"{uid}:{p}".encode()).hexdigest()[:8]
-                _photo_delete_cache[f"{uid}:{short_id}"] = p
+                new_short_id = hashlib.sha256(f"{actual_uid}:{p}".encode()).hexdigest()[:8]
+                _photo_delete_cache[f"{actual_uid}:{new_short_id}"] = p
                 btn_text = p[:20] + ("..." if len(p) > 20 else "")
                 kb.row(
                     types.InlineKeyboardButton(
                         text=f"🗑 {btn_text}",
-                        callback_data=f"del_photo:{uid}:{short_id}",
+                        callback_data=f"del_photo:{actual_uid}:{new_short_id}",
                     ),
                 )
 

@@ -14,6 +14,7 @@ from config import CONFIG_AI_FILE, MODELS_CONFIG_PATH, allowed_callback, allowed
 from services.agent_settings import get_agent_enabled, toggle_agent_enabled
 from services.ai_engine import invalidate_ai_cache
 from services.tts_processor import get_voice_settings, set_voice_setting
+from services.error_formatter import format_user_error
 
 router = Router()
 logger = logging.getLogger("SettingsHandler")
@@ -207,7 +208,7 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
                             await callback.message.answer(part, parse_mode=None)
 
             except Exception as e:
-                await status_msg.edit_text(f"❌ Ошибка анализа: {str(e)[:200]}")
+                await status_msg.edit_text(format_user_error(e, "settings_photo_analysis"))
         else:
             await status_msg.edit_text("❌ Ошибка кодирования фото.")
 

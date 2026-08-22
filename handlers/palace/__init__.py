@@ -7,6 +7,7 @@ from ._utils import (  # noqa: F401
     safe_answer_voice,
     safe_send,
     set_error_logging,
+    sanitize_wing_name,
 )
 
 import asyncio
@@ -239,7 +240,11 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             return True
 
         elif action == "save_new_wing":
-            wing = text.strip().lower().replace(" ", "_")
+            try:
+                wing = sanitize_wing_name(text.strip().lower().replace(" ", "_"))
+            except ValueError:
+                await msg.edit_text("❌ Некорректное имя крыла. Только латиница, цифры, _ и -")
+                return True
             state = _save_state.get(uid)
             if state:
                 state["wing"] = wing
@@ -267,7 +272,13 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
 
         elif action == "pn_new_wing":
             from handlers.personal_note import _note_data, _show_pn_rooms
-            wing = text.strip().lower().replace(" ", "_")
+            try:
+                wing = sanitize_wing_name(text.strip().lower().replace(" ", "_"))
+            except ValueError:
+                await msg.edit_text(
+                    "❌ Некорректное имя крыла. Только латиница, цифры, _ и -",
+                )
+                return True
             if not wing:
                 await msg.edit_text(
                     "❌ Название не может быть пустым. "

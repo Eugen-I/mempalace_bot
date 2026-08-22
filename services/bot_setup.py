@@ -28,6 +28,7 @@ def set_logger(log):
 
 async def security_middleware(handler, event, data):
     uid = None
+    # Standard message and callback query
     if hasattr(event, "from_user") and event.from_user:
         uid = event.from_user.id
     elif hasattr(event, "message") and event.message and event.message.from_user:
@@ -38,11 +39,25 @@ async def security_middleware(handler, event, data):
         and event.callback_query.from_user
     ):
         uid = event.callback_query.from_user.id
+    # message_reaction events have `user` not `from_user`
+    elif hasattr(event, "user") and event.user:
+        uid = event.user.id
+    # channel_post events have `sender_chat`
+    elif hasattr(event, "sender_chat") and event.sender_chat:
+        uid = event.sender_chat.id
 
     if uid and uid not in ALLOWED_IDS:
         if logger:
             logger.warning(f"[SECURITY] Blocked user: {uid}")
         return None
+    # Если uid не определился (неизвестный тип события) — пропускаем (как было)
+    # но логируем предупреждение для аудита
+    if uid is None:
+        if logger:
+            event_type = type(event).__name__
+            logger.warning(
+                f"[SECURITY] Event without identifiable user (allowed): {event_type}"
+            )
     return await handler(event, data)
 
 

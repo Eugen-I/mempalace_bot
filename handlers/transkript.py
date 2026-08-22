@@ -8,6 +8,7 @@ from cachetools import TTLCache
 from config import TRANSKRIPT_DIR, allowed_callback, allowed_only
 from services.text_formatter import safe_html_format, split_message
 from services.ttl_dict import TtlDict
+from services.error_formatter import format_user_error
 
 router = Router()
 PAGE_SIZE = 5
@@ -311,7 +312,7 @@ async def cb_tr_links(callback: types.CallbackQuery):
             ))
         await st.edit_text(body, parse_mode="HTML", reply_markup=kb.as_markup())
     except Exception as e:
-        await st.edit_text(f"❌ Ошибка поиска связей: {str(e)[:200]}")
+        await st.edit_text(format_user_error(e, "transcript_links"))
 
 
 @router.callback_query(F.data == "tr_del")
@@ -344,7 +345,7 @@ async def cb_tr_del_yes(callback: types.CallbackQuery):
         os.remove(path)
         await callback.message.edit_text("✅ Транскрипт удалён.")
     except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка удаления: {str(e)[:200]}")
+        await callback.message.edit_text(format_user_error(e, "transcript_delete"))
 
 
 async def _answer_tr_ai(msg, uid: int, fname: str, question: str, with_web: bool = False):

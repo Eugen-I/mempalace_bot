@@ -581,7 +581,8 @@ def test_cb_ab_ai_run_mode_a_error(monkeypatch):
     monkeypatch.setattr(ab, "_sync_ai_call", boom)
     cb = FakeCb(data="ab_ai_m:a:abcd")
     asyncio.run(ab.cb_ab_ai_run(cb))
-    assert cb.message.edits[-1][0].startswith("❌ Ошибка анализа")
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in cb.message.edits[-1][0]
 
 
 def test_cb_ab_ai_run_mode_c(monkeypatch):
@@ -646,7 +647,8 @@ def test_cb_ab_web_empty_query_error(monkeypatch):
     monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "  «»  ")
     cb = FakeCb(data="ab_web:abcd")
     asyncio.run(ab.cb_ab_web(cb))
-    assert cb.message.edits[-1][0].startswith("❌ Ошибка:")
+    # format_user_error для ValueError возвращает "❌ Некорректные данные"
+    assert "Некорректные данные" in cb.message.edits[-1][0]
 
 
 def test_cb_ab_web_error(monkeypatch):
@@ -660,7 +662,8 @@ def test_cb_ab_web_error(monkeypatch):
     monkeypatch.setattr(ab, "_sync_ai_call", boom)
     cb = FakeCb(data="ab_web:abcd")
     asyncio.run(ab.cb_ab_web(cb))
-    assert cb.message.edits[-1][0].startswith("❌ Ошибка:")
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in cb.message.edits[-1][0]
 
 
 # ---------- cb_ab_web_go ----------
@@ -760,7 +763,8 @@ def test_run_web_search_finalize_error(monkeypatch):
     monkeypatch.setattr("services.web_search.search_web", fake_search)
     msg = FakeMessage()
     asyncio.run(ab._run_web_search_finalize(4242, msg.edit_text, answer, "запрос"))
-    assert msg.edits[-1][0].startswith("❌ Ошибка поиска:")
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in msg.edits[-1][0]
 
 
 def test_run_web_search_finalize_edit_fail(monkeypatch):
@@ -909,7 +913,8 @@ def test_cb_ab_sv_notes_error(monkeypatch, tmp_path):
     _seed_answer(text="моя заметка")
     cb = FakeCb(data="ab_sv_n:abcd")
     asyncio.run(ab.cb_ab_sv_notes(cb))
-    assert cb.message.edits[-1][0].startswith("❌ Ошибка сохранения:")
+    # format_user_error для ZeroDivisionError возвращает дефолтное сообщение
+    assert "Произошла ошибка" in cb.message.edits[-1][0]
 
 
 # ---------- not allowed ----------

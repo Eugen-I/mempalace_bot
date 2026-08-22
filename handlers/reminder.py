@@ -7,7 +7,7 @@ from aiogram import F, Router, types
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import allowed_callback
+from config import allowed_callback, allowed_only
 from services.ttl_dict import TtlDict
 from services.kv_store import get_kv_store
 from services.text_formatter import safe_html_format
@@ -101,6 +101,7 @@ async def _show_reminder_confirm(reply_func, text: str, ts: float, time_desc: st
 
 
 @router.message(F.text)
+@allowed_only
 async def detect_reminder(msg: types.Message):
     if not _is_reminder(msg.text):
         raise SkipHandler

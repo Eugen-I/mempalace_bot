@@ -103,8 +103,8 @@ async def search_tavily(
         )
         return {"error": f"❌ Ошибка поиска: HTTP {e.response.status_code}"}
     except Exception as e:
-        logger.error(f"Tavily search error: {e}", exc_info=True)
-        return {"error": f"❌ Ошибка поиска: {str(e)[:100]}"}
+        logger.error("Tavily search error: %s", e, exc_info=True)
+        return {"error": "❌ Ошибка поиска. Попробуйте позже."}
 
 
 def format_results_for_telegram(

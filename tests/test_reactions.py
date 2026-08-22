@@ -157,7 +157,8 @@ async def test_save_error_reports_to_user(allow, monkeypatch):
     ev = FakeEvent(FakeUser(), ["👍"], 1)
     await handle_ai_reaction(ev)
     assert ev.bot.sent
-    assert "Ошибка сохранения" in ev.bot.sent[-1][1]
+    # format_user_error для FileNotFoundError возвращает "❌ Файл не найден"
+    assert "Файл не найден" in ev.bot.sent[-1][1]
 
 
 @pytest.mark.asyncio
@@ -210,4 +211,5 @@ async def test_error_after_save_no_extra_notification(allow, tmp_path, monkeypat
     ev = FakeEvent(FakeUser(), ["👍"], 1)
     await handle_ai_reaction(ev)
     assert ev.bot.sent
-    assert "Ошибка сохранения" in ev.bot.sent[-1][1]
+    # format_user_error для OSError возвращает "❌ Системная ошибка"
+    assert "Системная ошибка" in ev.bot.sent[-1][1]

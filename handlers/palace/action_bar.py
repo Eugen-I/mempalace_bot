@@ -29,6 +29,7 @@ from config import NOTES_DIR, allowed_callback
 from services.ai_engine import _sync_ai_call, get_current_ai
 from services.text_formatter import safe_html_format, split_message
 from services.ttl_dict import TtlDict
+from services.error_formatter import format_user_error
 
 logger = logging.getLogger("ActionBar")
 
@@ -415,7 +416,7 @@ async def cb_ab_ai_run(cb: types.CallbackQuery):
             is_html=False,
         )
     except Exception as e:
-        await status.edit_text(f"❌ Ошибка анализа: {str(e)[:200]}")
+        await status.edit_text(format_user_error(e, "action_bar_analysis"))
 
 
 # ─── 🌐 Поиск в интернете ───
@@ -461,7 +462,7 @@ async def cb_ab_web(cb: types.CallbackQuery):
             reply_markup=kb.as_markup(),
         )
     except Exception as e:
-        await status.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+        await status.edit_text(format_user_error(e, "action_bar_web_search"))
 
 
 @router.callback_query(F.data.startswith("ab_web_go:"))
@@ -515,7 +516,7 @@ async def _run_web_search_finalize(
         )
     except Exception as e:
         try:
-            await edit_func(f"❌ Ошибка поиска: {str(e)[:200]}")
+            await edit_func(format_user_error(e, "action_bar_web_search"))
         except Exception as edit_e:
             logger.error(
                 "[ACTION_BAR] web search error: %s (render failed: %s)", e, edit_e,
@@ -628,4 +629,4 @@ async def cb_ab_sv_notes(cb: types.CallbackQuery):
             parse_mode="HTML",
         )
     except Exception as e:
-        await cb.message.edit_text(f"❌ Ошибка сохранения: {str(e)[:200]}")
+        await cb.message.edit_text(format_user_error(e, "action_bar_save"))

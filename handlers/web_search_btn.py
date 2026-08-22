@@ -4,7 +4,7 @@ from datetime import datetime
 import os
 import html
 
-from config import NOTES_DIR, TAVILY_API_KEY
+from config import NOTES_DIR, TAVILY_API_KEY, allowed_callback
 from handlers.messages import _last_user_query
 from services.web_search_cache import load_web_search, save_web_search_with_id
 
@@ -94,6 +94,7 @@ def _format_tavily_results(answer: str, results: list[dict]) -> str:
 
 
 @router.callback_query(F.data == "web_search")
+@allowed_callback
 async def cb_web_search(callback: types.CallbackQuery):
     if not callback.message:
         await callback.answer("Ошибка: сообщение не найдено", show_alert=True)
@@ -149,6 +150,7 @@ async def cb_web_search(callback: types.CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("ws_sources:"))
+@allowed_callback
 async def cb_ws_sources(callback: types.CallbackQuery):
     if not callback.data:
         return
@@ -156,7 +158,11 @@ async def cb_ws_sources(callback: types.CallbackQuery):
     if not search_id:
         await callback.answer("Нет данных для отображения", show_alert=True)
         return
-    data = load_web_search(search_id)
+    try:
+        data = load_web_search(search_id)
+    except ValueError:
+        await callback.answer("❌ Неверный ID поиска", show_alert=True)
+        return
     if not data:
         await callback.answer("Результаты не найдены или устарели", show_alert=True)
         return
@@ -205,6 +211,7 @@ async def cb_ws_sources(callback: types.CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("ws_save:"))
+@allowed_callback
 async def cb_ws_save(callback: types.CallbackQuery):
     if not callback.data:
         return
@@ -212,7 +219,11 @@ async def cb_ws_save(callback: types.CallbackQuery):
 
     data = None
     if search_id:
-        data = load_web_search(search_id)
+        try:
+            data = load_web_search(search_id)
+        except ValueError:
+            await callback.answer("❌ Неверный ID поиска", show_alert=True)
+            return
 
     if not data:
         if TAVILY_API_KEY:

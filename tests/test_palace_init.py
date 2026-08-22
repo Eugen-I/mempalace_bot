@@ -507,7 +507,8 @@ def test_pn_new_wing_empty_input(monkeypatch):
     ))
     assert result is True
     assert called == []
-    assert "Название не может быть пустым" in msg.edits[-1][0]
+    # Пустой ввод теперь отклоняется на уровне санитизации с сообщением об ошибке
+    assert "Некорректное имя крыла" in msg.edits[-1][0]
     pn_mod._note_data.pop(4242, None)
 
 

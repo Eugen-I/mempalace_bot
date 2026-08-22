@@ -385,7 +385,7 @@ async def test_cb_ws_save_fallback_search(monkeypatch, tmp_path):
     monkeypatch.setattr(wsb, "load_web_search", lambda sid: None)
 
     async def fake_fallback(query, key, n):
-        return "текст", [{"text": "с", "url": "http://u", "title": "т"}], "ws_new"
+        return "текст", [{"text": "с", "url": "http://u", "title": "т"}], "ws_new1234"
 
     monkeypatch.setattr("services.tavily_search.search_with_fallback", fake_fallback)
     await wsb.cb_ws_save(cb)

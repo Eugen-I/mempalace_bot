@@ -573,7 +573,8 @@ def test_yt_audio_download_error(monkeypatch, tmp_path):
     msg = FakeMessage(text="https://youtu.be/abc")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
-    assert "❌ Ошибка: yt-dlp упал" in msg.edits[-1][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in msg.edits[-1][0]
 
 
 # ---------- mcp/reminder/quote/transkript/note early returns ----------
@@ -710,7 +711,8 @@ def test_wing_search_error(monkeypatch, tmp_path):
     msg = FakeMessage(text="сны")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
-    assert "❌ Ошибка поиска: mcp down" in msg.edits[-1][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in msg.edits[-1][0]
 
 
 # ---------- web search ----------
@@ -804,7 +806,8 @@ def test_web_search_error(monkeypatch, tmp_path):
     msg = FakeMessage(text="запрос")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
-    assert "❌ Ошибка поиска: сеть недоступна" in msg.edits[-1][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in msg.edits[-1][0]
 
 
 # ---------- Mac commands ----------
@@ -1037,7 +1040,8 @@ def test_prefix_ai_error(monkeypatch, tmp_path):
     msg = FakeMessage(text="!! что тут важного")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
-    assert "❌ Ошибка: ai down" in msg.edits[-1][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in msg.edits[-1][0]
 
 
 # ---------- /web ----------
@@ -1225,7 +1229,8 @@ def test_ai_top_level_error(monkeypatch, tmp_path):
     msg = FakeMessage(text="привет")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
-    assert "❌ Ошибка: prompt builder fail" in msg.answers[-1][0]
+    # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
+    assert "Ошибка выполнения" in msg.answers[-1][0]
     assert bot.deleted == [(100, 1)]
 
 

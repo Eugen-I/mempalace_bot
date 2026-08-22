@@ -194,7 +194,8 @@ def test_search_generic_exception(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
     result = asyncio.run(tavily.search_tavily("вопрос", "key123"))
-    assert "сломалось" in result["error"]
+    # Generic exception returns generic error message
+    assert "Ошибка поиска" in result["error"]
 
 
 def test_search_max_results_capped_at_10(monkeypatch):

@@ -13,6 +13,7 @@ from services.bot_setup import (
     yt_waiting_url as _yt_waiting_url,
 )
 from services.youtube import download_video, transcribe_audio
+from services.error_formatter import format_user_error
 
 logger = logging.getLogger("YouTubeUI")
 router = Router()
@@ -118,7 +119,7 @@ async def _handle_audio_file(message: types.Message, file_id: str, file_name: st
             reply_markup=kb.as_markup(),
         )
     except Exception as e:
-        await st.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+        await st.edit_text(format_user_error(e, "youtube_download"))
 
 
 @router.message(F.audio)
@@ -173,7 +174,7 @@ async def cb_yt_quality(callback: types.CallbackQuery):
         await callback.message.answer_video(types.FSInputFile(path))
         os.remove(path)
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка: {str(e)[:200]}")
+        await callback.message.answer(format_user_error(e, "youtube_video_process"))
 
 
 @router.callback_query(F.data.startswith("yt_tr:"))
@@ -218,7 +219,7 @@ async def cb_yt_transcribe(callback: types.CallbackQuery):
             parse_mode="Markdown",
         )
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка транскрибации: {str(e)[:200]}")
+        await callback.message.answer(format_user_error(e, "youtube_transcribe"))
     finally:
         try:
             os.remove(audio_path)
