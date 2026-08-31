@@ -5,27 +5,56 @@
 import html
 import re
 
+ALLOWED_TAGS = {"b", "i", "code", "pre", "u", "s", "a", "blockquote", "tg-spoiler"}
+
+_TAG_RE = re.compile(r"</?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>")
+
+
+def _escape_outside_allowed_tags(text: str) -> str:
+    """Escape HTML special chars except inside allowed tags."""
+    if not text:
+        return ""
+    result = []
+    last_end = 0
+    for match in _TAG_RE.finditer(text):
+        try:
+            tag_name = match.group(1)
+        except IndexError:
+            continue
+        if not tag_name:
+            continue
+        tag_name = tag_name.lower()
+        start, end = match.span()
+        if start > last_end:
+            result.append(html.escape(text[last_end:start]))
+        if tag_name in ALLOWED_TAGS:
+            result.append(text[start:end])
+        else:
+            result.append(html.escape(text[start:end]))
+        last_end = end
+    if last_end < len(text):
+        result.append(html.escape(text[last_end:]))
+    return "".join(result)
+
 
 def safe_html_format(text: str) -> str:
     if not text:
         return ""
-    # Экранируем спецсимволы HTML
-    text = html.escape(text)
-    # Заголовки: 1-6 # → <b>
+    has_allowed_tags = any(
+        f"<{tag}" in text.lower() or f"</{tag}" in text.lower()
+        for tag in ALLOWED_TAGS
+    )
+    if has_allowed_tags:
+        text = _escape_outside_allowed_tags(text)
+    else:
+        text = html.escape(text)
     text = re.sub(r"^#{1,6}\s+(.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
-    # Жирный текст
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
-    # Курсив
     text = re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
-    # Код inline
     text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
-    # Блоки кода
     text = re.sub(r"```([\s\S]*?)```", r"<pre>\1</pre>", text)
-    # Маркированные списки: - текст → • текст
     text = re.sub(r"^\s*[-*]\s+(.+)$", r"• \1", text, flags=re.MULTILINE)
-    # Нумерованные списки: 1. текст → 1. текст (оставляем как есть, но делаем жирным номер)
     text = re.sub(r"^(\s*)(\d+)\.\s+(.+)$", r"\1<b>\2.</b> \3", text, flags=re.MULTILINE)
-    # Горизонтальные линии
     text = re.sub(r"^---+$", r"<i>────</i>", text, flags=re.MULTILINE)
     return text.strip()
 
