@@ -52,7 +52,7 @@ def get_ai_response_sync_wrapper(
     )
 
 
-@router.message(F.photo | F.document)
+@router.message(F.photo | (F.document & F.document.mime_type.startswith("image/")))
 @allowed_only
 async def handle_photo(message: types.Message):
     logger.info(
