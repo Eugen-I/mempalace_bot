@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 16:30 CET
+- **Дата последнего обновления:** 2026-10-25 16:39 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** последний code-коммит S1.7 — `4a9c086`, docs-коммит — `3397bca`
-- **Текущий шаг:** `S1.7` — завершён
+- **HEAD:** последний code-коммит S1.8 — `39f5e47`; docs-коммит будет создан следующим
+- **Текущий шаг:** `S1.8` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.8` — `palace_mcp`: чтение stderr, handshake timeout, жизненный цикл
-- **Бюджет текущего шага:** 35k
-- **Израсходовано (оценка):** ~20k (миграция обработчика, 5 новых тестов, QA)
-- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
+- **Следующее действие:** `S1.9` — контекстный ключ semantic cache (`chat_id`, wing, model, версия промпта)
+- **Бюджет текущего шага:** 40k
+- **Израсходовано (оценка):** ~20k (stderr-задача, таймауты, очистка lifecycle, 10 новых тестов, QA)
+- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md`; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0); в финальном прогоне прошли.
-- **Последний QA:** 3559 passed / 1 pre-existing failed, coverage 98%; `messages.py` 97%, `ai_engine.py` 100%; lint/mypy/bandit — baseline без новых
+- **Последний QA:** 3569 passed / 1 pre-existing failed, coverage 98%; `messages.py` 97%, `ai_engine.py` 100%, `palace_mcp.py` 93%; lint/mypy — baseline без новых, bandit 73 Low (улучшение на 1)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -97,7 +97,7 @@
 | S1.5 | `_sync_ai_call`: unbound/Gemini | P0 | 40k | DONE | `0ca9871` | 2026-10-25 16:11 | ~18k |
 | S1.6 | Структурированный стриминг | P0 | 35k | DONE | `72f8ac7` | 2026-10-25 16:18 | ~16k |
 | S1.7 | Не кэшировать ошибки стриминга | P0 | 35k | DONE | `4a9c086` | 2026-10-25 16:29 | ~20k |
-| S1.8 | `palace_mcp`: stderr/timeout/lifecycle | P0 | 40k | TODO | — | — | — |
+| S1.8 | `palace_mcp`: stderr/timeout/lifecycle | P0 | 40k | DONE | `39f5e47` | 2026-10-25 16:39 | ~20k |
 | S1.9 | Контекстный semantic cache | P0 | 35k | TODO | — | — | — |
 | S1.10 | Токен и пути `.env` | P0 | 20k | TODO | — | — | — |
 | S1.11 | Circuit breaker: сброс счётчика | P0 | 15k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 8 | 0 | 5 |
+| 1 — P0 | 13 | 9 | 0 | 4 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **10** | **0** | **35** |
+| **Итого** | **45** | **11** | **0** | **34** |
 
 > Обновлять после каждого шага.
 
@@ -688,6 +688,50 @@
 
 ---
 
+### S1.8 — `palace_mcp`: stderr, handshake timeout, жизненный цикл
+
+- Дата/время: 2026-10-25 16:31–16:38 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `39f5e47`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 40k / ~20k
+- Файлы: `services/palace_mcp.py`, `tests/test_palace_mcp.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Добавлена отдельная задача `_read_stderr`, которая постоянно вычитывает stderr MCP-процесса и логирует строки с ограничением 500 символов; задача создаётся вместе с процессом и отменяется/дожидается в `stop()`.
+  2. Handshake `_rpc("initialize")` и `_notify("notifications/initialized")` ограничены `_HANDSHAKE_TIMEOUT` (30 с); ожидание `_ready` в `_ensure_alive` ограничено `_READY_TIMEOUT` (10 с) с понятной ошибкой.
+  3. При ошибке handshake, таймауте или сбое `_notify` `start()` вызывает общий `stop()`: процесс завершается, ожидается с ограниченным таймаутом, при необходимости убивается, reader/stderr-задачи отменяются и дожидаются, pending futures получают ошибку, состояние очищается.
+  4. `stop()` получил bounded wait (`_STOP_TIMEOUT` 5 с) и kill-fallback; отменяет и дожидается обе задачи, очищает `_pending`, `_ready`, `_proc`, идемпотентен.
+  5. `start()` корректно заменяет уже умерший процесс, а прежний safe-restart в `_ensure_alive` сохранён; повторный запуск после неудачного handshake покрыт тестом.
+- Тесты и команды: 10 новых тестов (24 → 34 в `tests/test_palace_mcp.py`).
+  - `python3 -m pytest tests/test_palace_mcp.py -q --no-cov` → **34 passed in 2.23s**.
+  - `python3 -m flake8 services/palace_mcp.py tests/test_palace_mcp.py` → 0; `mypy services/palace_mcp.py` → Success.
+  - `make test` → **3569 passed, 1 failed, 6 warnings in 16.12s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight`.
+    - `services/palace_mcp.py` — **93%** (непокрыты редкие ветки исключений `terminate/kill/wait`).
+  - `make lint` → те же 9 baseline-замечаний, новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **73 Low, 0 Medium, 0 High**; было 74 Low, новых нет, один B110 удалён вместе со старым `except: pass`.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 9, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 73 Low, новых 0 (улучшение на 1)
+  - coverage: 98%; `palace_mcp.py` — 93%
+- AC:
+  - [x] Нет вечного ожидания: handshake, notify, ready и остановка процесса ограничены таймаутами; при сбое процесс, задачи и pending futures очищаются.
+  - [x] stderr не переполняется: отдельная задача читает поток постоянно; покрыты молчащий и шумный stderr.
+  - [x] Есть безопасный повторный запуск после падения handshake и умершего процесса.
+- Коммит: `39f5e47` (`fix(step-1.8): harden palace mcp lifecycle`)
+- Проблемы/решения:
+  - `stop()` сначала очищает `_proc`, затем завершает процесс и отменяет задачи; это не даёт reader-циклу удерживать ссылку на уже остановленный процесс.
+  - После `terminate()` ожидание ограничено, при таймауте вызывается `kill()` и повторное ограниченное ожидание.
+  - `start()` не создаёт reader/stderr-задачи, если у fake/неполного процесса нет соответствующего pipe; для реального `create_subprocess_exec` оба pipe всегда есть.
+- Найдено попутно:
+  - INC-6: `start()`/`stop()` не защищены lifecycle-lock от одновременных вызовов; два конкурентных `start()` теоретически могут создать два процесса, последний затрёт ссылку. Текущие вызовы последовательные, поэтому в S1.8 не исправлялось.
+- Следующее действие: `S1.9` — контекстный ключ semantic cache.
+
+---
+
 ## 7. Журнал сессий
 
 | # | Дата | Агент/модель | Шаги | Результат | Токены (оценка) | Примечание |
@@ -702,6 +746,7 @@
 | 8 | 2026-10-25 16:07–16:11 | DeepSeek V4.1 Flash Free | S1.5 | DONE | ~18k | qwen empty choices, Gemini None-text, system+images contract; 3 new tests; ai_engine 100% |
 | 9 | 2026-10-25 16:17–16:18 | DeepSeek V4.1 Flash Free | S1.6 | DONE | ~16k | `AIStreamEvent` + `stream_ai_events_async`; deprecated string adapter; 6 new tests; ai_engine 100% |
 | 10 | 2026-10-25 16:20–16:29 | DeepSeek V4.1 Flash Free | S1.7 | DONE | ~20k | Handlers use structured stream events; errors not cached/saved; partial text preserved; 5 new tests; messages 97% |
+| 11 | 2026-10-25 16:31–16:38 | DeepSeek V4.1 Flash Free | S1.8 | DONE | ~20k | MCP stderr drain, handshake/ready/stop timeouts, kill-fallback, task/process cleanup; 10 new tests; palace_mcp 93% |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -754,6 +799,7 @@
 | INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов. `call_ai_async` уже внедрён в `navigation`, `action_bar`, `palace/__init__` и `transkript` (S1.4a/b); старый путь остаётся. | S3.8b или отдельный шаг | PARTIAL |
 | INC-4 | 2026-10-25 | `services/ai_engine.py` (`stream_ai_events_async`) | Gemini-ветка стриминга игнорирует `images` и system-сообщение из `messages`, используя только `system_prompt`. Sync-путь исправлен в S1.5. | Отдельный шаг стримингового Gemini-контракта | TODO |
 | INC-5 | 2026-10-25 | `handlers/messages.py` (ветка `search_web`) | При исключении `search_web` исходный ответ с `SEARCH: ...` остаётся в `answer` и может быть сохранён/закэширован как обычный ответ; `test_ai_search_pattern_error` закрепляет это поведение. | Отдельный шаг обработки ошибок web search | TODO |
+| INC-6 | 2026-10-25 | `services/palace_mcp.py` (`start`/`stop`) | Нет lifecycle-lock: конкурентные `start()`/`stop()` могут гонять создание и завершение процесса; два одновременных `start()` теоретически оставят один процесс без ссылки. | Отдельный шаг сериализации lifecycle | TODO |
 
 ---
 
