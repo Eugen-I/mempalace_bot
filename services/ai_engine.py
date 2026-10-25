@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -117,6 +118,10 @@ def _sync_ai_call(
 ) -> str:
     """Синхронная обёртка для вызова в Thread (asyncio.to_thread).
     Использует get_smart_prompt для динамической генерации системной инструкции.
+
+    Мультимодальный контракт: ``images`` — список base64-строк JPEG (без
+    data-URL префикса). Для Gemini они передаются как inline image/jpeg,
+    а system-сообщение — через ``system_instruction``.
     """
     # Нормализация названия движка
     engine = engine.lower().strip()
@@ -213,9 +218,12 @@ def _sync_ai_call(
 
             elapsed = time.time() - start_time
 
-            if hasattr(r, "choices") and r.choices:
-                choice = r.choices[0]
-                response_text = choice.message.content
+            choices = getattr(r, "choices", None)
+            if not choices:
+                return "❌ Пустой ответ от Ollama."
+
+            choice = choices[0]
+            response_text = choice.message.content or ""
 
             # ✅ АГРЕССИВНАЯ ОЧИСТКА ДЛЯ DEEPSEEK/R1
             if response_text:
@@ -302,23 +310,49 @@ def _sync_ai_call(
 
             client = genai.Client(api_key=api_key)  # type: ignore[assignment]
 
-            # Преобразование сообщений в формат Gemini
+            system_instruction = system_prompt
+            if system_from_messages:
+                system_instruction = (
+                    system_from_messages[0].get("content") or system_prompt
+                )
+
+            # Преобразование сообщений в формат Gemini.
+            # system-сообщения передаются через system_instruction, а не как role=model.
             hist = []
+            gemini_images_added = False
             for m in messages:
+                if m["role"] == "system":
+                    continue
                 role = "user" if m["role"] == "user" else "model"
-                parts = [genai_types.Part(text=m["content"])]
+                parts = [genai_types.Part(text=m.get("content", ""))]
+                if (
+                    m["role"] == "user"
+                    and images_base64
+                    and not gemini_images_added
+                ):
+                    for img_b64 in images_base64:
+                        parts.append(
+                            genai_types.Part.from_bytes(
+                                data=base64.b64decode(img_b64),
+                                mime_type="image/jpeg",
+                            ),
+                        )
+                    gemini_images_added = True
                 hist.append(genai_types.Content(role=role, parts=parts))
 
             r = client.models.generate_content(  # type: ignore[attr-defined]
                 model=model,
                 contents=hist,
                 config=genai_types.GenerateContentConfig(
-                    system_instruction=system_prompt,
+                    system_instruction=system_instruction,
                     temperature=0.7,
                     max_output_tokens=2048,
                 ),
             )
-            return r.text
+            text = r.text
+            if not text:
+                return "❌ Пустой ответ от Gemini."
+            return text
 
         available = ["qwen", "openai", "gemini"]
         raise ValueError(f"Неизвестный движок: '{engine}'. Доступные: {available}")

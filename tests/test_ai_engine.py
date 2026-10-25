@@ -96,8 +96,14 @@ class FakeStream:
 
 
 class FakePart:
-    def __init__(self, text):
+    def __init__(self, text=None, data=None, mime_type=None):
         self.text = text
+        self.data = data
+        self.mime_type = mime_type
+
+    @classmethod
+    def from_bytes(cls, data, mime_type):
+        return cls(data=data, mime_type=mime_type)
 
 
 class FakeContent:
@@ -116,6 +122,8 @@ class FakeGenAI:
         self.response_text = response_text
 
     class Client:
+        last_call = None
+
         def __init__(self, api_key=None):
             self.api_key = api_key
             self.calls = []
@@ -126,6 +134,11 @@ class FakeGenAI:
                 self.owner = owner
 
             def generate_content(self, model, contents, config=None):
+                type(self.owner).last_call = {
+                    "model": model,
+                    "contents": contents,
+                    "config": config,
+                }
                 self.owner.response_text = "gemini answer"
                 return _FakeResponse(self.owner.response_text)
 
@@ -154,9 +167,8 @@ class _FakeChunkText:
 
 
 class FakeGenAITypes:
-    @staticmethod
-    def Part(text):
-        return FakePart(text)
+    class Part(FakePart):
+        pass
 
     @staticmethod
     def Content(role, parts):
@@ -405,7 +417,17 @@ def test_sync_qwen_no_choices_field(monkeypatch):
     fake = FakeOpenAI(NoChoicesResponse())
     monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
     out = ai_engine._sync_ai_call("qwen", "m", [{"role": "user", "content": "hi"}])
-    assert "Ошибка ИИ" in out
+    assert out == "❌ Пустой ответ от Ollama."
+
+
+def test_sync_qwen_empty_choices_list(monkeypatch):
+    class EmptyChoicesResponse:
+        choices = []
+
+    fake = FakeOpenAI(EmptyChoicesResponse())
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+    out = ai_engine._sync_ai_call("qwen", "m", [{"role": "user", "content": "hi"}])
+    assert out == "❌ Пустой ответ от Ollama."
 
 
 def test_sync_qwen_truncated_by_length(monkeypatch):
@@ -639,6 +661,47 @@ def test_sync_gemini_success(monkeypatch):
         "gemini", "gemini-pro", [{"role": "user", "content": "hi"}],
     )
     assert out == "gemini answer"
+
+
+def test_sync_gemini_none_text_returns_controlled_error(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "rk-test")
+    monkeypatch.setattr(ai_engine, "genai", FakeGenAI)
+    monkeypatch.setattr(ai_engine, "genai_types", FakeGenAITypes)
+
+    def fake_generate(self, model, contents, config=None):
+        return _FakeResponse(None)
+
+    monkeypatch.setattr(
+        FakeGenAI.Client._Models, "generate_content", fake_generate,
+    )
+    out = ai_engine._sync_ai_call(
+        "gemini", "gemini-pro", [{"role": "user", "content": "hi"}],
+    )
+    assert out == "❌ Пустой ответ от Gemini."
+
+
+def test_sync_gemini_uses_system_message_and_images(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "rk-test")
+    monkeypatch.setattr(ai_engine, "genai", FakeGenAI)
+    monkeypatch.setattr(ai_engine, "genai_types", FakeGenAITypes)
+    FakeGenAI.Client.last_call = None
+
+    messages = [
+        {"role": "system", "content": "CUSTOM_SYSTEM"},
+        {"role": "user", "content": "look"},
+    ]
+    out = ai_engine._sync_ai_call(
+        "gemini", "gemini-pro", messages, images=["YmluYXJ5=="],
+    )
+
+    assert out == "gemini answer"
+    call = FakeGenAI.Client.last_call
+    assert call["config"].system_instruction == "CUSTOM_SYSTEM"
+    assert [c.role for c in call["contents"]] == ["user"]
+    parts = call["contents"][0].parts
+    assert parts[0].text == "look"
+    assert parts[1].data == b"binary"
+    assert parts[1].mime_type == "image/jpeg"
 
 
 def test_sync_gemini_import_error(monkeypatch):
