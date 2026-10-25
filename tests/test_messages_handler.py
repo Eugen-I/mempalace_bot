@@ -20,6 +20,7 @@ from services.bot_setup import (
 )
 from handlers.chat import user_sessions, waiting_for_name
 from handlers.palace.shared import _user_context
+from services.ai_engine import AIStreamEvent
 from services.reflection import REFLECTION_NS
 
 
@@ -134,7 +135,10 @@ async def _async_none(*a, **k):
 def _agen(chunks):
     async def g():
         for c in chunks:
-            yield c
+            if isinstance(c, AIStreamEvent):
+                yield c
+            else:
+                yield AIStreamEvent(ok=True, text=c)
     return g()
 
 
@@ -170,7 +174,7 @@ def _enable(monkeypatch, tmp_path=None):
     monkeypatch.setattr(messages, "load_chat", lambda path: {
         "messages": [], "summary": "", "summaries": [],
     })
-    monkeypatch.setattr(messages, "stream_ai_response_async", _stream_factory(["ответ"]))
+    monkeypatch.setattr(messages, "stream_ai_events_async", _stream_factory(["ответ"]))
 
     async def fake_send(msg, answer, mode):
         return SimpleNamespace(message_id=1)
@@ -252,7 +256,19 @@ def test_on_ai_sent_error_answer(monkeypatch):
     cache_called = []
     monkeypatch.setattr(messages, "cache_ai_response", lambda *a: cache_called.append(a))
     asyncio.run(messages._on_ai_sent(
-        answer="❌ ошибка", clean_q="q", uid=7, sent_msg=SimpleNamespace(message_id=1),
+        answer="\n❌ ошибка", clean_q="q", uid=7,
+        sent_msg=SimpleNamespace(message_id=1),
+    ))
+    assert cache_called == []
+    assert 7 not in messages._last_user_query
+
+
+def test_on_ai_sent_ollama_error_answer(monkeypatch):
+    cache_called = []
+    monkeypatch.setattr(messages, "cache_ai_response", lambda *a: cache_called.append(a))
+    asyncio.run(messages._on_ai_sent(
+        answer="\n🧠 Не удалось подключиться к Ollama. Запустите ollama serve.",
+        clean_q="q", uid=7, sent_msg=SimpleNamespace(message_id=1),
     ))
     assert cache_called == []
     assert 7 not in messages._last_user_query
@@ -1130,7 +1146,7 @@ def _ai_setup(
         calls["messages"] = a[2]
         return _agen(list(stream_chunks))
 
-    monkeypatch.setattr(messages, "stream_ai_response_async", stream_factory)
+    monkeypatch.setattr(messages, "stream_ai_events_async", stream_factory)
     return data, saves, calls, bot
 
 
@@ -1190,24 +1206,101 @@ def test_ai_cached_answer(monkeypatch, tmp_path):
     assert data["messages"][-1]["content"] == "кэш-ответ"
 
 
+def test_ai_legacy_error_cache_ignored(monkeypatch, tmp_path):
+    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    cache = FakeCache("❌ старая внутренняя ошибка")
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+    msg = FakeMessage(text="привет")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert calls["stream_kwargs"]["user_query"] == "привет"
+    assert data["messages"][-1]["content"] == "x" * 40 + "y" * 40
+    assert all("❌" not in m["content"] for m in data["messages"])
+    assert cache.sets == [("привет", "x" * 40 + "y" * 40)]
+
+
 def test_ai_error_answer(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=("❌ ИИ сломан",))
+    error = AIStreamEvent(
+        ok=False, error_code="stream_error", error_message="backend down",
+    )
+    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=(error,))
     cache = FakeCache()
     monkeypatch.setattr(messages, "get_cache", lambda: cache)
     msg = FakeMessage(text="привет")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
     assert cache.sets == []
-    assert "❌ ИИ вернул ошибку" in msg.answers[-1][0]
-    assert "❌ ИИ сломан" in msg.answers[-1][0]
+    assert saves == []
+    assert data["messages"] == [
+        {"role": "user", "content": "первый"},
+        {"role": "assistant", "content": "второй"},
+    ]
+    assert "❌ Не удалось получить ответ ИИ" in msg.answers[-1][0]
+    assert "backend down" not in msg.answers[-1][0]
 
 
-def test_ai_empty_answer(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=("",))
+def test_ai_ollama_error_is_user_friendly(monkeypatch, tmp_path):
+    error = AIStreamEvent(
+        ok=False,
+        error_code="ollama_unavailable",
+        error_message="connect failed: <internal details>",
+    )
+    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=(error,))
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
     msg = FakeMessage(text="привет")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
-    assert data["messages"][-1]["content"] == "❌ Пустой ответ от ИИ."
+    assert "Не удалось подключиться к Ollama" in msg.answers[-1][0]
+    assert "internal details" not in msg.answers[-1][0]
+    assert cache.sets == []
+    assert saves == []
+
+
+def test_ai_partial_stream_saves_only_received_text(monkeypatch, tmp_path):
+    error = AIStreamEvent(
+        ok=False, error_code="stream_error", error_message="backend down",
+    )
+    data, saves, calls, bot = _ai_setup(
+        monkeypatch, tmp_path, stream_chunks=("частичный ответ", error),
+    )
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+    sent = []
+
+    async def capture(msg, answer, mode):
+        sent.append(answer)
+        return SimpleNamespace(message_id=1)
+
+    monkeypatch.setattr(messages, "send_response_with_mode", capture)
+    msg = FakeMessage(text="привет")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert sent == ["частичный ответ"]
+    assert data["messages"][-2] == {"role": "user", "content": "привет"}
+    assert data["messages"][-1] == {
+        "role": "assistant", "content": "частичный ответ",
+    }
+    assert all("❌" not in m["content"] for m in data["messages"])
+    assert len(saves) == 1
+    assert cache.sets == []
+    assert msg.answers[-1][0].startswith("⚠️")
+
+
+def test_ai_empty_answer(monkeypatch, tmp_path):
+    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=())
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+    msg = FakeMessage(text="привет")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert cache.sets == []
+    assert saves == []
+    assert data["messages"] == [
+        {"role": "user", "content": "первый"},
+        {"role": "assistant", "content": "второй"},
+    ]
+    assert "❌ Пустой ответ от ИИ." in msg.answers[-1][0]
 
 
 def test_ai_send_failure(monkeypatch, tmp_path):
@@ -1652,12 +1745,17 @@ def test_ai_search_delete_fail(monkeypatch, tmp_path):
 
 def test_ai_search_error_answer(monkeypatch, tmp_path):
     data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
-    queued = [["SEARCH: q"], ["❌ второй поток упал"]]
+    error = AIStreamEvent(
+        ok=False, error_code="stream_error", error_message="второй поток упал",
+    )
+    queued = [["SEARCH: q"], [error]]
 
     def q_factory(*a, **k):
         return _agen(queued.pop(0))
 
-    monkeypatch.setattr(messages, "stream_ai_response_async", q_factory)
+    monkeypatch.setattr(messages, "stream_ai_events_async", q_factory)
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
 
     async def fake_search(query):
         return "results"
@@ -1666,4 +1764,32 @@ def test_ai_search_error_answer(monkeypatch, tmp_path):
     msg = FakeMessage(text="вопрос")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
-    assert "❌ ИИ вернул ошибку" in msg.answers[-1][0]
+    assert "❌ Не удалось получить ответ ИИ" in msg.answers[-1][0]
+    assert cache.sets == []
+    assert saves == []
+    assert all("❌" not in m["content"] for m in data["messages"])
+    assert all("SEARCH" not in m["content"] for m in data["messages"])
+
+
+def test_ai_search_success_caches_final_answer(monkeypatch, tmp_path):
+    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    queued = [["SEARCH: q"], ["финальный ответ"]]
+
+    def q_factory(*a, **k):
+        return _agen(queued.pop(0))
+
+    monkeypatch.setattr(messages, "stream_ai_events_async", q_factory)
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+
+    async def fake_search(query):
+        return "results"
+
+    monkeypatch.setattr("services.web_search.search_web", fake_search)
+    msg = FakeMessage(text="вопрос")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert cache.sets == [("вопрос", "финальный ответ")]
+    assert data["messages"][-1] == {
+        "role": "assistant", "content": "финальный ответ",
+    }

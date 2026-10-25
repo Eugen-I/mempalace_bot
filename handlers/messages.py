@@ -27,7 +27,12 @@ from handlers.transkript import _tr_ai_waiting, handle_tr_ai_question
 from handlers.reminder import handle_reminder_text
 from handlers.search import search_result_cache as _search_result_cache
 from services.ai_cache import cache_ai_response
-from services.ai_engine import get_current_ai, stream_ai_response_async, _sync_ai_call
+from services.ai_engine import (
+    AIStreamEvent,
+    _sync_ai_call,
+    get_current_ai,
+    stream_ai_events_async,
+)
 from services.auto_sync import auto_sync_chat
 from services.bot_setup import (
     bot,
@@ -76,6 +81,27 @@ async def _on_ai_complete(**kwargs):
         asyncio.create_task(extract_and_store_facts(uid, clean_q, answer))
 
 
+def _stream_error_text(event: AIStreamEvent) -> str:
+    """Безопасное пользовательское сообщение для ошибки стрима."""
+    if event.error_code == "ollama_unavailable":
+        return (
+            "🧠 Не удалось подключиться к Ollama. "
+            "Запустите Ollama или переключите модель в /settings."
+        )
+    if event.error_code == "empty_stream":
+        return "❌ Пустой ответ от ИИ."
+    return "❌ Не удалось получить ответ ИИ. Попробуйте ещё раз."
+
+
+def _is_internal_error_text(text: str) -> bool:
+    """Отличает старые строки-ошибки от нормального ответа модели."""
+    stripped = text.lstrip()
+    return (
+        stripped.startswith("❌")
+        or stripped.startswith("🧠 Не удалось подключиться к Ollama")
+    )
+
+
 async def _on_ai_sent(**kwargs):
     sent_msg = kwargs.get("sent_msg")
     answer = kwargs.get("answer", "")
@@ -86,7 +112,7 @@ async def _on_ai_sent(**kwargs):
     message = kwargs.get("message")
     clean_q = kwargs.get("clean_q", "")
 
-    if answer.startswith("❌"):
+    if not answer or _is_internal_error_text(answer):
         return
 
     if sent_msg and hasattr(sent_msg, "message_id"):
@@ -734,8 +760,12 @@ async def process_user_message(message: types.Message):
 
         _sem_cache = get_cache()
         cached_answer = _sem_cache.get(clean_q)
+        if cached_answer is not None and _is_internal_error_text(cached_answer):
+            # Старые версии могли положить в кэш текст внутренней ошибки.
+            cached_answer = None
 
         answer = ""
+        stream_error: AIStreamEvent | None = None
         stream_buffer = ""
         last_update = time.time()
         stream_msg = None
@@ -748,7 +778,7 @@ async def process_user_message(message: types.Message):
             except Exception:
                 pass
         else:
-            async for chunk in stream_ai_response_async(
+            async for event in stream_ai_events_async(
                 _engine,
                 _model,
                 context_msgs,
@@ -757,6 +787,13 @@ async def process_user_message(message: types.Message):
                 has_images=has_images_in_query,
                 images=images_b64,
             ):
+                if not event.ok:
+                    stream_error = event
+                    continue
+                if stream_error is not None or not event.text:
+                    continue
+
+                chunk = event.text
                 answer += chunk
                 stream_buffer += chunk
 
@@ -778,14 +815,13 @@ async def process_user_message(message: types.Message):
                     except Exception:
                         pass
 
-            if answer and not answer.startswith("❌"):
-                _sem_cache.set(clean_q, answer)
-
         # 🌐 SEARCH pattern: если ИИ запросил поиск
-        search_match = re.search(
-            r"(?:SEARCH|ПОИСК|SEARCH_WEB):\s*(.+)", answer, re.IGNORECASE,
-        )
-        if search_match and not answer.startswith("❌"):
+        search_match = None
+        if answer and stream_error is None:
+            search_match = re.search(
+                r"(?:SEARCH|ПОИСК|SEARCH_WEB):\s*(.+)", answer, re.IGNORECASE,
+            )
+        if search_match:
             search_query = search_match.group(1).strip()
             logger.info(f"[WEB_SEARCH] AI requested search: {search_query}")
             try:
@@ -806,13 +842,19 @@ async def process_user_message(message: types.Message):
                     except Exception:
                         pass
                 answer = ""
-                async for chunk in stream_ai_response_async(
+                async for event in stream_ai_events_async(
                     _engine, _model, context_msgs,
                     context=palace_context, user_query=clean_q,
                     has_images=has_images_in_query, images=images_b64,
                 ):
-                    answer += chunk
-                if not answer.startswith("❌"):
+                    if not event.ok:
+                        stream_error = event
+                        continue
+                    if stream_error is not None:
+                        continue
+                    if event.text:
+                        answer += event.text
+                if stream_error is None and answer:
                     msg_text = answer[:200] if len(answer) > 200 else answer
                     await status.edit_text(
                         f"🌐 <code>{get_current_ai()[1]}</code> (с поиском): "
@@ -828,53 +870,84 @@ async def process_user_message(message: types.Message):
             except Exception:
                 pass
 
-        if not answer or answer.startswith("❌"):
-            answer = answer or "❌ Пустой ответ от ИИ."
+        if not answer and stream_error is None:
+            stream_error = AIStreamEvent(
+                ok=False,
+                error_code="empty_stream",
+                error_message="Модель не вернула текст.",
+            )
 
-        msgs.append({"role": "user", "content": clean_q})
-        msgs.append({"role": "assistant", "content": answer})
-        data["messages"] = msgs[-50:]
-        try:
-            save_chat(fpath, data)
-        except Exception as e:
-            logger.warning(f"Не удалось сохранить чат: {e}")
+        if stream_error is not None:
+            logger.warning(
+                "[AI_STREAM] error_code=%s: %s",
+                stream_error.error_code,
+                stream_error.error_message,
+            )
+        elif answer and cached_answer is None:
+            # Кэшируем только финальный успешный ответ после всех стримов,
+            # но не частично полученный текст.
+            _sem_cache.set(clean_q, answer)
 
-        await bus.publish(
-            Event.AI_RESPONSE_COMPLETE,
-            answer=answer,
-            clean_q=clean_q,
-            uid=uid,
-            fname=fname,
-            fpath=fpath,
-            data=data,
-        )
+        # В историю попадает только реальный текст; сообщение об ошибке — нет.
+        if answer:
+            msgs.append({"role": "user", "content": clean_q})
+            msgs.append({"role": "assistant", "content": answer})
+            data["messages"] = msgs[-50:]
+            try:
+                save_chat(fpath, data)
+            except Exception as e:
+                logger.warning(f"Не удалось сохранить чат: {e}")
+
+        if stream_error is None:
+            await bus.publish(
+                Event.AI_RESPONSE_COMPLETE,
+                answer=answer,
+                clean_q=clean_q,
+                uid=uid,
+                fname=fname,
+                fpath=fpath,
+                data=data,
+            )
 
         vs = get_voice_settings(uid)
         sent_msg = None
 
-        try:
-            if answer.startswith("❌"):
+        if stream_error is not None and not answer:
+            try:
                 sent_msg = await message.answer(
-                    safe_html_format(f"❌ ИИ вернул ошибку: {answer[:200]}"),
-                    parse_mode="HTML",
+                    _stream_error_text(stream_error), parse_mode="HTML",
                 )
-            else:
+            except Exception as e:
+                logger.error(f"Ошибка отправки ошибки стрима: {e}", exc_info=True)
+                sent_msg = await message.answer("❌ Не удалось доставить ответ ИИ.")
+        else:
+            try:
                 sent_msg = await send_response_with_mode(message, answer, vs["mode"])
-        except Exception as e:
-            logger.error(f"Ошибка отправки ответа: {e}", exc_info=True)
-            sent_msg = await message.answer("❌ Не удалось доставить ответ ИИ.")
+            except Exception as e:
+                logger.error(f"Ошибка отправки ответа: {e}", exc_info=True)
+                sent_msg = await message.answer("❌ Не удалось доставить ответ ИИ.")
 
-        await bus.publish(
-            Event.AI_RESPONSE_SENT,
-            sent_msg=sent_msg,
-            answer=answer,
-            chat_id=message.chat.id,
-            uid=uid,
-            fname=fname,
-            fpath=fpath,
-            message=message,
-            clean_q=clean_q,
-        )
+            if stream_error is not None:
+                try:
+                    await message.answer(
+                        "⚠️ Ответ оборвался — показана только полученная часть.",
+                    )
+                except Exception as e:
+                    logger.debug(f"Не удалось отправить предупреждение: {e}")
+
+        # Частичный ответ не кэшируем и не рассылаем как успешный.
+        if stream_error is None:
+            await bus.publish(
+                Event.AI_RESPONSE_SENT,
+                sent_msg=sent_msg,
+                answer=answer,
+                chat_id=message.chat.id,
+                uid=uid,
+                fname=fname,
+                fpath=fpath,
+                message=message,
+                clean_q=clean_q,
+            )
 
     except Exception as e:
         logger.error("❌ Ошибка процесса ИИ: %s", e, exc_info=True)
