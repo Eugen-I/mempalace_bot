@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (7/45 шагов `DONE`)
+**Статус работы:** в работе (8/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 16:06 CET
+- **Дата последнего обновления:** 2026-10-25 16:11 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** см. `git log`; последний code-коммит S1.4b — `c6da708`, docs-checkpoint — `49cf447`
-- **Текущий шаг:** `S1.4b` — завершён
+- **HEAD:** `0ca9871` (S1.5 code); docs-checkpoint — см. `git log`
+- **Текущий шаг:** `S1.5` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.5` — `_sync_ai_call`: инициализация текста и Gemini/мультимодальность
-- **Бюджет текущего шага:** 30k
-- **Израсходовано (оценка):** ~14k (5 вызовов, тесты, полный QA)
-- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
+- **Следующее действие:** `S1.6` — структурированный результат стриминга
+- **Бюджет текущего шага:** 40k
+- **Израсходовано (оценка):** ~18k (код, 3 новых теста, полный QA)
+- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md` (готовится docs-checkpoint); чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0), в финальном прогоне прошли.
 - **Последний QA:** 3545 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
@@ -94,7 +94,7 @@
 | S1.3 | Async-обёртка AI | P0 | 35k | DONE | `8d69c79` | 2026-10-25 15:46 | ~12k |
 | S1.4a | Async AI в `palace/navigation.py` | P0 | 35k | DONE | `c2484f8` | 2026-10-25 15:55 | ~16k |
 | S1.4b | Async AI в action_bar/palace/transkript | P0 | 30k | DONE | `c6da708` | 2026-10-25 16:04 | ~14k |
-| S1.5 | `_sync_ai_call`: unbound/Gemini | P0 | 40k | TODO | — | — | — |
+| S1.5 | `_sync_ai_call`: unbound/Gemini | P0 | 40k | DONE | `0ca9871` | 2026-10-25 16:11 | ~18k |
 | S1.6 | Структурированный стриминг | P0 | 35k | TODO | — | — | — |
 | S1.7 | Не кэшировать ошибки стриминга | P0 | 35k | TODO | — | — | — |
 | S1.8 | `palace_mcp`: stderr/timeout/lifecycle | P0 | 40k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 5 | 0 | 8 |
+| 1 — P0 | 13 | 6 | 0 | 7 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **7** | **0** | **38** |
+| **Итого** | **45** | **8** | **0** | **37** |
 
 > Обновлять после каждого шага.
 
@@ -557,6 +557,48 @@
 
 ---
 
+### S1.5 — `_sync_ai_call`: неинициализированный текст и Gemini/мультимодальность
+
+- Дата/время: 2026-10-25 16:07–16:11 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `0ca9871`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 40k / ~18k
+- Файлы: `services/ai_engine.py`, `tests/test_ai_engine.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. В qwen-ветке `response_text` больше не может быть unbound: `choices` читаются через `getattr`, пустой список/отсутствие поля сразу возвращают «❌ Пустой ответ от Ollama.». Текст ответа инициализируется как `choice.message.content or ""`.
+  2. В Gemini-ветке `r.text` читается один раз; `None`/пустая строка возвращают «❌ Пустой ответ от Gemini.», а не `None` в вызывающий код.
+  3. System-сообщение из `messages` теперь передаётся в Gemini через `system_instruction` и исключается из истории (раньше превращалось в `role="model"`).
+  4. Изображения Gemini теперь поддерживаются: base64 JPEG передаются как inline `image/jpeg` через `Part.from_bytes` в первом user-сообщении. Контракт `images` (base64 JPEG без data-URL) задокументирован в docstring `_sync_ai_call`.
+  5. Обновлены тестовые двойники (`FakePart.from_bytes`, захват `GenerateContentConfig`) и добавлены проверки: пустой `choices`, `None`-текст Gemini, system + image для Gemini. Успешные ответы qwen/openai/gemini остаются покрытыми прежними тестами.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_ai_engine.py -q --tb=short --override-ini=addopts=-ra` → **81 passed, 1 warning in 2.86s**.
+  - `make test` → **3548 passed, 1 failed, 6 warnings in 15.55s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight`.
+    - `services/ai_engine.py` — **100%**.
+  - `make lint` → те же 9 baseline-замечаний, новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **74 Low, 0 Medium, 0 High** — baseline, новых 0.
+  - `python3 -m flake8 services/ai_engine.py tests/test_ai_engine.py` → 0; `mypy services/ai_engine.py` → Success; `git diff --check` → чисто.
+- QA:
+  - lint: baseline 9, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: baseline 74 Low, новых 0
+  - coverage: 98%; `ai_engine.py` — 100%
+- AC:
+  - [x] Нет `UnboundLocalError` и `None` в тексте ответа: пустые `choices`/`r.text` дают контролируемые строки.
+  - [x] Мультимодальный контракт явно определён в docstring и протестирован (system message + base64 JPEG).
+  - [x] Формат успешного ответа не изменён.
+- Коммит: `0ca9871` (`fix(step-1.5): harden sync ai response handling`)
+- Проблемы/решения:
+  - Для Gemini выбран вариант «поддержать изображения», а не отклонять: формат base64 JPEG уже был контрактом OpenAI-ветки, поэтому поведение унифицировано.
+  - Якорь `services/ai_engine.py:204-209` сместился после предыдущих шагов; правка сделана по символам `response_text`/`choices`.
+- Найдено попутно:
+  - INC-4: Gemini-ветка `stream_ai_response_async` всё ещё игнорирует `images` и использует только сгенерированный `system_prompt`, не system-сообщение из `messages`; S1.5 касается только sync-пути.
+- Следующее действие: `S1.6` — структурированный результат стриминга.
+
+---
+
 ## 7. Журнал сессий
 
 | # | Дата | Агент/модель | Шаги | Результат | Токены (оценка) | Примечание |
@@ -568,6 +610,7 @@
 | 5 | 2026-10-25 15:43–15:46 | DeepSeek V4.1 Flash Free | S1.3 | DONE | ~12k | `call_ai_async` + timeout + heartbeat; 7 new tests; ai_engine 100% |
 | 6 | 2026-10-25 15:49–15:55 | DeepSeek V4.1 Flash Free | S1.4a | DONE | ~16k | 5 sync AI calls → `call_ai_async`; error statuses; 8 new tests; navigation/ai_engine 100% |
 | 7 | 2026-10-25 16:00–16:04 | DeepSeek V4.1 Flash Free | S1.4b | DONE | ~14k | 5 sync AI calls → `call_ai_async` in action_bar/palace/transkript; 3 new tests; transcription heartbeat |
+| 8 | 2026-10-25 16:07–16:11 | DeepSeek V4.1 Flash Free | S1.5 | DONE | ~18k | qwen empty choices, Gemini None-text, system+images contract; 3 new tests; ai_engine 100% |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -617,7 +660,8 @@
 |---|---|---|---|---|---|
 | INC-1 | 2026-10-25 | `tests/test_semantic_cache.py:60` | `test_ttl_eviction` флаки при `ttl=0`: `set()` и `get()` могут попасть в один тик, проверка `now - timestamp > 0` не срабатывает. В полном прогоне S1.2 упал один раз, отдельно 5/5 прошёл. | S4.x — стабилизировать тест/логику TTL | TODO |
 | INC-2 | 2026-10-25 | `handlers/palace/save.py:281`, `services/brainstorm.py:370`, `handlers/notes_agent.py:268` | Вызывающие оборачивают `safe_html_format(...)` в `<code>`; разрешённые теги внутри такого значения сохраняются как HTML, а не выводятся литерально. Для данных в code нужен `html.escape`. | S4.3 или отдельный шаг HTML-санитизации | TODO |
-| INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов. `call_ai_async` уже внедрён в `navigation`, `action_bar`, `palace/__init__` и `transkript` (S1.4a/b); старый путь остаётся. | S1.5 или отдельный шаг | PARTIAL |
+| INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов. `call_ai_async` уже внедрён в `navigation`, `action_bar`, `palace/__init__` и `transkript` (S1.4a/b); старый путь остаётся. | S3.8b или отдельный шаг | PARTIAL |
+| INC-4 | 2026-10-25 | `services/ai_engine.py` (`stream_ai_response_async`) | Gemini-ветка стриминга игнорирует `images` и system-сообщение из `messages`, используя только `system_prompt`. Sync-путь исправлен в S1.5. | S1.6/S1.7 или отдельный шаг | TODO |
 
 ---
 
