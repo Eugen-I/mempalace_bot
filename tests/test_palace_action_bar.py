@@ -9,6 +9,13 @@ import pytest
 from handlers.palace import action_bar as ab
 
 
+def _async_ai(fn):
+    async def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 class FakeUser:
     def __init__(self, uid):
         self.id = uid
@@ -554,7 +561,7 @@ def test_cb_ab_ai_run_mode_a(monkeypatch):
         return "результат анализа"
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("ollama", "qwen"))
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
 
     async def fake_finalize(uid, edit_func, text, **kwargs):
         captured["text"] = text
@@ -578,7 +585,7 @@ def test_cb_ab_ai_run_mode_a_error(monkeypatch):
         raise RuntimeError("ai fail")
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("ollama", "qwen"))
-    monkeypatch.setattr(ab, "_sync_ai_call", boom)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(boom))
     cb = FakeCb(data="ab_ai_m:a:abcd")
     asyncio.run(ab.cb_ab_ai_run(cb))
     # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
@@ -595,7 +602,7 @@ def test_cb_ab_ai_run_mode_c(monkeypatch):
         captured["prompt"] = messages[1]["content"]
         return "результат"
 
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
 
     async def fake_context(answer, uid):
         return "дворцовый контекст"
@@ -628,8 +635,9 @@ def test_cb_ab_web_success(monkeypatch):
     _enable(monkeypatch)
     answer = _seed_answer(text="текст")
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("ollama", "qwen"))
-    monkeypatch.setattr(ab, "_sync_ai_call",
-                        lambda *a, **k: '"поисковой запрос"')
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: '"поисковой запрос"'),
+    )
     cb = FakeCb(data="ab_web:abcd")
     asyncio.run(ab.cb_ab_web(cb))
     text = cb.message.edits[-1][0]
@@ -644,7 +652,9 @@ def test_cb_ab_web_empty_query_error(monkeypatch):
     _enable(monkeypatch)
     _seed_answer(text="текст")
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("ollama", "qwen"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "  «»  ")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "  «»  "),
+    )
     cb = FakeCb(data="ab_web:abcd")
     asyncio.run(ab.cb_ab_web(cb))
     # format_user_error для ValueError возвращает "❌ Некорректные данные"
@@ -659,7 +669,7 @@ def test_cb_ab_web_error(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("ai fail")
 
-    monkeypatch.setattr(ab, "_sync_ai_call", boom)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(boom))
     cb = FakeCb(data="ab_web:abcd")
     asyncio.run(ab.cb_ab_web(cb))
     # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
@@ -717,7 +727,7 @@ def test_run_web_search_finalize_success(monkeypatch):
         captured["system"] = messages[0]["content"]
         return "итоговый ответ"
 
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
 
     async def fake_finalize(uid, edit_func, text, **kwargs):
         captured["text"] = text
@@ -743,7 +753,9 @@ def test_run_web_search_finalize_empty_results(monkeypatch):
 
     monkeypatch.setattr("services.web_search.search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("ollama", "qwen"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "ответ")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "ответ"),
+    )
     monkeypatch.setattr(
         ab, "finalize_answer",
         lambda uid, edit_func, text, **kwargs: captured.append(text),

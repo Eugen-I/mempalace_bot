@@ -6,6 +6,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from cachetools import TTLCache
 
 from config import TRANSKRIPT_DIR, allowed_callback, allowed_only
+from services.ai_engine import AITimeoutError, call_ai_async, get_current_ai
 from services.text_formatter import safe_html_format, split_message
 from services.ttl_dict import TtlDict
 from services.error_formatter import format_user_error
@@ -361,8 +362,6 @@ async def _answer_tr_ai(msg, uid: int, fname: str, question: str, with_web: bool
         await msg.edit_text("❌ Транскрипт пуст.")
         return
 
-    from services.ai_engine import get_current_ai, _sync_ai_call
-
     engine, model = get_current_ai()
     _tr_last_question[uid] = question
     if with_web:
@@ -384,10 +383,17 @@ async def _answer_tr_ai(msg, uid: int, fname: str, question: str, with_web: bool
             f"Транскрипт:\n{content[:25000]}"
         )
 
-    result = _sync_ai_call(engine, model, [
-        {"role": "system", "content": system},
-        {"role": "user", "content": question},
-    ])
+    try:
+        result = await call_ai_async(engine, model, [
+            {"role": "system", "content": system},
+            {"role": "user", "content": question},
+        ])
+    except AITimeoutError:
+        await msg.edit_text("⏱️ ИИ не ответил вовремя. Попробуйте ещё раз.")
+        return
+    except Exception as e:
+        await msg.edit_text(format_user_error(e, "transcript_ai"))
+        return
     await msg.edit_text(result or "❌ Пустой ответ.", parse_mode="HTML")
 
 

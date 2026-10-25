@@ -26,7 +26,7 @@ from aiogram import F, Router, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import NOTES_DIR, allowed_callback
-from services.ai_engine import _sync_ai_call, get_current_ai
+from services.ai_engine import call_ai_async, get_current_ai
 from services.text_formatter import safe_html_format, split_message
 from services.ttl_dict import TtlDict
 from services.error_formatter import format_user_error
@@ -406,7 +406,7 @@ async def cb_ab_ai_run(cb: types.CallbackQuery):
             system = (
                 "Ты — аналитик. Отвечай на русском языке, структурированно."
             )
-        result = _sync_ai_call(engine, model, [
+        result = await call_ai_async(engine, model, [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ])
@@ -446,7 +446,9 @@ async def cb_ab_web(cb: types.CallbackQuery):
             "для уточнения следующего текста в интернете. Верни только запрос.\n\n"
             f"Текст:\n{answer.text[:3000]}"
         )
-        query = _sync_ai_call(engine, model, [{"role": "user", "content": prompt}])
+        query = await call_ai_async(
+            engine, model, [{"role": "user", "content": prompt}],
+        )
         query = (query or "").strip().strip('"').strip("«»")
         if not query:
             raise ValueError("ИИ не смог сформулировать запрос")
@@ -505,7 +507,7 @@ async def _run_web_search_finalize(
             f"Контекст ответа:\n{answer.text[:6000]}\n\n"
             f"Результаты поиска:\n{web_results}"
         )
-        result = _sync_ai_call(engine, model, [
+        result = await call_ai_async(engine, model, [
             {"role": "system", "content": system},
             {"role": "user", "content": query},
         ])

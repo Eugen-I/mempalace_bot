@@ -20,7 +20,7 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import DATA_DIR, allowed_callback, allowed_only
-from services.ai_engine import get_current_ai
+from services.ai_engine import call_ai_async, get_current_ai
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
@@ -574,7 +574,6 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                     ctx_parts.append(f"[{wing}/{room}]\n{r.strip()}")
                 except Exception:
                     ctx_parts.append(f"[{wing}/{room}]\n(не удалось прочитать)")
-            from services.ai_engine import _sync_ai_call
             engine, model = get_current_ai()
             system = (
                 "Ты анализируешь связь между двумя комнатами знаний. "
@@ -588,7 +587,7 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             system += "\n\n" + "\n\n".join(ctx_parts)
             prompt = f"Вопрос пользователя: {text}\n\nПроанализируй связь между этими комнатами."
             try:
-                result = _sync_ai_call(engine, model, [
+                result = await call_ai_async(engine, model, [
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
                 ])
