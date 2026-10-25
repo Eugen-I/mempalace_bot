@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 16:40 CET
+- **Дата последнего обновления:** 2026-10-25 16:55 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** последний code-коммит S1.8 — `39f5e47`, docs-коммит — `349064a`
-- **Текущий шаг:** `S1.8` — завершён
+- **HEAD:** последний code-коммит S1.9 — `62af728`, docs-коммит — будет после этого обновления
+- **Текущий шаг:** `S1.9` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.9` — контекстный ключ semantic cache (`chat_id`, wing, model, версия промпта)
-- **Бюджет текущего шага:** 40k
-- **Израсходовано (оценка):** ~20k (stderr-задача, таймауты, очистка lifecycle, 10 новых тестов, QA)
-- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
+- **Следующее действие:** `S1.10` — убрать опасный fallback `"test-token"` и проверить пути `.env`
+- **Бюджет текущего шага:** 35k
+- **Израсходовано (оценка):** ~30k (контекстный ключ, инвалидация модели, 21 новый тест, QA)
+- **Незакоммиченные изменения:** только этот файл прогресса; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0); в финальном прогоне прошли.
-- **Последний QA:** 3569 passed / 1 pre-existing failed, coverage 98%; `messages.py` 97%, `ai_engine.py` 100%, `palace_mcp.py` 93%; lint/mypy — baseline без новых, bandit 73 Low (улучшение на 1)
+- **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations`; TTL-флак устранён в S1.9 (детерминированные часы).
+- **Последний QA:** 3590 passed / 1 pre-existing failed, coverage 98%; `semantic_cache.py` 100%, `messages.py` 97%, `settings.py` 99%, `ai_engine.py` 100%; lint/mypy — baseline без новых, bandit 73 Low
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -98,7 +98,7 @@
 | S1.6 | Структурированный стриминг | P0 | 35k | DONE | `72f8ac7` | 2026-10-25 16:18 | ~16k |
 | S1.7 | Не кэшировать ошибки стриминга | P0 | 35k | DONE | `4a9c086` | 2026-10-25 16:29 | ~20k |
 | S1.8 | `palace_mcp`: stderr/timeout/lifecycle | P0 | 40k | DONE | `39f5e47` | 2026-10-25 16:39 | ~20k |
-| S1.9 | Контекстный semantic cache | P0 | 35k | TODO | — | — | — |
+| S1.9 | Контекстный semantic cache | P0 | 35k | DONE | `62af728` | 2026-10-25 16:55 | ~30k |
 | S1.10 | Токен и пути `.env` | P0 | 20k | TODO | — | — | — |
 | S1.11 | Circuit breaker: сброс счётчика | P0 | 15k | TODO | — | — | — |
 | S1.12 | Напоминания: время/ключи/JSON | P0 | 30k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 9 | 0 | 4 |
+| 1 — P0 | 13 | 10 | 0 | 3 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **11** | **0** | **34** |
+| **Итого** | **45** | **12** | **0** | **33** |
 
 > Обновлять после каждого шага.
 
@@ -732,6 +732,54 @@
 
 ---
 
+### S1.9 — Контекстный ключ semantic cache
+
+- Дата/время: 2026-10-25 16:45–16:55 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `62af728`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 35k / ~30k
+- Файлы: `services/semantic_cache.py`, `handlers/messages.py`, `handlers/settings.py`, `tests/test_semantic_cache.py`, `tests/test_messages_handler.py`, `tests/test_settings_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. `SemanticCache.get/set` теперь требуют контекст: `chat_id`, `wing`, `model`, `prompt_version` и `mode`. Если хотя бы один обязательный компонент пуст или отсутствует, `get()` возвращает промах, а `set()` ничего не сохраняет; бесконтекстной глобальной записи больше нет.
+  2. Внутренний ключ стал составным `(scope, normalized_query)`. Семантическое сравнение ищет кандидатов только с точно совпадающим scope, поэтому похожий запрос из другого чата/крыла/модели не может дать попадание.
+  3. `handlers/messages.py` передаёт `message.chat.id`, модель, режим (`chat`/`coding`, плюс digest изображений) и `prompt_version` вида `smart-prompt-v1:<sha256(system_instruction)[:16]>`; в wing входит целевое крыло и контекст пользователя `wing/room/drawer`, для явно глобального поиска используется отдельный scope `global`.
+  4. При смене модели `handlers/settings.cb_set_ai` инвалидирует записи предыдущей модели через `SemanticCache.invalidate_model`; ключ с моделью дополнительно не даёт старым записям попасть в новую модель.
+  5. Сохранены TTL, ограничение `max_size`, `invalidate()` и статистика; добавлен `RLock`, чтобы операции с общим кэшем были потокобезопасны. Async-safety сохранена: внутри методов нет `await`.
+  6. TTL-тесты переведены с `sleep` на детерминированные часы, поэтому флак `test_ttl_eviction` больше не воспроизводится.
+- Тесты и команды: 21 новый тест (19 в `tests/test_semantic_cache.py`, 2 в `tests/test_messages_handler.py`); всего в semantic cache 45 собранных тестов.
+  - `python3 -m pytest tests/test_semantic_cache.py -q --no-cov` → **45 passed**.
+  - `python3 -m pytest tests/test_semantic_cache.py tests/test_messages_handler.py tests/test_settings_handler.py -q --no-cov` → **189 passed, 1 warning**.
+  - `make test` → **3590 passed, 1 failed, 6 warnings in 15.95s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight`.
+    - `services/semantic_cache.py` — **100%**, `handlers/messages.py` — **97%**, `handlers/settings.py` — **99%**.
+  - `make lint` → те же 9 baseline-замечаний, новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **73 Low, 0 Medium, 0 High**, новых 0.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 9, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 73 Low, новых 0
+  - coverage: 98%; `semantic_cache.py` — 100%
+- AC:
+  - [x] Нет кросс-чатовых/кросс-крыловых/кросс-модельных попаданий: сравнение ограничено scope, неполный ключ всегда даёт промах.
+  - [x] Есть тесты на изоляцию по chat_id, wing, model, prompt_version и mode, а также на отсутствие глобального fallback.
+  - [x] Есть TTL и инвалидация при смене модели.
+  - [x] Потокобезопасность/async-безопасность не ухудшены.
+- Коммит: `62af728` (`fix(step-1.9): scope semantic cache by context`)
+- Проблемы/решения:
+  - В `prompt_version` включён отпечаток фактического system prompt, а не только статическая версия: изменение промпта, памяти или palace-контекста автоматически делает старые записи недоступными. Это может уменьшить число попаданий, но соответствует принципу «лучше промах, чем чужой ответ».
+  - Для запросов без определённого крыла используется явный scope `global`, а не ключ без wing; на уровне API пустой wing по-прежнему означает промах.
+  - Смена модели защищена двумя механизмами: модель входит в ключ и старые записи дополнительно удаляются в настройках.
+  - Граница TTL оставлена прежней (`now - timestamp > ttl`); тест на точную границу переименован в `test_evict_boundary_exact_ttl_is_not_expired`, чтобы имя соответствовало поведению.
+- Найдено попутно:
+  - INC-1 закрыт: TTL-тесты больше не зависят от планировщика/`sleep`.
+  - Pre-commit flake8 на изменённом `tests/test_settings_handler.py` выявил 5 baseline-замечаний (неиспользуемый `os`, 4 длинные строки); они исправлены без изменения логики тестов.
+- Следующее действие: `S1.10` — убрать опасный fallback `"test-token"` и проверить пути `.env`.
+
+---
+
 ## 7. Журнал сессий
 
 | # | Дата | Агент/модель | Шаги | Результат | Токены (оценка) | Примечание |
@@ -747,6 +795,7 @@
 | 9 | 2026-10-25 16:17–16:18 | DeepSeek V4.1 Flash Free | S1.6 | DONE | ~16k | `AIStreamEvent` + `stream_ai_events_async`; deprecated string adapter; 6 new tests; ai_engine 100% |
 | 10 | 2026-10-25 16:20–16:29 | DeepSeek V4.1 Flash Free | S1.7 | DONE | ~20k | Handlers use structured stream events; errors not cached/saved; partial text preserved; 5 new tests; messages 97% |
 | 11 | 2026-10-25 16:31–16:38 | DeepSeek V4.1 Flash Free | S1.8 | DONE | ~20k | MCP stderr drain, handshake/ready/stop timeouts, kill-fallback, task/process cleanup; 10 new tests; palace_mcp 93% |
+| 12 | 2026-10-25 16:45–16:55 | DeepSeek V4.1 Flash Free | S1.9 | DONE | ~30k | Context-scoped semantic cache, model invalidation, prompt/image fingerprint; 21 new tests; semantic_cache 100% |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -794,7 +843,7 @@
 
 | ID | Дата | Файл/место | Проблема | Предлагаемый шаг | Статус |
 |---|---|---|---|---|---|
-| INC-1 | 2026-10-25 | `tests/test_semantic_cache.py:60` | `test_ttl_eviction` флаки при `ttl=0`: `set()` и `get()` могут попасть в один тик, проверка `now - timestamp > 0` не срабатывает. В полном прогоне S1.2 упал один раз, отдельно 5/5 прошёл. | S4.x — стабилизировать тест/логику TTL | TODO |
+| INC-1 | 2026-10-25 | `tests/test_semantic_cache.py` | `test_ttl_eviction` флаки при `ttl=0`: `set()` и `get()` могли попасть в один тик. В S1.9 тесты TTL переведены на детерминированные часы; логика TTL не менялась. | S4.x — стабилизировать тест/логику TTL | RESOLVED (S1.9) |
 | INC-2 | 2026-10-25 | `handlers/palace/save.py:281`, `services/brainstorm.py:370`, `handlers/notes_agent.py:268` | Вызывающие оборачивают `safe_html_format(...)` в `<code>`; разрешённые теги внутри такого значения сохраняются как HTML, а не выводятся литерально. Для данных в code нужен `html.escape`. | S4.3 или отдельный шаг HTML-санитизации | TODO |
 | INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов. `call_ai_async` уже внедрён в `navigation`, `action_bar`, `palace/__init__` и `transkript` (S1.4a/b); старый путь остаётся. | S3.8b или отдельный шаг | PARTIAL |
 | INC-4 | 2026-10-25 | `services/ai_engine.py` (`stream_ai_events_async`) | Gemini-ветка стриминга игнорирует `images` и system-сообщение из `messages`, используя только `system_prompt`. Sync-путь исправлен в S1.5. | Отдельный шаг стримингового Gemini-контракта | TODO |
