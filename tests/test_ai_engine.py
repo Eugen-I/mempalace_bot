@@ -10,6 +10,7 @@ import builtins
 import importlib
 import json
 import sys
+import time
 
 import pytest
 
@@ -678,6 +679,132 @@ def test_get_ai_response_async_executor_failure(monkeypatch):
     )
     assert "Системная ошибка" in out
     assert "executor exploded" in out
+
+
+# ---------- call_ai_async ----------
+
+
+def test_call_ai_async_returns_sync_result_and_forwards_args(monkeypatch):
+    captured = {}
+
+    def fake_sync(engine, model, messages, context="", user_query="", has_images=False, **kwargs):
+        captured.update({
+            "engine": engine,
+            "model": model,
+            "messages": messages,
+            "context": context,
+            "user_query": user_query,
+            "has_images": has_images,
+            "kwargs": kwargs,
+        })
+        return "sync result"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", fake_sync)
+    out = asyncio.run(
+        ai_engine.call_ai_async(
+            "qwen",
+            "m",
+            [{"role": "user", "content": "hi"}],
+            context="ctx",
+            user_query="q",
+            has_images=True,
+            sampling={"temperature": 0.2},
+        ),
+    )
+    assert out == "sync result"
+    assert captured["engine"] == "qwen"
+    assert captured["model"] == "m"
+    assert captured["context"] == "ctx"
+    assert captured["user_query"] == "q"
+    assert captured["has_images"] is True
+    assert captured["kwargs"] == {"sampling": {"temperature": 0.2}}
+
+
+def test_call_ai_async_resolves_current_engine_when_omitted(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("openai", "gpt-test"))
+
+    def fake_sync(engine, model, *a, **k):
+        captured.update({"engine": engine, "model": model})
+        return "ok"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", fake_sync)
+    out = asyncio.run(
+        ai_engine.call_ai_async(None, None, [{"role": "user", "content": "hi"}]),
+    )
+    assert out == "ok"
+    assert captured == {"engine": "openai", "model": "gpt-test"}
+
+
+def test_call_ai_async_timeout_raises_domain_error(monkeypatch):
+    def slow_sync(*a, **k):
+        time.sleep(0.05)
+        return "late"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", slow_sync)
+    with pytest.raises(ai_engine.AITimeoutError, match="timed out"):
+        asyncio.run(
+            ai_engine.call_ai_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}], timeout=0.01,
+            ),
+        )
+
+
+def test_call_ai_async_uses_default_timeout(monkeypatch):
+    monkeypatch.setattr(ai_engine, "DEFAULT_AI_TIMEOUT", 0.01)
+
+    def slow_sync(*a, **k):
+        time.sleep(0.05)
+        return "late"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", slow_sync)
+    with pytest.raises(ai_engine.AITimeoutError, match="0.01s"):
+        asyncio.run(
+            ai_engine.call_ai_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}],
+            ),
+        )
+
+
+def test_call_ai_async_rejects_non_positive_timeout():
+    with pytest.raises(ValueError, match="positive"):
+        asyncio.run(
+            ai_engine.call_ai_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}], timeout=0,
+            ),
+        )
+
+
+def test_call_ai_async_propagates_sync_exception(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("sync exploded")
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", boom)
+    with pytest.raises(RuntimeError, match="sync exploded"):
+        asyncio.run(
+            ai_engine.call_ai_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}],
+            ),
+        )
+
+
+def test_call_ai_async_keeps_event_loop_responsive(monkeypatch, heartbeat):
+    def slow_sync(*a, **k):
+        time.sleep(0.05)
+        return "sync result"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", slow_sync)
+
+    async def scenario():
+        async with heartbeat(interval=0.005) as hb:
+            result = await ai_engine.call_ai_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}],
+            )
+        return result, hb.ticks
+
+    result, ticks = asyncio.run(scenario())
+    assert result == "sync result"
+    assert ticks >= 1
 
 
 # ---------- stream_ai_response_async ----------

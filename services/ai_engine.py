@@ -82,6 +82,18 @@ def invalidate_ai_cache():
 
 _OLLAMA_UNREACHABLE_MSG = "Не удалось подключиться к Ollama (localhost:11434)"
 
+# Внешний таймаут async-адаптера. Он чуть больше сетевых таймаутов провайдеров,
+# чтобы дать sync-вызову шанс завершиться самостоятельно.
+DEFAULT_AI_TIMEOUT = 210.0
+
+
+class AITimeoutError(TimeoutError):
+    """Async-вызов AI не уложился в таймаут.
+
+    Важно: отмена ``asyncio.to_thread`` не останавливает рабочий поток.
+    Синхронный вызов может продолжить выполняться до завершения.
+    """
+
 
 def _is_ollama_unavailable(exc: Exception) -> bool:
     """True, если исключение связано с недоступностью локального Ollama."""
@@ -322,6 +334,63 @@ def _sync_ai_call(
             error_msg = f"❌ Ошибка ИИ ({engine}) после {elapsed:.2f}s: {e!s}"
         logger.error(f"[AI_ERROR] {error_msg}", exc_info=True)
         return error_msg
+
+
+async def call_ai_async(
+    engine: str | None,
+    model: str | None,
+    messages: list[dict],
+    context: str = "",
+    user_query: str = "",
+    has_images: bool = False,
+    *,
+    timeout: float | None = None,
+    **kwargs,
+) -> str:
+    """Выполняет синхронный AI-движок в отдельном потоке с таймаутом.
+
+    Если ``engine``/``model`` не переданы, они берутся из ``get_current_ai()``.
+    Это единственное место выбора движка/модели в адаптере — сам ``_sync_ai_call``
+    получает уже разрешённые значения.
+
+    ``asyncio.to_thread`` не прерывает рабочий поток при отмене: по таймауту
+    выбрасывается ``AITimeoutError``, но sync-вызов может продолжать работать.
+    Поэтому для долгих запросов таймаут обязателен.
+
+    Ошибки синхронного вызова пробрасываются вызывающему без преобразования
+    в пользовательскую строку — решение об обработке принимает handler.
+    """
+    resolved_engine = engine
+    resolved_model = model
+    if not resolved_engine or not resolved_model:
+        current_engine, current_model = get_current_ai()
+        resolved_engine = resolved_engine or current_engine
+        resolved_model = resolved_model or current_model
+
+    effective_timeout = DEFAULT_AI_TIMEOUT if timeout is None else timeout
+    if effective_timeout <= 0:
+        raise ValueError("AI timeout must be positive")
+
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                _sync_ai_call,
+                resolved_engine,
+                resolved_model,
+                messages,
+                context,
+                user_query=user_query,
+                has_images=has_images,
+                **kwargs,
+            ),
+            timeout=effective_timeout,
+        )
+    except TimeoutError as exc:
+        raise AITimeoutError(
+            f"AI call timed out after {effective_timeout:.2f}s "
+            f"(engine={resolved_engine}, model={resolved_model}); "
+            "worker thread may still be running",
+        ) from exc
 
 
 async def get_ai_response_async(
