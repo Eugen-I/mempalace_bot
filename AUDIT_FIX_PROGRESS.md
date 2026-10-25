@@ -54,13 +54,13 @@
 
 - **Дата последнего обновления:** 2026-10-25 13:32 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** `ae67d1b` (S0.2 checkpoint; коммит S1.1 — см. журнал)
+- **HEAD:** `b5d72d1` (S1.1 code; docs-checkpoint — следующим коммитом; актуальный HEAD смотреть через `git log`)
 - **Текущий шаг:** `S1.1` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S1.2` — `safe_html_format` и `_TAG_RE`
 - **Бюджет текущего шага:** 30k
 - **Израсходовано (оценка):** ~18k (контракт результата + тесты + прогоны)
-- **Незакоммиченные изменения:** `handlers/agent.py`, `handlers/notes_agent.py`, `handlers/palace/__init__.py`, `services/agent_engine.py`, три тест-файла, `AUDIT_FIX_PROGRESS.md` — будут закоммичены в S1.1. Чужие untracked-файлы не трогать.
+- **Незакоммиченные изменения:** нет после docs-коммита; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: 2 падающих теста на baseline; в финальном прогоне S0.2 — 1 (`test_day_bounds_midnight`), второй (`test_confirm_write_delete_requires_two_confirmations`) флаки и прошёл.
 - **Последний QA:** 3503 passed / 1 failed, coverage 98%; lint/mypy/bandit — baseline без новых
@@ -89,7 +89,7 @@
 |---|---|---|---:|---|---|---|---|
 | S0.1 | Baseline, ветка, фиксация состояния | P0 | 25k | DONE | `0eeeb41` | 2026-10-25 12:17 | ~15k |
 | S0.2 | Общие тестовые фикстуры | P0 | 25k | DONE | `a813965` | 2026-10-25 12:25 | ~12k |
-| S1.1 | Контракт ответа агента | P0 | 30k | DONE | см. журнал | 2026-10-25 13:32 | ~18k |
+| S1.1 | Контракт ответа агента | P0 | 30k | DONE | `b5d72d1` | 2026-10-25 13:32 | ~18k |
 | S1.2 | `safe_html_format` и `_TAG_RE` | P0 | 25k | TODO | — | — | — |
 | S1.3 | Async-обёртка AI | P0 | 35k | TODO | — | — | — |
 | S1.4a | Async AI в `palace/navigation.py` | P0 | 35k | TODO | — | — | — |
@@ -345,7 +345,7 @@
   - [x] `mypy` по `handlers/agent.py` без ошибок «Return value expected».
   - [x] Есть regression-тесты на `AgentEngineError`, неожиданное исключение и `finished_reason="error"`.
   - [x] `notes_agent` и palace-путь покрыты тестами.
-- Коммит: `см. следующий коммит` (hash фиксируется после коммита)
+- Коммит: `b5d72d1` (`fix(step-1.1): make agent reply contract total`)
 - Проблемы/решения:
   - При первом целевом прогоне `test_confirm_write_delete_requires_two_confirmations` упал: `status.reply_markup is None` — тест ждёт карточку 50 мс, а `_note_title` успевает сходить в Apple Notes. Это pre-existing флак, не связан с контрактом; повторный запуск и полный `make test` прошли. Не чинил в S1.1, чтобы не смешивать изменения.
 - Найдено попутно:
