@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 16:29 CET
+- **Дата последнего обновления:** 2026-10-25 16:30 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** последний code-коммит S1.7 — `4a9c086`; docs-коммит будет создан следующим
+- **HEAD:** последний code-коммит S1.7 — `4a9c086`, docs-коммит — `3397bca`
 - **Текущий шаг:** `S1.7` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S1.8` — `palace_mcp`: чтение stderr, handshake timeout, жизненный цикл
 - **Бюджет текущего шага:** 35k
 - **Израсходовано (оценка):** ~20k (миграция обработчика, 5 новых тестов, QA)
-- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md`; чужие untracked-файлы не трогать.
+- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0); в финальном прогоне прошли.
 - **Последний QA:** 3559 passed / 1 pre-existing failed, coverage 98%; `messages.py` 97%, `ai_engine.py` 100%; lint/mypy/bandit — baseline без новых
