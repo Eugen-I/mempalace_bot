@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 16:57 CET
+- **Дата последнего обновления:** 2026-10-25 17:10 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** последний code-коммит S1.9 — `62af728`, docs-коммит — `89a297c`
-- **Текущий шаг:** `S1.9` — завершён
+- **HEAD:** последний code-коммит S1.10 — `21953ac`, docs-checkpoint — будет после этого обновления
+- **Текущий шаг:** `S1.10` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.10` — убрать опасный fallback `"test-token"` и проверить пути `.env`
-- **Бюджет текущего шага:** 35k
-- **Израсходовано (оценка):** ~30k (контекстный ключ, инвалидация модели, 21 новый тест, QA)
-- **Незакоммиченные изменения:** только этот файл прогресса; чужие untracked-файлы не трогать.
+- **Следующее действие:** `S1.11` — сброс счётчика circuit breaker после успешного вызова
+- **Бюджет текущего шага:** 20k
+- **Израсходовано (оценка):** ~18k (загрузка/валидация `.env`, тесты, QA)
+- **Незакоммиченные изменения:** только этот файл прогресса; `.env` и чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations`; TTL-флак устранён в S1.9 (детерминированные часы).
-- **Последний QA:** 3590 passed / 1 pre-existing failed, coverage 98%; `semantic_cache.py` 100%, `messages.py` 97%, `settings.py` 99%, `ai_engine.py` 100%; lint/mypy — baseline без новых, bandit 73 Low
+- **Последний QA:** 3604 passed / 1 pre-existing failed, coverage 98%; `config.py` 97%, `main.py` 96%, `semantic_cache.py` 100%; lint — 8 baseline (на 1 меньше), mypy — 1 baseline, bandit 73 Low
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -99,7 +99,7 @@
 | S1.7 | Не кэшировать ошибки стриминга | P0 | 35k | DONE | `4a9c086` | 2026-10-25 16:29 | ~20k |
 | S1.8 | `palace_mcp`: stderr/timeout/lifecycle | P0 | 40k | DONE | `39f5e47` | 2026-10-25 16:39 | ~20k |
 | S1.9 | Контекстный semantic cache | P0 | 35k | DONE | `62af728` | 2026-10-25 16:55 | ~30k |
-| S1.10 | Токен и пути `.env` | P0 | 20k | TODO | — | — | — |
+| S1.10 | Токен и пути `.env` | P0 | 20k | DONE | `21953ac` | 2026-10-25 17:10 | ~18k |
 | S1.11 | Circuit breaker: сброс счётчика | P0 | 15k | TODO | — | — | — |
 | S1.12 | Напоминания: время/ключи/JSON | P0 | 30k | TODO | — | — | — |
 | S2.1 | Пустая button-сессия активна | P1 | 20k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 10 | 0 | 3 |
+| 1 — P0 | 13 | 11 | 0 | 2 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **12** | **0** | **33** |
+| **Итого** | **45** | **13** | **0** | **32** |
 
 > Обновлять после каждого шага.
 
@@ -780,6 +780,53 @@
 
 ---
 
+### S1.10 — Токен и `.env`: убрать опасный fallback
+
+- Дата/время: 2026-10-25 17:00–17:10 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `21953ac`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 20k / ~18k
+- Файлы: `config.py`, `main.py`, `tests/test_config.py`, `tests/test_main.py`, `.env.example`, `README.md`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. `config.py` больше не подставляет `test-token` в production: при отсутствии `TELEGRAM_BOT_TOKEN` возвращается пустое значение. Fallback разрешён только при `PYTEST_CURRENT_TEST`/`PYTEST_VERSION` или явном `MEMPALACE_ALLOW_TEST_TOKEN=1`.
+  2. Добавлен `validate_config()`: проверяет отсутствующий токен, пример `your_telegram_bot_token`, тестовый `test-token` вне тестового окружения и `ADMIN_ID=0`. Сообщение содержит переменную и оба ожидаемых пути `.env`.
+  3. `main.py` вызывает `validate_config()` до импорта `services.bot_setup`; при ошибке печатает понятное сообщение и завершает процесс с кодом 1, не создавая `Bot` с пустым токеном.
+  4. `.env` загружается в порядке: `.env` в корне проекта, затем legacy `~/Documents/mempalace/.env`. Используется `load_dotenv(override=False)`, поэтому существующие переменные окружения и значения корневого файла не перетираются legacy-файлом.
+  5. Удалена неиспользуемая дублирующая `get_allowed_ids()`; `ALLOWED_IDS` по-прежнему строится из `ADMIN_ID` и `ALLOWED_USERS`.
+  6. Порядок путей и приоритеты задокументированы в docstring `config.py`, `.env.example` и `README.md`.
+- Тесты и команды: прирост 14 тестов (`tests/test_config.py` 11 → 24, `tests/test_main.py` 18 → 19); устаревшие тесты `get_allowed_ids` и reload-fallback заменены.
+  - `python3 -m pytest tests/test_config.py tests/test_main.py -q --no-cov` → **43 passed, 6 warnings**.
+  - Smoke без токена: `env TELEGRAM_BOT_TOKEN='' ... python3 main.py` → **exit 1**, сообщение содержит root и legacy пути, polling не запускается.
+  - `make test` → **3604 passed, 1 failed, 6 warnings in 16.01s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight`.
+    - `config.py` — **97%**, `main.py` — **96%**.
+  - `python3 -m flake8 config.py main.py tests/test_config.py tests/test_main.py` → 0.
+  - `make lint` → **8 baseline-замечаний** (было 9: удалён W391 в `config.py`), новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **73 Low, 0 Medium, 0 High**, новых 0.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 8, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 73 Low, новых 0
+  - coverage: 98%; `config.py` — 97%
+- AC:
+  - [x] Нет тихого старта с `test-token`: production без токена завершается ошибкой до создания Bot.
+  - [x] Пути `.env` документированы и покрыты тестами: root → legacy, приоритет env, legacy-only и отсутствие обоих файлов.
+  - [x] Дублирующая `get_allowed_ids()` удалена.
+- Коммит: `21953ac` (`fix(step-1.10): validate bot token and env paths`)
+- Проблемы/решения:
+  - Корневой `.env` загружается первым и имеет приоритет над legacy; внешние переменные окружения имеют приоритет над обоими файлами.
+  - Явный тестовый флаг назван `MEMPALACE_ALLOW_TEST_TOKEN` и не включён по умолчанию.
+  - Импорт `services.bot_setup` перенесён после валидации, чтобы aiogram не падал на пустом токене раньше понятного сообщения.
+  - При отсутствии обоих `.env` выводится предупреждение с ожидаемыми путями; токен в лог не попадает.
+- Найдено попутно:
+  - Удалён baseline W391 в конце `config.py`; `make lint` улучшился с 9 до 8 замечаний.
+- Следующее действие: `S1.11` — сброс счётчика circuit breaker после успешного вызова.
+
+---
+
 ## 7. Журнал сессий
 
 | # | Дата | Агент/модель | Шаги | Результат | Токены (оценка) | Примечание |
@@ -796,6 +843,7 @@
 | 10 | 2026-10-25 16:20–16:29 | DeepSeek V4.1 Flash Free | S1.7 | DONE | ~20k | Handlers use structured stream events; errors not cached/saved; partial text preserved; 5 new tests; messages 97% |
 | 11 | 2026-10-25 16:31–16:38 | DeepSeek V4.1 Flash Free | S1.8 | DONE | ~20k | MCP stderr drain, handshake/ready/stop timeouts, kill-fallback, task/process cleanup; 10 new tests; palace_mcp 93% |
 | 12 | 2026-10-25 16:45–16:55 | DeepSeek V4.1 Flash Free | S1.9 | DONE | ~30k | Context-scoped semantic cache, model invalidation, prompt/image fingerprint; 21 new tests; semantic_cache 100% |
+| 13 | 2026-10-25 17:00–17:10 | DeepSeek V4.1 Flash Free | S1.10 | DONE | ~18k | No production test-token, startup validation, root→legacy .env, env priority; 14 new tests; config 97% |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
