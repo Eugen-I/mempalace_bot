@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 15:47 CET
+- **Дата последнего обновления:** 2026-10-25 15:55 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** см. `git log`; последний code-коммит S1.3 — `8d69c79`, docs-checkpoint — `d4f00dd`
-- **Текущий шаг:** `S1.3` — завершён
+- **HEAD:** `c2484f8` (S1.4a code; docs-checkpoint — следующим коммитом)
+- **Текущий шаг:** `S1.4a` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.4a` — async AI в `handlers/palace/navigation.py`
+- **Следующее действие:** `S1.4b` — async AI в `action_bar`, `palace/__init__`, `transkript`
 - **Бюджет текущего шага:** 35k
-- **Израсходовано (оценка):** ~12k (адаптер, 7 тестов, QA)
-- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
+- **Израсходовано (оценка):** ~16k (миграция 5 вызовов, обработка ошибок, 8 тестов, QA)
+- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md`; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0), в финальном прогоне прошли.
-- **Последний QA:** 3527 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
+- **Последний QA:** 3542 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -92,7 +92,7 @@
 | S1.1 | Контракт ответа агента | P0 | 30k | DONE | `b5d72d1` | 2026-10-25 13:32 | ~18k |
 | S1.2 | `safe_html_format` и `_TAG_RE` | P0 | 25k | DONE | `b2a5089` | 2026-10-25 15:26 | ~20k |
 | S1.3 | Async-обёртка AI | P0 | 35k | DONE | `8d69c79` | 2026-10-25 15:46 | ~12k |
-| S1.4a | Async AI в `palace/navigation.py` | P0 | 35k | TODO | — | — | — |
+| S1.4a | Async AI в `palace/navigation.py` | P0 | 35k | DONE | `c2484f8` | 2026-10-25 15:55 | ~16k |
 | S1.4b | Async AI в action_bar/palace/transkript | P0 | 30k | TODO | — | — | — |
 | S1.5 | `_sync_ai_call`: unbound/Gemini | P0 | 40k | TODO | — | — | — |
 | S1.6 | Структурированный стриминг | P0 | 35k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 3 | 0 | 10 |
+| 1 — P0 | 13 | 4 | 0 | 9 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **5** | **0** | **40** |
+| **Итого** | **45** | **6** | **0** | **39** |
 
 > Обновлять после каждого шага.
 
@@ -462,6 +462,53 @@
   - `get_ai_response_async` по-прежнему не имеет таймаута и создаёт отдельный `ThreadPoolExecutor` на каждый вызов. Не менял в S1.3; кандидат на S1.4/S1.5 или отдельный шаг.
 - Следующее действие: `S1.4a` — перевести `handlers/palace/navigation.py` на `call_ai_async`.
 
+### S1.4a — Async AI в `handlers/palace/navigation.py`
+
+- Дата/время: 2026-10-25 15:49–15:55 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `c2484f8`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 35k / ~16k
+- Файлы: `handlers/palace/navigation.py`, `services/ai_engine.py`, `tests/test_palace_navigation.py`, `tests/test_ai_engine.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Удалён синхронный `_sync_ai_call_wrapper`. Все 5 прямых sync-вызовов в `navigation.py` переведены на `await call_ai_async(...)`:
+     - статья по комнате (`cb_cross_ai_article`, сохранены `gemini`/`gemini-2.0-flash`);
+     - ветка `with_web` в `_answer_room_ai`;
+     - шаг 1 (саммари) в `_answer_room_ai`;
+     - шаг 2 (ответ) в `_answer_room_ai`;
+     - анализ туннелей (`cb_tunnels_ai`).
+  2. Сохранены прежние сообщения, кнопки и порядок редактирования: «🌐 Ищу в интернете…» → «🧠 Составляю саммари…» → «🤔 Анализирую саммари…» → `finalize_answer`.
+  3. Добавлен `_report_ai_error`: таймаут показывает «⏱️ ИИ не ответил вовремя. Попробуйте ещё раз.», прочие ошибки — «❌ Ошибка ИИ: …». Обработаны все три AI-вызова в `_answer_room_ai`, включая `with_web` и шаг 2; статус больше не остаётся «вечным». `cb_cross_ai_article`/`cb_tunnels_ai` сохранили прежний внешний `except` с «❌ Ошибка: …».
+  4. Попутно поправлен `call_ai_async`: необязательные `context`, `user_query`, `has_images` передаются в `_sync_ai_call` только при непустых значениях. Это сохраняет семантику sync-дефолтов и совместимость с простыми тестовыми двойниками.
+  5. Обновлены тесты, которые патчили удалённый wrapper, и добавлены проверки ошибок/таймаутов/отзывчивости loop.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_ai_engine.py tests/test_palace_navigation.py tests/test_palace_navigation_callbacks.py tests/test_palace_language_prompts.py -q ...` → **313 passed**.
+  - `make test` → **3542 passed, 1 failed, 6 warnings in 15.65s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight`.
+    - `handlers/palace/navigation.py` — **100%**; `services/ai_engine.py` — **100%**.
+  - `make lint` → те же 9 baseline-замечаний, новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **74 Low, 0 Medium, 0 High** — baseline, новых 0.
+  - `python3 -m flake8 handlers/palace/navigation.py services/ai_engine.py tests/test_palace_navigation.py tests/test_ai_engine.py` → 0.
+  - `git diff --check` → чисто.
+- QA:
+  - lint: baseline 9, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: baseline 74 Low, новых 0
+  - coverage: 98%; изменённые `navigation.py` и `ai_engine.py` — 100%
+- AC:
+  - [x] В async-функциях `navigation.py` нет прямого `_sync_ai_call` (grep по файлу чист).
+  - [x] Поведение UI на успешных путях не изменилось.
+  - [x] Ошибки/таймауты не оставляют статус-сообщение в вечном состоянии.
+  - [x] Event loop не блокируется (heartbeat-тест через реальный adapter).
+- Коммит: `c2484f8` (`fix(step-1.4a): offload palace navigation ai calls`)
+- Проблемы/решения:
+  - Первая версия миграции всегда передавала в `_sync_ai_call` дефолтные `context`/`user_query`/`has_images`, из-за чего старые тестовые двойники с тремя аргументами падали. Исправлено в адаптере: дефолты не передаются.
+  - Для `_answer_room_ai` выбран явный `except Exception` вокруг каждого AI-вызова с логированием; `CancelledError` (BaseException) не перехватывается.
+- Найдено попутно:
+  - В `tests/test_palace_navigation.py` был неиспользуемый импорт `SimpleNamespace`; удалён при правке файла.
+- Следующее действие: `S1.4b` — `action_bar`, `palace/__init__`, `transkript`.
+
 ---
 
 ## 7. Журнал сессий
@@ -473,6 +520,7 @@
 | 3 | 2026-10-25 13:17–13:32 | DeepSeek V4.1 Flash Free | S1.1 | DONE | ~18k | Total AgentResult contract; 5 new regression tests; mypy 5→1 |
 | 4 | 2026-10-25 15:15–15:26 | DeepSeek V4.1 Flash Free | S1.2 | DONE | ~20k | Safe HTML whitelist, code fence `<pre><code>`, unbalanced tags; 19 new tests |
 | 5 | 2026-10-25 15:43–15:46 | DeepSeek V4.1 Flash Free | S1.3 | DONE | ~12k | `call_ai_async` + timeout + heartbeat; 7 new tests; ai_engine 100% |
+| 6 | 2026-10-25 15:49–15:55 | DeepSeek V4.1 Flash Free | S1.4a | DONE | ~16k | 5 sync AI calls → `call_ai_async`; error statuses; 8 new tests; navigation/ai_engine 100% |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
