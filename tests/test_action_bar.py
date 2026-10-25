@@ -122,10 +122,11 @@ def test_paginate_over_limit_1501():
 
 
 def test_render_page_escapes_raw_text():
-    answer = Answer(sid=SID, text="<b>не html</b>", pages=["<b>не html</b>"])
+    raw = "<script>alert(1)</script>"
+    answer = Answer(sid=SID, text=raw, pages=[raw])
     rendered = _render_page(answer, 0)
-    assert "&lt;b&gt;" in rendered
-    assert "<b>не html</b>" not in rendered
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered
 
 
 def test_render_page_html_mode_keeps_tags():
@@ -1590,8 +1591,7 @@ def test_finalize_answer_single_page_first_markup_has_no_nav():
         return msg
 
     asyncio.run(ab.finalize_answer(1, edit_func, "текст"))
-    kb = msg.markups[0].inline_keyboard
-    labels = [b.text for row in kb for b in row]
+    assert msg.markups[0].inline_keyboard
 
 
 def test_finalize_answer_first_markup_uses_page_zero():

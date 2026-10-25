@@ -143,9 +143,13 @@ def test_describe_unknown_tool_fallback():
 
 
 def test_describe_escapes_html():
-    text = na._describe_action("notes_create", {"title": "<b>X</b>", "text": "<i>Y</i>"})
-    assert "<b>X</b>" not in text
-    assert "&lt;b&gt;X&lt;/b&gt;" in text
+    text = na._describe_action(
+        "notes_create", {"title": "<script>X</script>", "text": "<i>Y</i>"}
+    )
+    assert "<script>" not in text
+    assert "&lt;script&gt;X&lt;/script&gt;" in text
+    # Разрешённое форматирование сохраняется по контракту safe_html_format.
+    assert "<i>Y</i>" in text
 
 
 # ─── _note_title: best-effort поиск названия по ID ───

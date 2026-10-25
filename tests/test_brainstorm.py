@@ -651,9 +651,10 @@ def test_format_surreal_card_without_camera_setup():
 
 
 def test_format_surreal_card_escapes_html():
-    idea = {"title": "<b>Т</b>", "camera_setup": "WB <script>"}
+    idea = {"title": "<script>Т</script>", "camera_setup": "WB <script>"}
     text = bs.format_surreal_card(1, idea)
-    assert "<b>Т</b>" not in text
+    assert "<script>" not in text
+    assert "&lt;script&gt;Т&lt;/script&gt;" in text
     assert "&lt;script&gt;" in text
 
 
@@ -740,11 +741,13 @@ def test_find_linked_truncates_long_line():
 
 def test_format_linked_happy():
     linked = [{"source": "notes", "label": "Apple Notes",
-               "text": "текст <b>заметки</b>", "score": 1}]
+               "text": "текст <b>заметки</b> <script>bad</script>", "score": 1}]
     text = bs.format_linked(linked)
     assert text.startswith("🔗 <b>Связано с:</b>")
     assert "Apple Notes" in text
-    assert "&lt;b&gt;заметки&lt;/b&gt;" in text
+    assert "<b>заметки</b>" in text
+    assert "<script>" not in text
+    assert "&lt;script&gt;bad&lt;/script&gt;" in text
 
 
 def test_format_linked_empty():
