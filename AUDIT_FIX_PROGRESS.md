@@ -52,20 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 12:17 CET
-- **Ветка:** `fix/audit-2026-10-25` (создана от `backup-before-garmin-sqlite-integration`)
-- **HEAD:** `c7a8ca2` (baseline; коммиты S0.1: `0eeeb41`, `ceda2b3`)
-- **Текущий шаг:** `S0.1` — завершён
+- **Дата последнего обновления:** 2026-10-25 12:25 CET
+- **Ветка:** `fix/audit-2026-10-25`
+- **HEAD:** `64f6d1e` (S0.1 checkpoint; коммит S0.2 — см. журнал)
+- **Текущий шаг:** `S0.2` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S0.2` — общие тестовые фикстуры для AI/async/JSON
+- **Следующее действие:** `S1.1` — единый контракт ответа агента
 - **Бюджет текущего шага:** 25k
-- **Израсходовано (оценка):** ~15k (backup, ветка, baseline)
-- **Незакоммиченные изменения:** нет; `AUDIT_FIX_PLAN.md` и `AUDIT_FIX_PROGRESS.md` закоммичены. Остались только чужие untracked-файлы (`.claude/`, `CLAUDE.md`, `exports/`, `models/`, `scripts/`, Garmin и др.) — не трогать.
-- **Известные блокеры:** нет для S0.1. Pre-existing: 2 падающих теста (`test_day_bounds_midnight`, `test_confirm_write_delete_requires_two_confirmations`), lint/mypy/ruff/bandit не зелёные (baseline зафиксирован)
-- **Последний зелёный QA:** нет; baseline: 3496 passed / 2 failed, coverage 98%
+- **Израсходовано (оценка):** ~12k (фикстуры + тесты + прогоны)
+- **Незакоммиченные изменения:** `tests/conftest.py`, `tests/test_audit_fixtures.py`, `AUDIT_FIX_PROGRESS.md` — будут закоммичены в S0.2. Чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** см. `S0.1`; на момент аудита Garmin-фича ссылается на отсутствующий `services.garmin`
-- **Последний зелёный QA:** —
+- **Известные блокеры:** нет. Pre-existing: 2 падающих теста на baseline; в финальном прогоне S0.2 — 1 (`test_day_bounds_midnight`), второй (`test_confirm_write_delete_requires_two_confirmations`) флаки и прошёл.
+- **Последний QA:** 3503 passed / 1 failed, coverage 98%; lint/mypy/bandit — baseline без новых
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -90,7 +88,7 @@
 | ID | Шаг | Приоритет | Бюджет | Статус | Коммит | Обновлено | Токены |
 |---|---|---|---:|---|---|---|---|
 | S0.1 | Baseline, ветка, фиксация состояния | P0 | 25k | DONE | `0eeeb41` | 2026-10-25 12:17 | ~15k |
-| S0.2 | Общие тестовые фикстуры | P0 | 25k | TODO | — | — | — |
+| S0.2 | Общие тестовые фикстуры | P0 | 25k | DONE | см. журнал | 2026-10-25 12:25 | ~12k |
 | S1.1 | Контракт ответа агента | P0 | 30k | TODO | — | — | — |
 | S1.2 | `safe_html_format` и `_TAG_RE` | P0 | 25k | TODO | — | — | — |
 | S1.3 | Async-обёртка AI | P0 | 35k | TODO | — | — | — |
@@ -141,12 +139,12 @@
 
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
-| 0 — подготовка | 2 | 1 | 0 | 1 |
+| 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 0 | 0 | 13 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **1** | **0** | **44** |
+| **Итого** | **45** | **2** | **0** | **43** |
 
 > Обновлять после каждого шага.
 
@@ -265,6 +263,47 @@
 - Найдено попутно: —
 - Следующее действие: `S0.2` — общие тестовые фикстуры для AI/async/JSON.
 
+### S0.2 — Общие тестовые фикстуры для AI/async/JSON
+
+- Дата/время: 2026-10-25 12:20–12:25 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `64f6d1e`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 25k / ~12k
+- Файлы: `tests/conftest.py`, `tests/test_audit_fixtures.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. В `tests/conftest.py` добавлены opt-in фикстуры, не влияющие на старые тесты:
+     - `fake_ai_client` — управляемый `FakeAIClient` с `response`, `error`, `delay`, `calls`, методами `complete()` и `acomplete()`;
+     - `heartbeat` — фабрика `Heartbeat` (async context manager), которая тикает в event loop и позволяет проверять, что `await` не блокируется;
+     - `temp_chat_dir` — изолированный пустой каталог `tmp_path/chats`;
+     - `fixed_clock` — `FixedClock` с управляемыми `now()`, `time()`, `advance()` без глобальной подмены времени.
+  2. Добавлен `tests/test_audit_fixtures.py` — 6 smoke-тестов на все новые фикстуры, включая async-пример с heartbeat.
+  3. Поведение production-кода не менялось.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_audit_fixtures.py -q --tb=short --override-ini=addopts=-ra` → **6 passed in 2.20s**.
+  - `make test` → **3503 passed, 1 failed, 6 warnings in 88.07s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight` (`assert 1792969200.0 == (1792879200.0 + 86400)`).
+    - `test_confirm_write_delete_requires_two_confirmations` (флаки) в этом прогоне прошёл.
+  - `python3 -m flake8 tests/conftest.py tests/test_audit_fixtures.py` → 0.
+  - `python3 -m ruff check tests/conftest.py tests/test_audit_fixtures.py` → только 2 pre-existing замечания в старом import-guard (`BLE001`/`S110`, строки 40–41); новых нет.
+  - `make typecheck` → те же 5 baseline-ошибок, новых нет.
+  - `make lint` → те же 9 baseline-замечаний (untracked Garmin + `config.py` + `deps_guard.py`), новых нет.
+- QA:
+  - lint: baseline 9, новых 0
+  - mypy: baseline 5, новых 0
+  - bandit: не менялся (production-код не трогали)
+  - coverage: 98%
+- AC:
+  - [x] Фикстуры не влияют на старые тесты.
+  - [x] Есть пример async-теста с heartbeat.
+  - [x] Полный `make test` не хуже baseline: 3503 passed / 1 pre-existing failed.
+- Коммит: `см. следующий docs-коммит` (hash фиксируется после коммита)
+- Проблемы/решения:
+  - `make test` идёт ~88 с вместо baseline ~22 с — вероятно, нагрузка/кэш; новых падений нет.
+  - В `tests/conftest.py` остались 2 pre-existing ruff-замечания в старом import-guard; чинить их в S0.2 не стал — это S4.3.
+- Найдено попутно: —
+- Следующее действие: `S1.1` — единый контракт ответа агента.
+
 ---
 
 ## 7. Журнал сессий
@@ -272,6 +311,7 @@
 | # | Дата | Агент/модель | Шаги | Результат | Токены (оценка) | Примечание |
 |---:|---|---|---|---|---|---|
 | 1 | 2026-10-25 12:15–12:17 | DeepSeek V4.1 Flash Free | S0.1 | DONE | ~15k | Backup + branch + baseline; 2 pre-existing test failures |
+| 2 | 2026-10-25 12:20–12:25 | DeepSeek V4.1 Flash Free | S0.2 | DONE | ~12k | Fake AI / heartbeat / temp chats / fixed clock; 6 new tests |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
