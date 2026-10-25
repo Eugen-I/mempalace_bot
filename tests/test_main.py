@@ -57,7 +57,7 @@ class FakeCallback:
 # ─── _safe_include ───
 
 
-def test_import_guard_exits_on_bad_config(monkeypatch):
+def test_import_guard_exits_on_bad_config(monkeypatch, capsys):
     monkeypatch.setattr(config, "API_TOKEN", "your_telegram_bot_token")
     monkeypatch.setattr(config, "ADMIN_ID", 0)
     exits = []
@@ -70,6 +70,26 @@ def test_import_guard_exits_on_bad_config(monkeypatch):
     with pytest.raises(SystemExit):
         importlib.reload(importlib.import_module("main"))
     assert exits == [1]
+    assert "TELEGRAM_BOT_TOKEN" in capsys.readouterr().out
+
+
+def test_import_guard_exits_on_missing_token(monkeypatch, capsys):
+    monkeypatch.setattr(config, "API_TOKEN", "")
+    monkeypatch.setattr(config, "ADMIN_ID", 4242)
+    exits = []
+
+    def fake_exit(code=0):
+        exits.append(code)
+        raise SystemExit(code)
+
+    monkeypatch.setattr(sys, "exit", fake_exit)
+    with pytest.raises(SystemExit):
+        importlib.reload(importlib.import_module("main"))
+    assert exits == [1]
+    output = capsys.readouterr().out
+    assert "TELEGRAM_BOT_TOKEN" in output
+    assert config.PROJECT_ENV_PATH in output
+    assert config.LEGACY_ENV_PATH in output
 
 
 def test_safe_include_success(monkeypatch):

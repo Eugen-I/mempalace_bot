@@ -9,18 +9,22 @@ from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import API_TOKEN, ADMIN_ID, CHATS_DIR, DATA_DIR, allowed_only, allowed_callback
+from config import (
+    CHATS_DIR, DATA_DIR, allowed_callback, allowed_only, validate_config,
+)
 from handlers.chat import user_sessions
 from services.palace_bridge import export_chat_verbatim, sync_to_palace
 from services.palace_mcp import get_mcp
 from services.logging_setup import setup_logging
 
-from services.bot_setup import bot, dp, init_bot
-
-if API_TOKEN == "your_telegram_bot_token" or ADMIN_ID == 0:
-    print("❌ Заполните TELEGRAM_BOT_TOKEN и ADMIN_ID в файле .env")
+try:
+    validate_config()
+except RuntimeError as e:
+    print(f"❌ {e}")
     print("📄 Скопируйте .env.example → .env и отредактируйте")
     sys.exit(1)
+
+from services.bot_setup import bot, dp, init_bot  # noqa: E402
 
 logger = setup_logging(DATA_DIR)
 init_bot(logger)
