@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (8/45 шагов `DONE`)
+**Статус работы:** в работе (9/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 16:13 CET
+- **Дата последнего обновления:** 2026-10-25 16:18 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** см. `git log`; последний code-коммит S1.5 — `0ca9871`, docs-checkpoint — `5a35132`
-- **Текущий шаг:** `S1.5` — завершён
+- **HEAD:** `72f8ac7` (S1.6 code); docs-checkpoint — см. `git log`
+- **Текущий шаг:** `S1.6` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.6` — структурированный результат стриминга
-- **Бюджет текущего шага:** 40k
-- **Израсходовано (оценка):** ~18k (код, 3 новых теста, полный QA)
-- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
+- **Следующее действие:** `S1.7` — перевести обработчики стриминга на `AIStreamEvent`, не кэшировать и не сохранять ошибки
+- **Бюджет текущего шага:** 35k
+- **Израсходовано (оценка):** ~16k (структурированный API, адаптер, 6 тестов, QA)
+- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md` (готовится docs-checkpoint); чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0), в финальном прогоне прошли.
-- **Последний QA:** 3545 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
+- **Последний QA:** 3554 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -95,7 +95,7 @@
 | S1.4a | Async AI в `palace/navigation.py` | P0 | 35k | DONE | `c2484f8` | 2026-10-25 15:55 | ~16k |
 | S1.4b | Async AI в action_bar/palace/transkript | P0 | 30k | DONE | `c6da708` | 2026-10-25 16:04 | ~14k |
 | S1.5 | `_sync_ai_call`: unbound/Gemini | P0 | 40k | DONE | `0ca9871` | 2026-10-25 16:11 | ~18k |
-| S1.6 | Структурированный стриминг | P0 | 35k | TODO | — | — | — |
+| S1.6 | Структурированный стриминг | P0 | 35k | DONE | `72f8ac7` | 2026-10-25 16:18 | ~16k |
 | S1.7 | Не кэшировать ошибки стриминга | P0 | 35k | TODO | — | — | — |
 | S1.8 | `palace_mcp`: stderr/timeout/lifecycle | P0 | 40k | TODO | — | — | — |
 | S1.9 | Контекстный semantic cache | P0 | 35k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 6 | 0 | 7 |
+| 1 — P0 | 13 | 7 | 0 | 6 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **8** | **0** | **37** |
+| **Итого** | **45** | **9** | **0** | **36** |
 
 > Обновлять после каждого шага.
 
@@ -599,6 +599,49 @@
 
 ---
 
+### S1.6 — Структурированный результат стриминга
+
+- Дата/время: 2026-10-25 16:17–16:18 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `72f8ac7`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 35k / ~16k
+- Файлы: `services/ai_engine.py`, `tests/test_ai_engine.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Добавлен `AIStreamEvent` (frozen dataclass) с полями `ok`, `text`, `error_code`, `error_message`.
+  2. Добавлен `stream_ai_events_async`: текстовые чанки приходят событиями `ok=True`; ошибки — отдельными `ok=False` с кодами `stream_error`, `ollama_unavailable` или `empty_stream`. Ошибка больше не является строкой с префиксом `❌`.
+  3. Ошибка до первого токена и ошибка в середине стрима различимы по позиции события; уже отданный частичный текст остаётся в предыдущих событиях.
+  4. Пустой успешный стрим выдаёт событие `empty_stream`, чтобы его нельзя было спутать с успешным непустым ответом.
+  5. Старый `stream_ai_response_async` сохранён как deprecated строковый адаптер: он транслирует новые события в прежние чанки/ошибки и не меняет поведение текущих обработчиков. Пустой стрим адаптер по-прежнему пропускает.
+  6. Обработчики `handlers/messages.py` пока не менялись — их перевод на события и удаление проверок `startswith("❌")` входит в S1.7.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_ai_engine.py -q --tb=short --override-ini=addopts=-ra` → **87 passed, 1 warning in 3.33s**.
+  - `make test` → **3554 passed, 1 failed, 6 warnings in 15.57s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight`.
+    - `services/ai_engine.py` — **100%**.
+  - `make lint` → те же 9 baseline-замечаний, новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **74 Low, 0 Medium, 0 High** — baseline, новых 0.
+  - `python3 -m flake8 services/ai_engine.py tests/test_ai_engine.py` → 0; `mypy services/ai_engine.py` → Success; `git diff --check` → чисто.
+- QA:
+  - lint: baseline 9, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: baseline 74 Low, новых 0
+  - coverage: 98%; `ai_engine.py` — 100%
+- AC:
+  - [x] Ошибка и обычный текст различимы структурно (`ok` + `error_code`), без анализа префикса.
+  - [x] Новый API не требует `startswith("❌")`; старый адаптер оставлен только для ещё не мигрированных обработчиков (S1.7).
+  - [x] Покрыты успешный стрим, ошибка до первого токена, ошибка в середине с частичным текстом и пустой стрим.
+- Коммит: `72f8ac7` (`refactor(step-1.6): structure ai stream results`)
+- Проблемы/решения:
+  - Пустой стрим выбран ошибкой `empty_stream`, а не успехом с нулём чанков: так обработчик может показать понятное сообщение, а старый адаптер сохраняет прежнее поведение (ни одного чанка).
+  - Deprecated-адаптер помечен в docstring, без runtime-`DeprecationWarning`, чтобы не засорять логи и тесты при каждом вызове старых обработчиков.
+- Найдено попутно:
+  - INC-4 остаётся: Gemini-ветка внутри `stream_ai_events_async` (как и раньше в `stream_ai_response_async`) игнорирует `images` и system-сообщение из `messages`.
+- Следующее действие: `S1.7` — обработчики стриминга: не кэшировать и не сохранять ошибки.
+
+---
+
 ## 7. Журнал сессий
 
 | # | Дата | Агент/модель | Шаги | Результат | Токены (оценка) | Примечание |
@@ -611,6 +654,7 @@
 | 6 | 2026-10-25 15:49–15:55 | DeepSeek V4.1 Flash Free | S1.4a | DONE | ~16k | 5 sync AI calls → `call_ai_async`; error statuses; 8 new tests; navigation/ai_engine 100% |
 | 7 | 2026-10-25 16:00–16:04 | DeepSeek V4.1 Flash Free | S1.4b | DONE | ~14k | 5 sync AI calls → `call_ai_async` in action_bar/palace/transkript; 3 new tests; transcription heartbeat |
 | 8 | 2026-10-25 16:07–16:11 | DeepSeek V4.1 Flash Free | S1.5 | DONE | ~18k | qwen empty choices, Gemini None-text, system+images contract; 3 new tests; ai_engine 100% |
+| 9 | 2026-10-25 16:17–16:18 | DeepSeek V4.1 Flash Free | S1.6 | DONE | ~16k | `AIStreamEvent` + `stream_ai_events_async`; deprecated string adapter; 6 new tests; ai_engine 100% |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -661,7 +705,7 @@
 | INC-1 | 2026-10-25 | `tests/test_semantic_cache.py:60` | `test_ttl_eviction` флаки при `ttl=0`: `set()` и `get()` могут попасть в один тик, проверка `now - timestamp > 0` не срабатывает. В полном прогоне S1.2 упал один раз, отдельно 5/5 прошёл. | S4.x — стабилизировать тест/логику TTL | TODO |
 | INC-2 | 2026-10-25 | `handlers/palace/save.py:281`, `services/brainstorm.py:370`, `handlers/notes_agent.py:268` | Вызывающие оборачивают `safe_html_format(...)` в `<code>`; разрешённые теги внутри такого значения сохраняются как HTML, а не выводятся литерально. Для данных в code нужен `html.escape`. | S4.3 или отдельный шаг HTML-санитизации | TODO |
 | INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов. `call_ai_async` уже внедрён в `navigation`, `action_bar`, `palace/__init__` и `transkript` (S1.4a/b); старый путь остаётся. | S3.8b или отдельный шаг | PARTIAL |
-| INC-4 | 2026-10-25 | `services/ai_engine.py` (`stream_ai_response_async`) | Gemini-ветка стриминга игнорирует `images` и system-сообщение из `messages`, используя только `system_prompt`. Sync-путь исправлен в S1.5. | S1.6/S1.7 или отдельный шаг | TODO |
+| INC-4 | 2026-10-25 | `services/ai_engine.py` (`stream_ai_events_async`) | Gemini-ветка стриминга игнорирует `images` и system-сообщение из `messages`, используя только `system_prompt`. Sync-путь исправлен в S1.5. | S1.7 или отдельный шаг | TODO |
 
 ---
 
