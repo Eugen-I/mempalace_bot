@@ -54,13 +54,13 @@
 
 - **Дата последнего обновления:** 2026-10-25 12:17 CET
 - **Ветка:** `fix/audit-2026-10-25` (создана от `backup-before-garmin-sqlite-integration`)
-- **HEAD:** `c7a8ca2` (baseline; коммит S0.1 — см. запись в журнале)
+- **HEAD:** `c7a8ca2` (baseline; коммиты S0.1: `0eeeb41`, `ceda2b3`)
 - **Текущий шаг:** `S0.1` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S0.2` — общие тестовые фикстуры для AI/async/JSON
 - **Бюджет текущего шага:** 25k
 - **Израсходовано (оценка):** ~15k (backup, ветка, baseline)
-- **Незакоммиченные изменения:** только `AUDIT_FIX_PLAN.md`, `AUDIT_FIX_PROGRESS.md`; чужие untracked-файлы не тронуты
+- **Незакоммиченные изменения:** нет; `AUDIT_FIX_PLAN.md` и `AUDIT_FIX_PROGRESS.md` закоммичены. Остались только чужие untracked-файлы (`.claude/`, `CLAUDE.md`, `exports/`, `models/`, `scripts/`, Garmin и др.) — не трогать.
 - **Известные блокеры:** нет для S0.1. Pre-existing: 2 падающих теста (`test_day_bounds_midnight`, `test_confirm_write_delete_requires_two_confirmations`), lint/mypy/ruff/bandit не зелёные (baseline зафиксирован)
 - **Последний зелёный QA:** нет; baseline: 3496 passed / 2 failed, coverage 98%
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
