@@ -736,6 +736,25 @@ def test_call_ai_async_resolves_current_engine_when_omitted(monkeypatch):
     assert captured == {"engine": "openai", "model": "gpt-test"}
 
 
+def test_call_ai_async_omits_default_optional_args(monkeypatch):
+    captured = {}
+
+    def fake_sync(engine, model, messages):
+        captured.update({"engine": engine, "model": model, "messages": messages})
+        return "ok"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", fake_sync)
+    out = asyncio.run(
+        ai_engine.call_ai_async("qwen", "m", [{"role": "user", "content": "hi"}]),
+    )
+    assert out == "ok"
+    assert captured == {
+        "engine": "qwen",
+        "model": "m",
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+
 def test_call_ai_async_timeout_raises_domain_error(monkeypatch):
     def slow_sync(*a, **k):
         time.sleep(0.05)

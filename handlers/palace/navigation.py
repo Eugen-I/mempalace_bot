@@ -2,13 +2,14 @@
 import base64
 import binascii
 import json
+import logging
 import secrets
 
 from aiogram import F, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import allowed_callback
-from services.ai_engine import get_current_ai
+from services.ai_engine import AITimeoutError, call_ai_async, get_current_ai
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 from ._utils import safe_edit_text
@@ -23,6 +24,8 @@ from .shared import (
 )
 
 PAGE_SIZE = 5
+
+logger = logging.getLogger(__name__)
 
 _drawer_list_state: TtlDict = TtlDict()
 _active_drawer: TtlDict = TtlDict()
@@ -96,9 +99,14 @@ def _legacy_decode_room(data: str):
     return _decode_callback_part(payload), ""
 
 
-def _sync_ai_call_wrapper(engine: str, model: str, prompt: str, **kwargs):
-    from services.ai_engine import _sync_ai_call
-    return _sync_ai_call(engine, model, [{"role": "user", "content": prompt}], **kwargs)
+async def _report_ai_error(msg, exc: Exception) -> None:
+    """Показывает ошибку ИИ вместо «вечного» статус-сообщения."""
+    if isinstance(exc, AITimeoutError):
+        logger.warning("AI timeout in palace navigation: %s", exc)
+        await msg.edit_text("⏱️ ИИ не ответил вовремя. Попробуйте ещё раз.")
+        return
+    logger.exception("AI error in palace navigation: %s", exc)
+    await msg.edit_text(f"❌ Ошибка ИИ: {exc}")
 
 
 # ─── NAVIGATION ───
@@ -343,7 +351,9 @@ async def cb_cross_ai_article(cb: types.CallbackQuery):
             f"из комнаты {wing}/{room}. "
             f"Отвечай на русском языке.\n\n{content}"
         )
-        result = _sync_ai_call_wrapper("gemini", "gemini-2.0-flash", prompt)
+        result = await call_ai_async(
+            "gemini", "gemini-2.0-flash", [{"role": "user", "content": prompt}],
+        )
         from .action_bar import finalize_answer
 
         async def _edit_article(content: str, **kwargs):
@@ -843,7 +853,6 @@ async def cb_ask_room_ai(cb: types.CallbackQuery):
 async def _answer_room_ai(
     msg, uid: int, wing: str, room: str, question: str, with_web: bool = False,
 ):
-    from services.ai_engine import _sync_ai_call
     ctx = _user_context.setdefault(uid, {})
 
     # ── if with_web, skip step 1 (reuse cached summary) ──
@@ -862,10 +871,14 @@ async def _answer_room_ai(
                 f"Структурированная саммари комнаты:\n{combined_summary}\n\n"
                 f"Результаты поиска:\n{web_results}"
             )
-            result = _sync_ai_call(engine, model, [
-                {"role": "system", "content": system},
-                {"role": "user", "content": question},
-            ])
+            try:
+                result = await call_ai_async(engine, model, [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": question},
+                ])
+            except Exception as exc:
+                await _report_ai_error(msg, exc)
+                return
             _user_context[uid]["_last_ai_answer"] = result
             from .action_bar import finalize_answer
             await finalize_answer(
@@ -925,16 +938,20 @@ async def _answer_room_ai(
         "сгруппируй темы, выдели главное, свяжи между собой.\n\n"
         f"Записи комнаты:\n{ctx_text}"
     )
-    combined_summary = _sync_ai_call(engine, model, [
-        {
-            "role": "system",
-            "content": (
-                "Ты — аналитик. Составляешь саммари по заметкам. "
-                "Отвечай на русском языке."
-            ),
-        },
-        {"role": "user", "content": step1_prompt},
-    ])
+    try:
+        combined_summary = await call_ai_async(engine, model, [
+            {
+                "role": "system",
+                "content": (
+                    "Ты — аналитик. Составляешь саммари по заметкам. "
+                    "Отвечай на русском языке."
+                ),
+            },
+            {"role": "user", "content": step1_prompt},
+        ])
+    except Exception as exc:
+        await _report_ai_error(msg, exc)
+        return
     if not combined_summary:
         combined_summary = ctx_text
 
@@ -951,10 +968,14 @@ async def _answer_room_ai(
         f"\n\nСтруктурированная саммари комнаты:\n{combined_summary}"
     )
 
-    result = _sync_ai_call(engine, model, [
-        {"role": "system", "content": system},
-        {"role": "user", "content": question},
-    ])
+    try:
+        result = await call_ai_async(engine, model, [
+            {"role": "system", "content": system},
+            {"role": "user", "content": question},
+        ])
+    except Exception as exc:
+        await _report_ai_error(msg, exc)
+        return
 
     _user_context[uid]["_last_ai_question"] = question
     _user_context[uid]["_last_ai_answer"] = result
@@ -1283,7 +1304,9 @@ async def cb_tunnels_ai(cb: types.CallbackQuery):
             + json.dumps(tunnels, ensure_ascii=False, indent=2)
         )
         engine, model = get_current_ai()
-        result = _sync_ai_call_wrapper(engine, model, prompt)
+        result = await call_ai_async(
+            engine, model, [{"role": "user", "content": prompt}],
+        )
         await safe_edit_text(cb.message, result or "❌ Пустой ответ.", parse_mode="HTML")
     except Exception as e:
         await safe_edit_text(cb.message, f"❌ Ошибка: {e}")

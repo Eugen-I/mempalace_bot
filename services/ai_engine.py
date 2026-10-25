@@ -371,6 +371,14 @@ async def call_ai_async(
     if effective_timeout <= 0:
         raise ValueError("AI timeout must be positive")
 
+    call_kwargs = dict(kwargs)
+    if context:
+        call_kwargs["context"] = context
+    if user_query:
+        call_kwargs["user_query"] = user_query
+    if has_images:
+        call_kwargs["has_images"] = has_images
+
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(
@@ -378,10 +386,7 @@ async def call_ai_async(
                 resolved_engine,
                 resolved_model,
                 messages,
-                context,
-                user_query=user_query,
-                has_images=has_images,
-                **kwargs,
+                **call_kwargs,
             ),
             timeout=effective_timeout,
         )
