@@ -889,7 +889,116 @@ def test_call_ai_async_keeps_event_loop_responsive(monkeypatch, heartbeat):
     assert ticks >= 1
 
 
-# ---------- stream_ai_response_async ----------
+# ---------- stream_ai_events_async ----------
+
+
+def _collect_stream_events(engine, model, messages, **kwargs):
+    events = []
+
+    async def collect():
+        async for event in ai_engine.stream_ai_events_async(
+            engine, model, messages, **kwargs,
+        ):
+            events.append(event)
+
+    asyncio.run(collect())
+    return events
+
+
+def test_stream_events_success_qwen(monkeypatch):
+    stream = FakeStream(
+        [
+            FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("Привет "))]),
+            FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("мир"))]),
+            FakeStreamChunk([]),
+        ],
+    )
+    fake = FakeOpenAI(stream)
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert [(e.ok, e.text) for e in events] == [
+        (True, "Привет "),
+        (True, "мир"),
+    ]
+    assert all(e.error_code is None for e in events)
+
+
+def test_stream_events_error_before_first_token(monkeypatch):
+    monkeypatch.setattr(ai_engine, "OpenAI", None)
+
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.ok is False
+    assert event.error_code == "stream_error"
+    assert event.text == ""
+    assert "Библиотека openai" in (event.error_message or "")
+
+
+def test_stream_events_error_midstream_preserves_partial_text(monkeypatch):
+    class PartialBoomStream(FakeStream):
+        def __iter__(self):
+            yield FakeStreamChunk(
+                [FakeStreamChoice(delta=FakeDelta("частичный "))],
+            )
+            raise RuntimeError("stream broke")
+
+    fake = FakeOpenAI(PartialBoomStream([]))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert len(events) == 2
+    assert events[0].ok is True
+    assert events[0].text == "частичный "
+    assert events[1].ok is False
+    assert events[1].error_code == "stream_error"
+    assert events[1].text == ""
+    assert "stream broke" in (events[1].error_message or "")
+
+
+def test_stream_events_empty_stream(monkeypatch):
+    fake = FakeOpenAI(FakeStream([]))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert len(events) == 1
+    assert events[0].ok is False
+    assert events[0].error_code == "empty_stream"
+    assert events[0].text == ""
+
+
+def test_stream_events_ollama_unavailable_code(monkeypatch):
+    def boom(model="qwen2.5:7b"):
+        raise RuntimeError("Ollama server did not start in time")
+
+    monkeypatch.setattr("services.ollama_process.ensure_ollama_running", boom)
+
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert len(events) == 1
+    assert events[0].ok is False
+    assert events[0].error_code == "ollama_unavailable"
+    assert "Не удалось подключиться к Ollama" in (
+        events[0].error_message or ""
+    )
+
+
+# ---------- stream_ai_response_async (deprecated adapter) ----------
 
 
 def _collect_stream_kwargs(monkeypatch, engine, model, messages, **kwargs):
@@ -903,6 +1012,24 @@ def _collect_stream_kwargs(monkeypatch, engine, model, messages, **kwargs):
 
     asyncio.run(collect())
     return chunks
+
+
+def test_stream_legacy_adapter_skips_empty_ok_event(monkeypatch):
+    async def fake_events(*args, **kwargs):
+        yield ai_engine.AIStreamEvent(ok=True, text="")
+        yield ai_engine.AIStreamEvent(ok=True, text="ok")
+
+    monkeypatch.setattr(ai_engine, "stream_ai_events_async", fake_events)
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in ai_engine.stream_ai_response_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}],
+            )
+        ]
+
+    assert asyncio.run(collect()) == ["ok"]
 
 
 def test_stream_qwen_yields_cleaned_chunks(monkeypatch):

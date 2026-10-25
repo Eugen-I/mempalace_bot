@@ -11,8 +11,9 @@ import os
 import re
 import time
 from collections.abc import AsyncIterator
-from typing import Any
+from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
 
 # Настройка логгера для этого модуля
 logger = logging.getLogger("AI_Engine")
@@ -465,7 +466,22 @@ async def get_ai_response_async(
             return f"❌ Системная ошибка выполнения запроса: {e!s}"
 
 
-async def stream_ai_response_async(
+@dataclass(frozen=True, slots=True)
+class AIStreamEvent:
+    """Структурированное событие стриминга AI.
+
+    Текстовый чанк: ``ok=True`` и непустой ``text``.
+    Ошибка: ``ok=False``, ``error_code`` и ``error_message``; ``text`` пустой.
+    Ошибка приходит отдельным событием, поэтому её не нужно искать по префиксу.
+    """
+
+    ok: bool
+    text: str = ""
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+async def stream_ai_events_async(
     engine: str,
     model: str,
     messages: list[dict],
@@ -473,16 +489,21 @@ async def stream_ai_response_async(
     user_query: str = "",
     has_images: bool = False,
     **kwargs,
-) -> AsyncIterator[str]:
-    """Асинхронный генератор стриминга ответа ИИ.
-    Отдаёт чанки текста по мере генерации.
+) -> AsyncIterator[AIStreamEvent]:
+    """Асинхронный генератор структурированных событий стриминга.
+
+    Успешный стрим отдаёт только события ``ok=True`` с текстовыми чанками.
+    Ошибка до первого токена или в середине стрима приходит событием
+    ``ok=False``; уже отданный текст остаётся в предыдущих событиях.
+    Пустой успешный стрим превращается в событие ``error_code="empty_stream"``.
     """
     engine = engine.lower().strip()
     if engine == "ollama":
         engine = "qwen"
 
     loop = asyncio.get_event_loop()
-    queue: asyncio.Queue[str | None] = asyncio.Queue()
+    queue: asyncio.Queue[AIStreamEvent | None] = asyncio.Queue()
+    emitted_text = False
 
     try:
         from services.prompts import get_smart_prompt
@@ -521,6 +542,13 @@ async def stream_ai_response_async(
         )
         return text
 
+    def _emit_text(text: str) -> None:
+        nonlocal emitted_text
+        emitted_text = True
+        loop.call_soon_threadsafe(
+            queue.put_nowait, AIStreamEvent(ok=True, text=text),
+        )
+
     def _run_stream():
         try:
             if engine == "qwen":
@@ -556,7 +584,7 @@ async def stream_ai_response_async(
                     if delta and delta.content:
                         cleaned = _clean_chunk(delta.content)
                         if cleaned:
-                            loop.call_soon_threadsafe(queue.put_nowait, cleaned)
+                            _emit_text(cleaned)
 
             elif engine == "openai":
                 if OpenAI is None:
@@ -583,7 +611,7 @@ async def stream_ai_response_async(
                 for chunk in stream:
                     delta = chunk.choices[0].delta if chunk.choices else None
                     if delta and delta.content:
-                        loop.call_soon_threadsafe(queue.put_nowait, delta.content)
+                        _emit_text(delta.content)
 
             elif engine == "gemini":
                 if genai is None:
@@ -611,27 +639,87 @@ async def stream_ai_response_async(
                 )
                 for chunk in stream:
                     if chunk.text:
-                        loop.call_soon_threadsafe(queue.put_nowait, chunk.text)
+                        _emit_text(chunk.text)
 
         except Exception as e:
             if engine == "qwen" and _is_ollama_unavailable(e):
-                error_msg = (
-                    f"\n🧠 {_OLLAMA_UNREACHABLE_MSG}. "
+                error_code = "ollama_unavailable"
+                error_message = (
+                    f"{_OLLAMA_UNREACHABLE_MSG}. "
                     "Запустите Ollama или переключите модель в /settings."
                 )
             else:
-                error_msg = f"\n❌ Ошибка стриминга: {e!s}"
-            logger.error(f"[STREAM_ERROR] {error_msg}", exc_info=True)
-            loop.call_soon_threadsafe(queue.put_nowait, error_msg)
+                error_code = "stream_error"
+                error_message = str(e)
+            logger.error(
+                f"[STREAM_ERROR] {error_code}: {error_message}",
+                exc_info=True,
+            )
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                AIStreamEvent(
+                    ok=False,
+                    error_code=error_code,
+                    error_message=error_message,
+                ),
+            )
+        else:
+            if not emitted_text:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    AIStreamEvent(
+                        ok=False,
+                        error_code="empty_stream",
+                        error_message="Модель не вернула текст.",
+                    ),
+                )
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, None)
 
     task = asyncio.create_task(asyncio.to_thread(_run_stream))
 
     while True:
-        chunk = await queue.get()
-        if chunk is None:
+        event = await queue.get()
+        if event is None:
             break
-        yield chunk
+        yield event
 
     await task
+
+
+async def stream_ai_response_async(
+    engine: str,
+    model: str,
+    messages: list[dict],
+    context: str = "",
+    user_query: str = "",
+    has_images: bool = False,
+    **kwargs,
+) -> AsyncIterator[str]:
+    """Устаревший строковый адаптер потока.
+
+    .. deprecated:: S1.6
+       Используйте :func:`stream_ai_events_async`: он различает текст и ошибки
+       структурно. Этот адаптер оставлен для старых обработчиков, которые ещё
+       ждут строковые чанки и проверяют префикс ``❌``.
+    """
+    async for event in stream_ai_events_async(
+        engine,
+        model,
+        messages,
+        context=context,
+        user_query=user_query,
+        has_images=has_images,
+        **kwargs,
+    ):
+        if event.ok:
+            if event.text:
+                yield event.text
+            continue
+        # Сохраняем прежнее поведение: пустой поток не давал ни одного чанка.
+        if event.error_code == "empty_stream":
+            continue
+        if event.error_code == "ollama_unavailable":
+            yield f"\n🧠 {event.error_message or ''}"
+        else:
+            yield f"\n❌ Ошибка стриминга: {event.error_message or ''}"
