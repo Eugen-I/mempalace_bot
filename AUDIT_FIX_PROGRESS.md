@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 15:28 CET
+- **Дата последнего обновления:** 2026-10-25 15:46 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** см. `git log`; последний code-коммит S1.2 — `b2a5089`, docs-checkpoint — `ec4cffc`
-- **Текущий шаг:** `S1.2` — завершён
+- **HEAD:** `8d69c79` (S1.3 code; docs-checkpoint — следующим коммитом)
+- **Текущий шаг:** `S1.3` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.3` — async-обёртка AI
-- **Бюджет текущего шага:** 25k
-- **Израсходовано (оценка):** ~20k (sanitizer, code fence, тесты, QA)
-- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
+- **Следующее действие:** `S1.4a` — async AI в `handlers/palace/navigation.py`
+- **Бюджет текущего шага:** 35k
+- **Израсходовано (оценка):** ~12k (адаптер, 7 тестов, QA)
+- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md`; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0), в финальном прогоне прошли.
 - **Последний QA:** 3527 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
@@ -91,7 +91,7 @@
 | S0.2 | Общие тестовые фикстуры | P0 | 25k | DONE | `a813965` | 2026-10-25 12:25 | ~12k |
 | S1.1 | Контракт ответа агента | P0 | 30k | DONE | `b5d72d1` | 2026-10-25 13:32 | ~18k |
 | S1.2 | `safe_html_format` и `_TAG_RE` | P0 | 25k | DONE | `b2a5089` | 2026-10-25 15:26 | ~20k |
-| S1.3 | Async-обёртка AI | P0 | 35k | TODO | — | — | — |
+| S1.3 | Async-обёртка AI | P0 | 35k | DONE | `8d69c79` | 2026-10-25 15:46 | ~12k |
 | S1.4a | Async AI в `palace/navigation.py` | P0 | 35k | TODO | — | — | — |
 | S1.4b | Async AI в action_bar/palace/transkript | P0 | 30k | TODO | — | — | — |
 | S1.5 | `_sync_ai_call`: unbound/Gemini | P0 | 40k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 2 | 0 | 11 |
+| 1 — P0 | 13 | 3 | 0 | 10 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **4** | **0** | **41** |
+| **Итого** | **45** | **5** | **0** | **40** |
 
 > Обновлять после каждого шага.
 
@@ -413,6 +413,55 @@
   - Вызывающие, которые оборачивают результат `safe_html_format` в `<code>` (например, `drawer_id` в `handlers/palace/save.py`), могут получить nested allowed-тег внутри code. Для гарантированно литерального вывода таким вызывающим нужен `html.escape`, а не `safe_html_format`; отдельный шаг не входит в S1.2.
 - Следующее действие: `S1.3` — async-обёртка AI.
 
+### S1.3 — Async-обёртка для AI-вызовов
+
+- Дата/время: 2026-10-25 15:43–15:46 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `8d69c79`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 35k / ~12k
+- Файлы: `services/ai_engine.py`, `tests/test_ai_engine.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Добавлен сервисный адаптер `call_ai_async(engine, model, messages, context, user_query, has_images, *, timeout=None, **kwargs)`:
+     - вызывает существующий `_sync_ai_call` через `asyncio.to_thread`;
+     - оборачивает ожидание в `asyncio.wait_for` с таймаутом;
+     - если `engine`/`model` не переданы, разрешает их через существующий `get_current_ai()`, без второй логики выбора;
+     - таймаут по умолчанию — `DEFAULT_AI_TIMEOUT = 210.0` (чуть больше сетевого таймаута провайдеров 200 с);
+     - неположительный таймаут отклоняется `ValueError`;
+     - ошибки sync-вызова пробрасываются вызывающему без превращения в пользовательскую строку;
+     - превышение таймаута выбрасывает `AITimeoutError` (наследник `TimeoutError`) с engine/model/длительностью.
+  2. В docstring явно зафиксировано: отмена `asyncio.to_thread` не убивает рабочий поток; sync-вызов может продолжить работу, поэтому таймаут обязателен для долгих запросов.
+  3. Существующие вызовы не мигрировались — это S1.4a/S1.4b. `get_ai_response_async` не менялся.
+  4. Добавлены 7 тестов: возврат результата и проброс аргументов, разрешение engine/model через resolver, явный таймаут, таймаут по умолчанию, неположительный таймаут, проброс sync-исключения, отзывчивость event loop через `heartbeat`.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_ai_engine.py -q --tb=short --override-ini=addopts=-ra` → **77 passed in 3.25s**.
+  - `make test` → **3534 passed, 1 failed, 6 warnings in 15.40s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight`.
+    - `services/ai_engine.py` — **100%** coverage.
+  - `make lint` → те же 9 baseline-замечаний, новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **74 Low, 0 Medium, 0 High** — baseline, новых 0.
+  - `python3 -m flake8 services/ai_engine.py tests/test_ai_engine.py` → 0.
+  - `python3 -m mypy --explicit-package-bases services/ai_engine.py` → 0.
+  - `git diff --check` → чисто.
+- QA:
+  - lint: baseline 9, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: baseline 74 Low, новых 0
+  - coverage: 98%; `services/ai_engine.py` — 100%
+- AC:
+  - [x] Новая async-обёртка покрыта тестами.
+  - [x] Нет нового блокирующего вызова в event loop (проверено heartbeat-тестом).
+  - [x] Таймаут и исключения пробрасываются предсказуемо.
+  - [x] Resolver переиспользован, второй логики выбора движка/модели нет.
+- Коммит: `8d69c79` (`feat(step-1.3): add async ai call adapter`)
+- Проблемы/решения:
+  - `asyncio.to_thread` не умеет принудительно останавливать поток; это ограничение задокументировано, а не замаскировано. Для долгих вызовов выбран явный внешний таймаут.
+  - Старый `get_ai_response_async` оставлен без изменений, чтобы S1.3 не превратился в миграцию всех вызовов.
+- Найдено попутно:
+  - `get_ai_response_async` по-прежнему не имеет таймаута и создаёт отдельный `ThreadPoolExecutor` на каждый вызов. Не менял в S1.3; кандидат на S1.4/S1.5 или отдельный шаг.
+- Следующее действие: `S1.4a` — перевести `handlers/palace/navigation.py` на `call_ai_async`.
+
 ---
 
 ## 7. Журнал сессий
@@ -423,6 +472,7 @@
 | 2 | 2026-10-25 12:20–12:25 | DeepSeek V4.1 Flash Free | S0.2 | DONE | ~12k | Fake AI / heartbeat / temp chats / fixed clock; 6 new tests |
 | 3 | 2026-10-25 13:17–13:32 | DeepSeek V4.1 Flash Free | S1.1 | DONE | ~18k | Total AgentResult contract; 5 new regression tests; mypy 5→1 |
 | 4 | 2026-10-25 15:15–15:26 | DeepSeek V4.1 Flash Free | S1.2 | DONE | ~20k | Safe HTML whitelist, code fence `<pre><code>`, unbalanced tags; 19 new tests |
+| 5 | 2026-10-25 15:43–15:46 | DeepSeek V4.1 Flash Free | S1.3 | DONE | ~12k | `call_ai_async` + timeout + heartbeat; 7 new tests; ai_engine 100% |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -472,6 +522,7 @@
 |---|---|---|---|---|---|
 | INC-1 | 2026-10-25 | `tests/test_semantic_cache.py:60` | `test_ttl_eviction` флаки при `ttl=0`: `set()` и `get()` могут попасть в один тик, проверка `now - timestamp > 0` не срабатывает. В полном прогоне S1.2 упал один раз, отдельно 5/5 прошёл. | S4.x — стабилизировать тест/логику TTL | TODO |
 | INC-2 | 2026-10-25 | `handlers/palace/save.py:281`, `services/brainstorm.py:370`, `handlers/notes_agent.py:268` | Вызывающие оборачивают `safe_html_format(...)` в `<code>`; разрешённые теги внутри такого значения сохраняются как HTML, а не выводятся литерально. Для данных в code нужен `html.escape`. | S4.3 или отдельный шаг HTML-санитизации | TODO |
+| INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов; новый `call_ai_async` пока не используется. | S1.4/S1.5 или отдельный шаг | TODO |
 
 ---
 
