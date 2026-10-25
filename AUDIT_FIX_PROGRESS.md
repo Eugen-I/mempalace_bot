@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 17:12 CET
+- **Дата последнего обновления:** 2026-10-25 17:20 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** последний code-коммит S1.10 — `21953ac`, docs-коммит — `ea1acac`
-- **Текущий шаг:** `S1.10` — завершён
+- **HEAD:** последний code-коммит S1.11 — `c677438`, docs-checkpoint — будет после этого обновления
+- **Текущий шаг:** `S1.11` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.11` — сброс счётчика circuit breaker после успешного вызова
-- **Бюджет текущего шага:** 20k
-- **Израсходовано (оценка):** ~18k (загрузка/валидация `.env`, тесты, QA)
+- **Следующее действие:** `S1.12` — напоминания: прошлое время, уникальные ключи, безопасный JSON
+- **Бюджет текущего шага:** 15k
+- **Израсходовано (оценка):** ~10k (исправление, 4 теста, QA)
 - **Незакоммиченные изменения:** только этот файл прогресса; `.env` и чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations`; TTL-флак устранён в S1.9 (детерминированные часы).
-- **Последний QA:** 3604 passed / 1 pre-existing failed, coverage 98%; `config.py` 97%, `main.py` 96%, `semantic_cache.py` 100%; lint — 8 baseline (на 1 меньше), mypy — 1 baseline, bandit 73 Low
+- **Последний QA:** 3608 passed / 1 pre-existing failed, coverage 98%; `circuit_breaker.py` 100%; lint — 8 baseline, mypy — 1 baseline, bandit 73 Low
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -100,7 +100,7 @@
 | S1.8 | `palace_mcp`: stderr/timeout/lifecycle | P0 | 40k | DONE | `39f5e47` | 2026-10-25 16:39 | ~20k |
 | S1.9 | Контекстный semantic cache | P0 | 35k | DONE | `62af728` | 2026-10-25 16:55 | ~30k |
 | S1.10 | Токен и пути `.env` | P0 | 20k | DONE | `21953ac` | 2026-10-25 17:10 | ~18k |
-| S1.11 | Circuit breaker: сброс счётчика | P0 | 15k | TODO | — | — | — |
+| S1.11 | Circuit breaker: сброс счётчика | P0 | 15k | DONE | `c677438` | 2026-10-25 17:20 | ~10k |
 | S1.12 | Напоминания: время/ключи/JSON | P0 | 30k | TODO | — | — | — |
 | S2.1 | Пустая button-сессия активна | P1 | 20k | TODO | — | — | — |
 | S2.2 | `append_always_on` в историю | P1 | 25k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 11 | 0 | 2 |
+| 1 — P0 | 13 | 12 | 0 | 1 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **13** | **0** | **32** |
+| **Итого** | **45** | **14** | **0** | **31** |
 
 > Обновлять после каждого шага.
 
@@ -827,6 +827,48 @@
 
 ---
 
+### S1.11 — Circuit breaker: сброс счётчика после успеха
+
+- Дата/время: 2026-10-25 17:15–17:20 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `c677438`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 15k / ~10k
+- Файлы: `services/circuit_breaker.py`, `tests/test_circuit_breaker.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Успешный вызов теперь обнуляет `failure_count` не только при переходе `HALF_OPEN → CLOSED`, но и в состоянии `CLOSED`. Старые ошибки больше не накапливаются между успешными вызовами.
+  2. Для `HALF_OPEN` сохранены прежние поведение и лог `HALF_OPEN → CLOSED (success)`, а также сброс `half_open_retries`.
+  3. Порог `failure_threshold` не менялся: ошибки по-прежнему инкрементируют счётчик, `CLOSED → OPEN` срабатывает при достижении порога.
+- Тесты и команды: 4 новых теста (20 → 24 в `tests/test_circuit_breaker.py`).
+  - `python3 -m pytest tests/test_circuit_breaker.py tests/test_palace_bridge.py tests/test_services_singletons.py -q --no-cov` → **105 passed, 1 warning**.
+  - `python3 -m pytest tests/test_circuit_breaker.py -q --cov=services.circuit_breaker` → **24 passed**, покрытие модуля в полном прогоне **100%**.
+  - `make test` → **3608 passed, 1 failed, 6 warnings in 16.24s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight`.
+    - `services/circuit_breaker.py` — **100%**.
+  - `python3 -m flake8 services/circuit_breaker.py tests/test_circuit_breaker.py` → 0; `mypy services/circuit_breaker.py` → Success.
+  - `make lint` → **8 baseline-замечаний**, новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **73 Low, 0 Medium, 0 High**, новых 0.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 8, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 73 Low, новых 0
+  - coverage: 98%; `circuit_breaker.py` — 100%
+- AC:
+  - [x] Счётчик не накапливает старые ошибки после успеха: успех в `CLOSED` и `HALF_OPEN` обнуляет `failure_count`.
+  - [x] Переходы `CLOSED → OPEN → HALF_OPEN → CLOSED` проверены, включая повторное открытие после успеха.
+  - [x] Порог не изменён.
+- Коммит: `c677438` (`fix(step-1.11): reset circuit breaker failures on success`)
+- Проблемы/решения:
+  - Сброс `failure_count` вынесен за ветку `HALF_OPEN`, чтобы одинаково работать для обоих успешных состояний.
+  - `last_failure_time` на успехе не сбрасывается: он используется только для расчёта recovery timeout после открытия и перезаписывается при новом сбое.
+  - Для проверки полного цикла используется fake clock, без `sleep`.
+- Найдено попутно: нет.
+- Следующее действие: `S1.12` — напоминания: прошлое время, уникальные ключи, безопасный JSON.
+
+---
+
 ## 7. Журнал сессий
 
 | # | Дата | Агент/модель | Шаги | Результат | Токены (оценка) | Примечание |
@@ -844,6 +886,7 @@
 | 11 | 2026-10-25 16:31–16:38 | DeepSeek V4.1 Flash Free | S1.8 | DONE | ~20k | MCP stderr drain, handshake/ready/stop timeouts, kill-fallback, task/process cleanup; 10 new tests; palace_mcp 93% |
 | 12 | 2026-10-25 16:45–16:55 | DeepSeek V4.1 Flash Free | S1.9 | DONE | ~30k | Context-scoped semantic cache, model invalidation, prompt/image fingerprint; 21 new tests; semantic_cache 100% |
 | 13 | 2026-10-25 17:00–17:10 | DeepSeek V4.1 Flash Free | S1.10 | DONE | ~18k | No production test-token, startup validation, root→legacy .env, env priority; 14 new tests; config 97% |
+| 14 | 2026-10-25 17:15–17:20 | DeepSeek V4.1 Flash Free | S1.11 | DONE | ~10k | Reset failure_count on success in CLOSED/HALF_OPEN; 4 tests; circuit_breaker 100% |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
