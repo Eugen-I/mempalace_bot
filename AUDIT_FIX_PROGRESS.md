@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 16:20 CET
+- **Дата последнего обновления:** 2026-10-25 16:29 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** см. `git log`; последний code-коммит S1.6 — `72f8ac7`, docs-checkpoint — `55a07a0`
-- **Текущий шаг:** `S1.6` — завершён
+- **HEAD:** последний code-коммит S1.7 — `4a9c086`; docs-коммит будет создан следующим
+- **Текущий шаг:** `S1.7` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.7` — перевести обработчики стриминга на `AIStreamEvent`, не кэшировать и не сохранять ошибки
+- **Следующее действие:** `S1.8` — `palace_mcp`: чтение stderr, handshake timeout, жизненный цикл
 - **Бюджет текущего шага:** 35k
-- **Израсходовано (оценка):** ~16k (структурированный API, адаптер, 6 тестов, QA)
-- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
+- **Израсходовано (оценка):** ~20k (миграция обработчика, 5 новых тестов, QA)
+- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md`; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0), в финальном прогоне прошли.
-- **Последний QA:** 3554 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
+- **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0); в финальном прогоне прошли.
+- **Последний QA:** 3559 passed / 1 pre-existing failed, coverage 98%; `messages.py` 97%, `ai_engine.py` 100%; lint/mypy/bandit — baseline без новых
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -96,7 +96,7 @@
 | S1.4b | Async AI в action_bar/palace/transkript | P0 | 30k | DONE | `c6da708` | 2026-10-25 16:04 | ~14k |
 | S1.5 | `_sync_ai_call`: unbound/Gemini | P0 | 40k | DONE | `0ca9871` | 2026-10-25 16:11 | ~18k |
 | S1.6 | Структурированный стриминг | P0 | 35k | DONE | `72f8ac7` | 2026-10-25 16:18 | ~16k |
-| S1.7 | Не кэшировать ошибки стриминга | P0 | 35k | TODO | — | — | — |
+| S1.7 | Не кэшировать ошибки стриминга | P0 | 35k | DONE | `4a9c086` | 2026-10-25 16:29 | ~20k |
 | S1.8 | `palace_mcp`: stderr/timeout/lifecycle | P0 | 40k | TODO | — | — | — |
 | S1.9 | Контекстный semantic cache | P0 | 35k | TODO | — | — | — |
 | S1.10 | Токен и пути `.env` | P0 | 20k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 7 | 0 | 6 |
+| 1 — P0 | 13 | 8 | 0 | 5 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **9** | **0** | **36** |
+| **Итого** | **45** | **10** | **0** | **35** |
 
 > Обновлять после каждого шага.
 
@@ -642,6 +642,52 @@
 
 ---
 
+### S1.7 — Обработчики стриминга: ошибки не кэшируются и не сохраняются
+
+- Дата/время: 2026-10-25 16:20–16:29 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `4a9c086`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 35k / ~20k
+- Файлы: `handlers/messages.py`, `tests/test_messages_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. `handlers/messages.py` переведён с deprecated `stream_ai_response_async` на `stream_ai_events_async` / `AIStreamEvent`; проверки `answer.startswith("❌")` удалены.
+  2. При событии `ok=False` обработчик запоминает структурированную ошибку, не кэширует ответ и не публикует `AI_RESPONSE_COMPLETE`/`AI_RESPONSE_SENT`; в историю не попадает ни ошибка, ни пользовательский вопрос без ответа.
+  3. Пользователю показывается безопасное сообщение по `error_code`: отдельные тексты для `ollama_unavailable` и `empty_stream`, общий текст без технических деталей для `stream_error`.
+  4. При ошибке после частичного текста сохраняется и отправляется только реально полученный фрагмент; затем показывается предупреждение об обрыве. Частичный ответ не кэшируется.
+  5. Запись в semantic cache перенесена на финал успешного стрима: промежуточный `SEARCH: ...` и частичный текст не кэшируются; успешный ответ после web search кэшируется целиком.
+  6. `_on_ai_sent` игнорирует пустой ответ и legacy-строки внутренних ошибок (`❌`, сообщение Ollama); `_is_internal_error_text` также отбрасывает старые ошибочные записи из semantic cache и запускает новый стрим.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_messages_handler.py -q --no-cov` → **97 passed, 1 warning in 3.26s**.
+  - `make test` → **3559 passed, 1 failed, 6 warnings in 16.20s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight`.
+    - `handlers/messages.py` — **97%**, `services/ai_engine.py` — **100%**.
+    - В одном промежуточном полном прогоне падал известный флак `test_confirm_write_delete_requires_two_confirmations`; отдельный запуск и финальный полный прогон прошли.
+  - `make lint` → те же 9 baseline-замечаний, новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **74 Low, 0 Medium, 0 High** — baseline, новых 0.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 9, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: baseline 74 Low, новых 0
+  - coverage: 98%; `messages.py` — 97%, `ai_engine.py` — 100%
+- AC:
+  - [x] В истории и semantic cache нет строк `❌` от внутренних ошибок: ошибки не сохраняются и не кэшируются, а legacy-записи игнорируются.
+  - [x] UX ошибки не ухудшился: понятное сообщение по типу ошибки, без утечки внутренних деталей; частичный ответ сохраняется с предупреждением.
+  - [x] Покрыты ошибка до первого токена, ошибка во втором стриме после web search, частичный стрим, пустой стрим и успешное кэширование финального ответа.
+- Коммит: `4a9c086` (`fix(step-1.7): stop caching streaming errors`)
+- Проблемы/решения:
+  - Пустой стрим теперь трактуется как ошибка `empty_stream`: в историю не попадает строка «Пустой ответ от ИИ», пользователь видит её только как сообщение.
+  - Для legacy-кэша добавлена проверка `_is_internal_error_text`: старые записи с `❌` не используются и не сохраняются, вместо них выполняется новый запрос.
+  - Ошибка сохраняется как структурированный объект, а не как строка, поэтому частичный текст можно отделить от сообщения об ошибке.
+- Найдено попутно:
+  - INC-5: при исключении `search_web` обработчик оставляет в `answer` исходную `SEARCH: ...`-директиву и может сохранить/закэшировать её как обычный ответ. Старый тест `test_ai_search_pattern_error` это поведение закрепляет.
+  - INC-4 остаётся: Gemini-ветка `stream_ai_events_async` по-прежнему игнорирует `images` и system-сообщение из `messages`.
+- Следующее действие: `S1.8` — `palace_mcp`: stderr, handshake timeout, жизненный цикл.
+
+---
+
 ## 7. Журнал сессий
 
 | # | Дата | Агент/модель | Шаги | Результат | Токены (оценка) | Примечание |
@@ -655,6 +701,7 @@
 | 7 | 2026-10-25 16:00–16:04 | DeepSeek V4.1 Flash Free | S1.4b | DONE | ~14k | 5 sync AI calls → `call_ai_async` in action_bar/palace/transkript; 3 new tests; transcription heartbeat |
 | 8 | 2026-10-25 16:07–16:11 | DeepSeek V4.1 Flash Free | S1.5 | DONE | ~18k | qwen empty choices, Gemini None-text, system+images contract; 3 new tests; ai_engine 100% |
 | 9 | 2026-10-25 16:17–16:18 | DeepSeek V4.1 Flash Free | S1.6 | DONE | ~16k | `AIStreamEvent` + `stream_ai_events_async`; deprecated string adapter; 6 new tests; ai_engine 100% |
+| 10 | 2026-10-25 16:20–16:29 | DeepSeek V4.1 Flash Free | S1.7 | DONE | ~20k | Handlers use structured stream events; errors not cached/saved; partial text preserved; 5 new tests; messages 97% |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -705,7 +752,8 @@
 | INC-1 | 2026-10-25 | `tests/test_semantic_cache.py:60` | `test_ttl_eviction` флаки при `ttl=0`: `set()` и `get()` могут попасть в один тик, проверка `now - timestamp > 0` не срабатывает. В полном прогоне S1.2 упал один раз, отдельно 5/5 прошёл. | S4.x — стабилизировать тест/логику TTL | TODO |
 | INC-2 | 2026-10-25 | `handlers/palace/save.py:281`, `services/brainstorm.py:370`, `handlers/notes_agent.py:268` | Вызывающие оборачивают `safe_html_format(...)` в `<code>`; разрешённые теги внутри такого значения сохраняются как HTML, а не выводятся литерально. Для данных в code нужен `html.escape`. | S4.3 или отдельный шаг HTML-санитизации | TODO |
 | INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов. `call_ai_async` уже внедрён в `navigation`, `action_bar`, `palace/__init__` и `transkript` (S1.4a/b); старый путь остаётся. | S3.8b или отдельный шаг | PARTIAL |
-| INC-4 | 2026-10-25 | `services/ai_engine.py` (`stream_ai_events_async`) | Gemini-ветка стриминга игнорирует `images` и system-сообщение из `messages`, используя только `system_prompt`. Sync-путь исправлен в S1.5. | S1.7 или отдельный шаг | TODO |
+| INC-4 | 2026-10-25 | `services/ai_engine.py` (`stream_ai_events_async`) | Gemini-ветка стриминга игнорирует `images` и system-сообщение из `messages`, используя только `system_prompt`. Sync-путь исправлен в S1.5. | Отдельный шаг стримингового Gemini-контракта | TODO |
+| INC-5 | 2026-10-25 | `handlers/messages.py` (ветка `search_web`) | При исключении `search_web` исходный ответ с `SEARCH: ...` остаётся в `answer` и может быть сохранён/закэширован как обычный ответ; `test_ai_search_pattern_error` закрепляет это поведение. | Отдельный шаг обработки ошибок web search | TODO |
 
 ---
 
