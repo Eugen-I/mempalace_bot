@@ -119,13 +119,15 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             AGENT_SYSTEM_PROMPT
             + "\n\nПродолжай диалог с пользователем на основе истории выше."
         )
-        result = await _run_agent_reply(
+        agent_result = await _run_agent_reply(
             uid, status, prompt, text, ctx={}, conversation_history=history
         )
 
-        # Save assistant response to button session
-        if result.final_answer:
-            ctx_store.append_button_context(session_id, "assistant", result.final_answer)
+        # Save only a successful assistant response to button session
+        if agent_result.ok and agent_result.final_answer:
+            ctx_store.append_button_context(
+                session_id, "assistant", agent_result.final_answer,
+            )
 
         # Check for end dialog keywords
         end_keywords = ("закончить", "stop", "end", "выход", "завершить")

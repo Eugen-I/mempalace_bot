@@ -65,6 +65,16 @@ class AgentResult:
     finished_reason: str = "answer"  # answer | max_iterations | error
     error: str | None = None
 
+    @property
+    def ok(self) -> bool:
+        """True только для обычного завершения с ответом."""
+        return self.finished_reason == "answer"
+
+    @classmethod
+    def failure(cls, error: str, *, finished_reason: str = "error") -> "AgentResult":
+        """Безопасный результат для ошибок: final_answer всегда строка."""
+        return cls(final_answer="", finished_reason=finished_reason, error=error)
+
 
 def _qwen_tool_call(model: str, messages: list[dict], tools: list[dict]) -> dict:
     """Синхронный вызов Ollama c tools (запускается через asyncio.to_thread)."""

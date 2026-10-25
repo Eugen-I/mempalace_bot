@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 12:26 CET
+- **Дата последнего обновления:** 2026-10-25 13:32 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** `a8aa5fd` (S0.2 checkpoint; code commit `a813965`; актуальный HEAD проверять через `git log`)
-- **Текущий шаг:** `S0.2` — завершён
+- **HEAD:** `ae67d1b` (S0.2 checkpoint; коммит S1.1 — см. журнал)
+- **Текущий шаг:** `S1.1` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.1` — единый контракт ответа агента
-- **Бюджет текущего шага:** 25k
-- **Израсходовано (оценка):** ~12k (фикстуры + тесты + прогоны)
-- **Незакоммиченные изменения:** нет; `tests/conftest.py`, `tests/test_audit_fixtures.py`, `AUDIT_FIX_PROGRESS.md` закоммичены. Чужие untracked-файлы не трогать.
+- **Следующее действие:** `S1.2` — `safe_html_format` и `_TAG_RE`
+- **Бюджет текущего шага:** 30k
+- **Израсходовано (оценка):** ~18k (контракт результата + тесты + прогоны)
+- **Незакоммиченные изменения:** `handlers/agent.py`, `handlers/notes_agent.py`, `handlers/palace/__init__.py`, `services/agent_engine.py`, три тест-файла, `AUDIT_FIX_PROGRESS.md` — будут закоммичены в S1.1. Чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: 2 падающих теста на baseline; в финальном прогоне S0.2 — 1 (`test_day_bounds_midnight`), второй (`test_confirm_write_delete_requires_two_confirmations`) флаки и прошёл.
 - **Последний QA:** 3503 passed / 1 failed, coverage 98%; lint/mypy/bandit — baseline без новых
@@ -89,7 +89,7 @@
 |---|---|---|---:|---|---|---|---|
 | S0.1 | Baseline, ветка, фиксация состояния | P0 | 25k | DONE | `0eeeb41` | 2026-10-25 12:17 | ~15k |
 | S0.2 | Общие тестовые фикстуры | P0 | 25k | DONE | `a813965` | 2026-10-25 12:25 | ~12k |
-| S1.1 | Контракт ответа агента | P0 | 30k | TODO | — | — | — |
+| S1.1 | Контракт ответа агента | P0 | 30k | DONE | см. журнал | 2026-10-25 13:32 | ~18k |
 | S1.2 | `safe_html_format` и `_TAG_RE` | P0 | 25k | TODO | — | — | — |
 | S1.3 | Async-обёртка AI | P0 | 35k | TODO | — | — | — |
 | S1.4a | Async AI в `palace/navigation.py` | P0 | 35k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 0 | 0 | 13 |
+| 1 — P0 | 13 | 1 | 0 | 12 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **2** | **0** | **43** |
+| **Итого** | **45** | **3** | **0** | **42** |
 
 > Обновлять после каждого шага.
 
@@ -304,6 +304,55 @@
 - Найдено попутно: —
 - Следующее действие: `S1.1` — единый контракт ответа агента.
 
+### S1.1 — Единый контракт ответа агента
+
+- Дата/время: 2026-10-25 13:17–13:32 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `ae67d1b`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 30k / ~18k
+- Файлы: `services/agent_engine.py`, `handlers/agent.py`, `handlers/notes_agent.py`, `handlers/palace/__init__.py`, `tests/test_agent_handler.py`, `tests/test_notes_agent_handler.py`, `tests/test_palace_init.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. `AgentResult` получил контракт завершённости:
+     - свойство `ok` — `True` только при `finished_reason == "answer"`;
+     - classmethod `failure(error)` — безопасный результат с `final_answer=""`, `finished_reason="error"`, `error=<текст>`.
+  2. `_run_agent_reply` теперь возвращает `AgentResult` на **всех** ветках:
+     - `AgentEngineError` → `failure(str(exc))` + статус `⚠️ …`;
+     - неожиданное исключение → `failure("Ошибка агента: …")` + статус `❌ …`;
+     - `finished_reason == "error"` → возвращается сам результат, а не `None`;
+     - `max_iterations` и успех — как раньше, возвращается результат.
+  3. `_run_notes_agent_reply` приведён к тому же контракту (`-> ae.AgentResult`, ошибки через `failure`).
+  4. Вызывающие обновлены:
+     - `cb_ab_agent` и palace-button-сессия сохраняют ответ в историю только при `result.ok and result.final_answer`;
+     - в `handlers/palace/__init__.py` локальная переменная агента переименована в `agent_result`, чтобы не конфликтовать с `result` от `_sync_ai_call` (это также убрало старую mypy-ошибку на строке 589).
+  5. Поведение успешного ответа не изменилось; при ошибке пользователь видит понятный текст в статус-сообщении, traceback не показывается.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_agent_handler.py tests/test_notes_agent_handler.py::test_run_notes_agent_wiring … tests/test_palace_init.py::test_process_mcp_text_input_button_agent_error_is_safe -q --tb=short --override-ini=addopts=-ra` → **31 passed**.
+  - `make test` → **3508 passed, 1 failed, 6 warnings in 135.74s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight`.
+    - Флаки `test_confirm_write_delete_requires_two_confirmations` в полном прогоне прошёл; при отдельном запуске одного файла один раз упал по таймингу (см. «Найдено попутно»).
+  - `make typecheck` → **1 error** (`handlers/chat.py:32`, `TtlDict` generic — S1.3); было 5, ошибки `handlers/agent.py` и `handlers/palace/__init__.py:589` устранены.
+  - `make lint` → те же 9 baseline-замечаний, новых 0.
+  - `make security` → 74 Low, 0 Medium/High — baseline, новых нет.
+  - `flake8` по изменённым файлам → 0.
+- QA:
+  - lint: baseline 9, новых 0
+  - mypy: 5 → 1 (осталась несвязанная `TtlDict` в `handlers/chat.py`)
+  - bandit: baseline 74 Low, новых 0
+  - coverage: 98%
+- AC:
+  - [x] Нет обращений к `.final_answer` у потенциально `None`: оба runner'а всегда возвращают `AgentResult`.
+  - [x] `mypy` по `handlers/agent.py` без ошибок «Return value expected».
+  - [x] Есть regression-тесты на `AgentEngineError`, неожиданное исключение и `finished_reason="error"`.
+  - [x] `notes_agent` и palace-путь покрыты тестами.
+- Коммит: `см. следующий коммит` (hash фиксируется после коммита)
+- Проблемы/решения:
+  - При первом целевом прогоне `test_confirm_write_delete_requires_two_confirmations` упал: `status.reply_markup is None` — тест ждёт карточку 50 мс, а `_note_title` успевает сходить в Apple Notes. Это pre-existing флак, не связан с контрактом; повторный запуск и полный `make test` прошли. Не чинил в S1.1, чтобы не смешивать изменения.
+- Найдено попутно:
+  - `tests/test_notes_agent_handler.py::test_confirm_write_delete_requires_two_confirmations` — тайминг-флак (ожидание 0.05 с после `_make_confirm_write`, внутри которого `_note_title` делает `asyncio.to_thread(apple_notes.list_notes)`). Кандидат на стабилизацию в S4.x.
+  - `handlers/chat.py:32` — `TtlDict` не generic; остаётся единственной mypy-ошибкой, чинится в S1.3.
+- Следующее действие: `S1.2` — `safe_html_format` и `_TAG_RE`.
+
 ---
 
 ## 7. Журнал сессий
@@ -312,6 +361,7 @@
 |---:|---|---|---|---|---|---|
 | 1 | 2026-10-25 12:15–12:17 | DeepSeek V4.1 Flash Free | S0.1 | DONE | ~15k | Backup + branch + baseline; 2 pre-existing test failures |
 | 2 | 2026-10-25 12:20–12:25 | DeepSeek V4.1 Flash Free | S0.2 | DONE | ~12k | Fake AI / heartbeat / temp chats / fixed clock; 6 new tests |
+| 3 | 2026-10-25 13:17–13:32 | DeepSeek V4.1 Flash Free | S1.1 | DONE | ~18k | Total AgentResult contract; 5 new regression tests; mypy 5→1 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 

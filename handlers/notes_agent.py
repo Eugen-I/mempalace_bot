@@ -342,8 +342,13 @@ def _make_confirm_write(uid: int, status_msg):
     return confirm_write
 
 
-async def _run_notes_agent_reply(uid: int, status_msg, question: str):
-    """Статус → run_agent (CAT_NOTES, confirm_write) → finalize_answer."""
+async def _run_notes_agent_reply(
+    uid: int, status_msg, question: str,
+) -> ae.AgentResult:
+    """Статус → run_agent (CAT_NOTES, confirm_write) → finalize_answer.
+
+    Всегда возвращает AgentResult, включая ошибки (``ok=False``).
+    """
     from handlers.palace.action_bar import finalize_answer
 
     async def status_cb(text: str):
@@ -360,18 +365,19 @@ async def _run_notes_agent_reply(uid: int, status_msg, question: str):
         )
     except ae.AgentEngineError as exc:
         await _status_edit(status_msg, f"⚠️ {exc}")
-        return
+        return ae.AgentResult.failure(str(exc))
     except Exception as exc:  # noqa: BLE001
         logger.error("[NOTES-AGENT] run failed: %s", exc, exc_info=True)
-        await _status_edit(status_msg, f"❌ Ошибка агента: {exc}")
-        return
+        message = f"Ошибка агента: {exc}"
+        await _status_edit(status_msg, f"❌ {message}")
+        return ae.AgentResult.failure(message)
 
     if result.finished_reason == "error":
         await _status_edit(status_msg, f"❌ {result.error or 'Неизвестная ошибка'}")
-        return
+        return result
     if result.finished_reason == "max_iterations":
         await _status_edit(status_msg, f"⚠️ {result.error or 'Лимит итераций'}")
-        return
+        return result
 
     notes = _collect_notes_from_result(result)
     if notes:
@@ -391,6 +397,7 @@ async def _run_notes_agent_reply(uid: int, status_msg, question: str):
         title="<b>📝 Apple Notes</b>",
         extra_rows=extra_rows,
     )
+    return result
 
 
 # ─── 💡 Творческий штурм (сюрреалистичный, с настройками X-T4) ───

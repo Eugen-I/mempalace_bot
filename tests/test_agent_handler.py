@@ -280,9 +280,96 @@ async def test_run_agent_reply_status_cb_uses_status_edit(monkeypatch):
 
     monkeypatch.setattr(ae, "run_agent", fake_run_agent)
     status = FakeStatus()
-    await h._run_agent_reply(4242, status, "sys", "вопрос")
+    result = await h._run_agent_reply(4242, status, "sys", "вопрос")
+    assert result.ok is True
+    assert result.final_answer == "Готово"
     assert status.edits
     assert any("Шаг 1/5" in e for e in status.edits)
+
+
+async def test_run_agent_reply_engine_error_returns_safe_result(monkeypatch):
+    async def boom(system_prompt, user_prompt, **kwargs):
+        raise ae.AgentEngineError("Агентный режим работает только с Ollama")
+
+    monkeypatch.setattr(ae, "run_agent", boom)
+    status = FakeStatus()
+
+    result = await h._run_agent_reply(4242, status, "sys", "вопрос")
+
+    assert isinstance(result, ae.AgentResult)
+    assert result.ok is False
+    assert result.final_answer == ""
+    assert "Ollama" in (result.error or "")
+    assert "Ollama" in status.edits[-1]
+
+
+async def test_run_agent_reply_unexpected_error_returns_safe_result(monkeypatch):
+    async def boom(system_prompt, user_prompt, **kwargs):
+        raise RuntimeError("поломка")
+
+    monkeypatch.setattr(ae, "run_agent", boom)
+    status = FakeStatus()
+
+    result = await h._run_agent_reply(4242, status, "sys", "вопрос")
+
+    assert isinstance(result, ae.AgentResult)
+    assert result.ok is False
+    assert result.final_answer == ""
+    assert result.error == "Ошибка агента: поломка"
+    assert "поломка" in status.edits[-1]
+
+
+async def test_run_agent_reply_error_result_returns_safe_result(monkeypatch):
+    async def fake_run_agent(system_prompt, user_prompt, **kwargs):
+        return ae.AgentResult(
+            final_answer="", finished_reason="error", error="Модель вернула пустой ответ.",
+        )
+
+    monkeypatch.setattr(ae, "run_agent", fake_run_agent)
+    status = FakeStatus()
+
+    result = await h._run_agent_reply(4242, status, "sys", "вопрос")
+
+    assert result.ok is False
+    assert result.final_answer == ""
+    assert result.error == "Модель вернула пустой ответ."
+    assert "Модель вернула пустой ответ" in status.edits[-1]
+
+
+async def test_cb_ab_agent_engine_error_does_not_crash(monkeypatch):
+    from handlers.palace.action_bar import Answer, answer_store
+
+    class FakeCtxStore:
+        def __init__(self):
+            self.appended = []
+
+        def create_button_session(self, answer_sid):
+            return "button-sid"
+
+        def bind_button_session_to_uid(self, uid, session_id):
+            return None
+
+        def append_button_context(self, session_id, role, content):
+            self.appended.append((role, content))
+
+    store = FakeCtxStore()
+    monkeypatch.setattr(h, "get_agent_context_store", lambda: store)
+
+    async def boom(system_prompt, user_prompt, **kwargs):
+        raise RuntimeError("поломка агента")
+
+    monkeypatch.setattr(ae, "run_agent", boom)
+
+    sid = "test_agent_error"
+    answer_store[sid] = Answer(sid=sid, text="Ответ", ctx={})
+    try:
+        cb = FakeCb(4242, data=f"ab_agent:{sid}")
+        await h.cb_ab_agent(cb)
+    finally:
+        answer_store.pop(sid, None)
+
+    assert store.appended == []
+    assert "поломка агента" in cb.message.last_status.edits[-1]
 
 
 async def test_cb_ab_agent_no_data_returns():

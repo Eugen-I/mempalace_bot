@@ -227,6 +227,48 @@ def test_process_mcp_text_input_no_action(monkeypatch):
     assert msg.edits == []
 
 
+def test_process_mcp_text_input_button_agent_error_is_safe(monkeypatch):
+    from handlers import agent as agent_handler
+
+    class FakeCtxStore:
+        def __init__(self):
+            self.history = []
+
+        def has_active_button_session(self, uid):
+            return "button-sid"
+
+        def append_button_context(self, session_id, role, content):
+            self.history.append({"role": role, "content": content})
+
+        def get_button_context(self, session_id):
+            return list(self.history)
+
+        def end_button_session(self, session_id):
+            return None
+
+        def unbind_button_session_from_uid(self, uid):
+            return None
+
+    store = FakeCtxStore()
+    monkeypatch.setattr(
+        "services.agent_context.get_agent_context_store", lambda: store,
+    )
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("поломка агента")
+
+    monkeypatch.setattr(agent_handler.ae, "run_agent", boom)
+    msg = FakeAnswerMsg()
+
+    result = asyncio.run(palace.process_mcp_text_input(
+        4242, "привет", FakeAnswerFactory(msg),
+    ))
+
+    assert result is True
+    assert store.history == [{"role": "user", "content": "привет"}]
+    assert any("поломка агента" in text for text, _ in msg.edits)
+
+
 # ---------- list_rooms: "*" ----------
 
 
