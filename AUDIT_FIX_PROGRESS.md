@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 15:55 CET
+- **Дата последнего обновления:** 2026-10-25 15:56 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** `c2484f8` (S1.4a code; docs-checkpoint — следующим коммитом)
+- **HEAD:** см. `git log`; последний code-коммит S1.4a — `c2484f8`, docs-checkpoint — `4de320e`
 - **Текущий шаг:** `S1.4a` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S1.4b` — async AI в `action_bar`, `palace/__init__`, `transkript`
 - **Бюджет текущего шага:** 35k
 - **Израсходовано (оценка):** ~16k (миграция 5 вызовов, обработка ошибок, 8 тестов, QA)
-- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md`; чужие untracked-файлы не трогать.
+- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0), в финальном прогоне прошли.
 - **Последний QA:** 3542 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
