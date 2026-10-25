@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 13:32 CET
+- **Дата последнего обновления:** 2026-10-25 15:26 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** `b5d72d1` (S1.1 code; docs-checkpoint — следующим коммитом; актуальный HEAD смотреть через `git log`)
-- **Текущий шаг:** `S1.1` — завершён
+- **HEAD:** `b2a5089` (S1.2 code; docs-checkpoint — следующим коммитом)
+- **Текущий шаг:** `S1.2` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.2` — `safe_html_format` и `_TAG_RE`
-- **Бюджет текущего шага:** 30k
-- **Израсходовано (оценка):** ~18k (контракт результата + тесты + прогоны)
-- **Незакоммиченные изменения:** нет после docs-коммита; чужие untracked-файлы не трогать.
+- **Следующее действие:** `S1.3` — async-обёртка AI
+- **Бюджет текущего шага:** 25k
+- **Израсходовано (оценка):** ~20k (sanitizer, code fence, тесты, QA)
+- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md`; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** нет. Pre-existing: 2 падающих теста на baseline; в финальном прогоне S0.2 — 1 (`test_day_bounds_midnight`), второй (`test_confirm_write_delete_requires_two_confirmations`) флаки и прошёл.
-- **Последний QA:** 3503 passed / 1 failed, coverage 98%; lint/mypy/bandit — baseline без новых
+- **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0), в финальном прогоне прошли.
+- **Последний QA:** 3527 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -90,7 +90,7 @@
 | S0.1 | Baseline, ветка, фиксация состояния | P0 | 25k | DONE | `0eeeb41` | 2026-10-25 12:17 | ~15k |
 | S0.2 | Общие тестовые фикстуры | P0 | 25k | DONE | `a813965` | 2026-10-25 12:25 | ~12k |
 | S1.1 | Контракт ответа агента | P0 | 30k | DONE | `b5d72d1` | 2026-10-25 13:32 | ~18k |
-| S1.2 | `safe_html_format` и `_TAG_RE` | P0 | 25k | TODO | — | — | — |
+| S1.2 | `safe_html_format` и `_TAG_RE` | P0 | 25k | DONE | `b2a5089` | 2026-10-25 15:26 | ~20k |
 | S1.3 | Async-обёртка AI | P0 | 35k | TODO | — | — | — |
 | S1.4a | Async AI в `palace/navigation.py` | P0 | 35k | TODO | — | — | — |
 | S1.4b | Async AI в action_bar/palace/transkript | P0 | 30k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 1 | 0 | 12 |
+| 1 — P0 | 13 | 2 | 0 | 11 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **3** | **0** | **42** |
+| **Итого** | **45** | **4** | **0** | **41** |
 
 > Обновлять после каждого шага.
 
@@ -353,6 +353,66 @@
   - `handlers/chat.py:32` — `TtlDict` не generic; остаётся единственной mypy-ошибкой, чинится в S1.3.
 - Следующее действие: `S1.2` — `safe_html_format` и `_TAG_RE`.
 
+### S1.2 — Исправление `safe_html_format` и `_TAG_RE`
+
+- Дата/время: 2026-10-25 15:15–15:26 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `b2a5089`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 25k / ~20k
+- Файлы: `services/text_formatter.py`, `tests/test_text_formatter.py`, `tests/test_action_bar.py`, `tests/test_brainstorm.py`, `tests/test_brainstorm_handler.py`, `tests/test_digest.py`, `tests/test_notes_agent_handler.py`, `tests/test_palace_save_result.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Удалено второе (перекрывавшее первое) определение `_TAG_RE`. Осталось одно модульное определение с capture-группой; его используют и sanitizer, и `split_message`.
+  2. `_escape_outside_allowed_tags` переписан как безопасный sanitizer:
+     - разрешённые теги из `ALLOWED_TAGS` сохраняются;
+     - неизвестные теги (`<script>`, `<x>`, …) экранируются;
+     - атрибуты отбрасываются, кроме `href` у `<a>`;
+     - `href` допускается только со схемами `http://`, `https://`, `tg://`, `mailto:`, значение экранируется;
+     - «висячие» закрывающие теги экранируются;
+     - незакрытые разрешённые теги закрываются в конце, неправильный порядок вложенности нормализуется.
+  3. Markdown-code вынимается до markdown-преобразований:
+     - fenced code → `<pre><code>…</code></pre>`;
+     - inline code → `<code>…</code>`;
+     - содержимое кода экранируется и не форматируется (`**`, `*`, HTML-теги внутри кода остаются текстом);
+     - язык fence'а распознаётся только в первой строке; fence без перевода строки не съедает код как «язык».
+  4. `safe_html_format` теперь принимает `None` и возвращает `""`; старый баг с inline-regex, ломавшим тройные бэктики, устранён.
+  5. Обновлены тесты, которые закрепляли ошибочное экранирование разрешённых тегов:
+     - в `tests/test_text_formatter.py` `<b>` теперь проверяется как сохраняемый, а для проверки экранирования используются `<script>` и опасные ссылки;
+     - в `test_action_bar`, `test_brainstorm`, `test_brainstorm_handler`, `test_digest`, `test_notes_agent_handler`, `test_palace_save_result` проверки «HTML экранирован» переведены на `<script>`; добавлены проверки, что разрешённые теги сохраняются.
+     - Это не ослабление тестов: опасный HTML по-прежнему обязан экранироваться, а новый контракт отдельно проверяет whitelist.
+  6. Добавлены regression-тесты: whitelist всех разрешённых тегов, безопасные/опасные ссылки, незакрытые и «висячие» теги, неправильная вложенность, `None`, code fence с HTML/Markdown, fence без newline, fence с языком `c#`.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_text_formatter.py -q --tb=short --override-ini=addopts=-ra` → **58 passed in 0.07s**.
+  - `python3 -m pytest tests/test_text_formatter.py tests/test_action_bar.py -q --tb=short --override-ini=addopts=-ra` → **168 passed in 3.02s**.
+  - Подмножество затронутых файлов до финальной правки fence-regex → **472 passed, 1 pre-existing failed** (`test_day_bounds_midnight`).
+  - `make test` → **3527 passed, 1 failed, 6 warnings in 15.75s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight` (`assert 1792969200.0 == (1792879200.0 + 86400)`).
+  - `make lint` → те же 9 baseline-замечаний (untracked Garmin, `config.py:117`, `services/deps_guard.py:84`), новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32` (`TtlDict` generic), новых 0.
+  - `make security` → **74 Low, 0 Medium, 0 High** — baseline, новых 0.
+  - `python3 -m flake8 tests/test_text_formatter.py tests/test_action_bar.py` → 0.
+  - `python3 -m ruff check services/text_formatter.py` → 0 (по изменённым production-файлам); в затронутых тестах остались pre-existing замечания (UP031/I001 и др.), новых от S1.2 нет.
+  - `git diff --check` → чисто.
+- QA:
+  - lint: baseline 9, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: baseline 74 Low, новых 0
+  - coverage: 98%; `services/text_formatter.py` — 97%
+- AC:
+  - [x] Разрешённый HTML не экранируется; опасный экранируется.
+  - [x] Code fence преобразуется в `<pre><code>`, содержимое кода не ломается Markdown.
+  - [x] Незакрытые/разорванные/неправильно вложенные теги не ломают итоговый HTML.
+  - [x] Дублирующее определение `_TAG_RE` удалено.
+  - [x] Тесты, закреплявшие баг, обновлены осознанно; причина зафиксирована здесь.
+- Коммит: `b2a5089` (`fix(step-1.2): repair safe html formatting`)
+- Проблемы/решения:
+  - Pre-commit на изменённых тестовых файлах обнаружил два pre-existing flake8-замечания: F811 (дубликат `test_split_hard_limit_no_delimiters`) и F841 (`labels` без использования). Удалён байт-в-байт дубликат теста (покрытие не потеряно) и заменено бессмысленное присваивание на проверку markup. Это позволило коммиту пройти без ослабления тестов.
+  - Один промежуточный полный прогон дал флаки `tests/test_semantic_cache.py::TestSemanticCache::test_ttl_eviction` (TTL=0, гонка `>`); отдельный повтор 5/5 прошёл, финальный `make test` — прошёл. Не связан с S1.2.
+- Найдено попутно:
+  - `test_semantic_cache.py::test_ttl_eviction` — тайминг-флак при `ttl=0`; кандидат на стабилизацию в S4.x.
+  - Вызывающие, которые оборачивают результат `safe_html_format` в `<code>` (например, `drawer_id` в `handlers/palace/save.py`), могут получить nested allowed-тег внутри code. Для гарантированно литерального вывода таким вызывающим нужен `html.escape`, а не `safe_html_format`; отдельный шаг не входит в S1.2.
+- Следующее действие: `S1.3` — async-обёртка AI.
+
 ---
 
 ## 7. Журнал сессий
@@ -362,6 +422,7 @@
 | 1 | 2026-10-25 12:15–12:17 | DeepSeek V4.1 Flash Free | S0.1 | DONE | ~15k | Backup + branch + baseline; 2 pre-existing test failures |
 | 2 | 2026-10-25 12:20–12:25 | DeepSeek V4.1 Flash Free | S0.2 | DONE | ~12k | Fake AI / heartbeat / temp chats / fixed clock; 6 new tests |
 | 3 | 2026-10-25 13:17–13:32 | DeepSeek V4.1 Flash Free | S1.1 | DONE | ~18k | Total AgentResult contract; 5 new regression tests; mypy 5→1 |
+| 4 | 2026-10-25 15:15–15:26 | DeepSeek V4.1 Flash Free | S1.2 | DONE | ~20k | Safe HTML whitelist, code fence `<pre><code>`, unbalanced tags; 19 new tests |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -409,7 +470,8 @@
 
 | ID | Дата | Файл/место | Проблема | Предлагаемый шаг | Статус |
 |---|---|---|---|---|---|
-| — | — | — | — | — | — |
+| INC-1 | 2026-10-25 | `tests/test_semantic_cache.py:60` | `test_ttl_eviction` флаки при `ttl=0`: `set()` и `get()` могут попасть в один тик, проверка `now - timestamp > 0` не срабатывает. В полном прогоне S1.2 упал один раз, отдельно 5/5 прошёл. | S4.x — стабилизировать тест/логику TTL | TODO |
+| INC-2 | 2026-10-25 | `handlers/palace/save.py:281`, `services/brainstorm.py:370`, `handlers/notes_agent.py:268` | Вызывающие оборачивают `safe_html_format(...)` в `<code>`; разрешённые теги внутри такого значения сохраняются как HTML, а не выводятся литерально. Для данных в code нужен `html.escape`. | S4.3 или отдельный шаг HTML-санитизации | TODO |
 
 ---
 
