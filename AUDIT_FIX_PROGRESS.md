@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 16:11 CET
+- **Дата последнего обновления:** 2026-10-25 16:13 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** `0ca9871` (S1.5 code); docs-checkpoint — см. `git log`
+- **HEAD:** см. `git log`; последний code-коммит S1.5 — `0ca9871`, docs-checkpoint — `5a35132`
 - **Текущий шаг:** `S1.5` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S1.6` — структурированный результат стриминга
 - **Бюджет текущего шага:** 40k
 - **Израсходовано (оценка):** ~18k (код, 3 новых теста, полный QA)
-- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md` (готовится docs-checkpoint); чужие untracked-файлы не трогать.
+- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0), в финальном прогоне прошли.
 - **Последний QA:** 3545 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
