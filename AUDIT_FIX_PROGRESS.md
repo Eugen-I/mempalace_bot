@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 16:18 CET
+- **Дата последнего обновления:** 2026-10-25 16:20 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** `72f8ac7` (S1.6 code); docs-checkpoint — см. `git log`
+- **HEAD:** см. `git log`; последний code-коммит S1.6 — `72f8ac7`, docs-checkpoint — `55a07a0`
 - **Текущий шаг:** `S1.6` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S1.7` — перевести обработчики стриминга на `AIStreamEvent`, не кэшировать и не сохранять ошибки
 - **Бюджет текущего шага:** 35k
 - **Израсходовано (оценка):** ~16k (структурированный API, адаптер, 6 тестов, QA)
-- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md` (готовится docs-checkpoint); чужие untracked-файлы не трогать.
+- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0), в финальном прогоне прошли.
 - **Последний QA:** 3554 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
