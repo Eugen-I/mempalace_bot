@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 12:25 CET
+- **Дата последнего обновления:** 2026-10-25 12:26 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** `64f6d1e` (S0.1 checkpoint; коммит S0.2 — см. журнал)
+- **HEAD:** `a8aa5fd` (S0.2 checkpoint; code commit `a813965`; актуальный HEAD проверять через `git log`)
 - **Текущий шаг:** `S0.2` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S1.1` — единый контракт ответа агента
 - **Бюджет текущего шага:** 25k
 - **Израсходовано (оценка):** ~12k (фикстуры + тесты + прогоны)
-- **Незакоммиченные изменения:** `tests/conftest.py`, `tests/test_audit_fixtures.py`, `AUDIT_FIX_PROGRESS.md` — будут закоммичены в S0.2. Чужие untracked-файлы не трогать.
+- **Незакоммиченные изменения:** нет; `tests/conftest.py`, `tests/test_audit_fixtures.py`, `AUDIT_FIX_PROGRESS.md` закоммичены. Чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: 2 падающих теста на baseline; в финальном прогоне S0.2 — 1 (`test_day_bounds_midnight`), второй (`test_confirm_write_delete_requires_two_confirmations`) флаки и прошёл.
 - **Последний QA:** 3503 passed / 1 failed, coverage 98%; lint/mypy/bandit — baseline без новых
