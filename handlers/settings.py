@@ -12,7 +12,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import CONFIG_AI_FILE, MODELS_CONFIG_PATH, allowed_callback, allowed_only
 from services.agent_settings import get_agent_enabled, toggle_agent_enabled
-from services.ai_engine import invalidate_ai_cache
+from services.ai_engine import get_current_ai, invalidate_ai_cache
+from services.semantic_cache import get_cache
 from services.tts_processor import get_voice_settings, set_voice_setting
 from services.error_formatter import format_user_error
 
@@ -340,10 +341,18 @@ async def cb_list_ollama(cb: types.CallbackQuery):
 async def cb_set_ai(cb: types.CallbackQuery):
     # 🔧 Прямая запись тега модели в файл конфигурации
     tag = cb.data.split(":", 1)[1]
+    previous_model = ""
+    try:
+        _, previous_model = get_current_ai()
+    except Exception as e:
+        logger.warning(f"Не удалось определить предыдущую модель AI: {e}")
+
     try:
         with open(CONFIG_AI_FILE, "w", encoding="utf-8") as f:
             f.write(tag)
         invalidate_ai_cache()
+        if previous_model:
+            get_cache().invalidate_model(previous_model)
     except Exception as e:
         logger.error(f"Ошибка сохранения модели AI: {e}")
 

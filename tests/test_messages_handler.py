@@ -101,13 +101,17 @@ class FakeDeg:
 class FakeCache:
     def __init__(self, cached=None):
         self.cached = cached
+        self.gets = []
         self.sets = []
+        self.contexts = []
 
-    def get(self, query):
+    def get(self, query, **context):
+        self.gets.append((query, context))
         return self.cached
 
-    def set(self, query, answer):
+    def set(self, query, answer, **context):
         self.sets.append((query, answer))
+        self.contexts.append(context)
 
 
 class FakeBot:
@@ -1183,6 +1187,40 @@ def test_ai_basic_flow(monkeypatch, tmp_path):
     assert calls["stream_kwargs"]["context"] == ""
     assert any("SYSTEM-PROMPT" == s["content"] for s in calls["messages"])
     assert bot.deleted == [(100, 2), (100, 1)]
+
+
+def test_ai_cache_scope_uses_chat_wing_model_and_prompt(monkeypatch, tmp_path):
+    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+    monkeypatch.setattr(messages, "classify_wing", lambda q: "dreams")
+    msg = FakeMessage(text="привет", chat_id=777)
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert len(cache.gets) == 1
+    assert len(cache.contexts) == 1
+    get_context = cache.gets[0][1]
+    set_context = cache.contexts[0]
+    assert get_context == set_context
+    assert get_context["chat_id"] == 777
+    assert get_context["wing"] == "dreams"
+    assert get_context["model"] == "test-model"
+    assert get_context["prompt_version"].startswith(
+        messages.SEMANTIC_CACHE_PROMPT_VERSION + ":",
+    )
+    assert get_context["mode"] == "chat"
+
+
+def test_ai_cache_scope_includes_user_context(monkeypatch, tmp_path):
+    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+    _set_user_context(wing="projects", room="alpha", drawer="d1")
+    monkeypatch.setattr(messages, "_get_mcp", lambda: FakeMCPSeq(["запись"]))
+    msg = FakeMessage(text="о чём запись?")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert cache.contexts[0]["wing"] == "global|projects/alpha/d1"
 
 
 def test_ai_no_flush_short_chunks(monkeypatch, tmp_path):

@@ -1,7 +1,6 @@
 """Unit tests for handlers.settings."""
 
 import json
-import os
 from types import SimpleNamespace
 
 import pytest
@@ -66,7 +65,12 @@ def _enable(monkeypatch, tmp_path):
     ai_file.write_text("", encoding="utf-8")
     models = tmp_path / "models.json"
     models.write_text(
-        json.dumps({"ollama": [{"tag": "qwen", "name": "Qwen"}, {"tag": "llava", "name": "Llava"}]}),
+        json.dumps({
+            "ollama": [
+                {"tag": "qwen", "name": "Qwen"},
+                {"tag": "llava", "name": "Llava"},
+            ],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(st, "CONFIG_AI_FILE", str(ai_file))
@@ -297,7 +301,8 @@ async def test_cmd_callback_analyze_photo_ai_error(monkeypatch, tmp_path):
     monkeypatch.setattr("services.multimodal.check_capability", lambda m, f: True)
     monkeypatch.setattr("services.multimodal.encode_image_to_base64", lambda p: "Zm9v")
     monkeypatch.setattr(
-        "services.ai_engine._sync_ai_call", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+        "services.ai_engine._sync_ai_call",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     cb = FakeCb(4242, data="cmd:analyze_photo")
     await st.cmd_callback_handler(cb)
@@ -398,7 +403,10 @@ async def test_cmd_callback_sync_success(monkeypatch, tmp_path):
         "services.palace_bridge.export_chat_verbatim",
         lambda p, f: {"text": "экспорт"},
     )
-    monkeypatch.setattr("services.palace_bridge.sync_to_palace", _async_result("✅ Синхронизировано"))
+    monkeypatch.setattr(
+        "services.palace_bridge.sync_to_palace",
+        _async_result("✅ Синхронизировано"),
+    )
     cb = FakeCb(4242, data="cmd:sync")
     await st.cmd_callback_handler(cb)
     assert any("Синхронизировано" in a[0] for a in cb.message.answers)
@@ -514,7 +522,11 @@ async def test_cb_agent_toggle_disables(monkeypatch, tmp_path):
 async def test_cb_voice_toggle_cycles_modes(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     states = {"mode": "text", "speed": 160}
-    monkeypatch.setattr(st, "get_voice_settings", lambda uid: {"mode": "text", "speed": 160, **states})
+    monkeypatch.setattr(
+        st,
+        "get_voice_settings",
+        lambda uid: {"mode": "text", "speed": 160, **states},
+    )
     monkeypatch.setattr(st, "set_voice_setting", lambda uid, k, v: states.update({k: v}))
 
     for expected in ("voice", "both", "text"):
@@ -597,10 +609,19 @@ async def test_cb_set_ai_success(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     invalidated = []
     monkeypatch.setattr(st, "invalidate_ai_cache", lambda: invalidated.append(1))
+    monkeypatch.setattr(st, "get_current_ai", lambda: ("gemini", "old-model"))
+    semantic_models = []
+
+    class FakeSemanticCache:
+        def invalidate_model(self, model):
+            semantic_models.append(model)
+
+    monkeypatch.setattr(st, "get_cache", lambda: FakeSemanticCache())
     cb = FakeCb(4242, data="set_ai:qwen")
     await st.cb_set_ai(cb)
     assert (tmp_path / "ai.txt").read_text(encoding="utf-8") == "qwen"
     assert invalidated == [1]
+    assert semantic_models == ["old-model"]
     assert cb.answered == [("✅ Выбрана: qwen", True)]
 
 
@@ -610,9 +631,14 @@ async def test_cb_set_ai_write_error(monkeypatch, tmp_path):
     monkeypatch.setattr(st, "CONFIG_AI_FILE", str(tmp_path / "no_dir" / "ai.txt"))
     invalidated = []
     monkeypatch.setattr(st, "invalidate_ai_cache", lambda: invalidated.append(1))
+    semantic_cache_calls = []
+    monkeypatch.setattr(
+        st, "get_cache", lambda: semantic_cache_calls.append(1),
+    )
     cb = FakeCb(4242, data="set_ai:qwen")
     await st.cb_set_ai(cb)
     assert invalidated == []
+    assert semantic_cache_calls == []
     assert cb.answered == [("✅ Выбрана: qwen", True)]
 
 

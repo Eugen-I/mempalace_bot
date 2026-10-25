@@ -1,5 +1,6 @@
 """handlers/messages.py — Main message handler extracted from main.py"""
 import asyncio
+import hashlib
 import os
 import re
 import secrets
@@ -67,6 +68,10 @@ from services.error_formatter import format_user_error
 logger = setup_logging(DATA_DIR)
 
 FILE_LIMIT = 50 * 1024 * 1024
+
+# Базовая версия промпта для semantic cache. Меняйте при изменении
+# системных правил; к ней добавляется отпечаток фактического промпта.
+SEMANTIC_CACHE_PROMPT_VERSION = "smart-prompt-v1"
 
 _last_user_query: dict[int, str] = {}
 
@@ -151,6 +156,7 @@ async def process_user_message(message: types.Message):
 
     text = message.text.strip()
     uid = message.from_user.id
+    chat_id = getattr(message.chat, "id", None)
     logger.info(f"[USER_MSG] User {uid}: {text[:50]}...")
 
     # 0a. Ожидание ссылки для YouTube
@@ -758,8 +764,38 @@ async def process_user_message(message: types.Message):
             model=_model,
         )
 
+        cache_wing_parts = [target_wing or "global"]
+        if ctx and ctx.get("wing"):
+            user_scope = str(ctx["wing"])
+            if ctx.get("room"):
+                user_scope += f"/{ctx['room']}"
+            if ctx.get("drawer"):
+                user_scope += f"/{ctx['drawer']}"
+            if user_scope not in cache_wing_parts:
+                cache_wing_parts.append(user_scope)
+        cache_wing = "|".join(cache_wing_parts)
+
+        cache_mode = "coding" if data.get("is_coding_mode") else "chat"
+        if has_images_in_query:
+            image_hasher = hashlib.sha256()
+            for image in images_b64:
+                image_hasher.update(image.encode("utf-8"))
+            cache_mode += f"+images:{image_hasher.hexdigest()[:12]}"
+
+        cache_prompt_version = (
+            f"{SEMANTIC_CACHE_PROMPT_VERSION}:"
+            f"{hashlib.sha256(system_instruction.encode('utf-8')).hexdigest()[:16]}"
+        )
+
         _sem_cache = get_cache()
-        cached_answer = _sem_cache.get(clean_q)
+        cached_answer = _sem_cache.get(
+            clean_q,
+            chat_id=chat_id,
+            wing=cache_wing,
+            model=_model,
+            prompt_version=cache_prompt_version,
+            mode=cache_mode,
+        )
         if cached_answer is not None and _is_internal_error_text(cached_answer):
             # Старые версии могли положить в кэш текст внутренней ошибки.
             cached_answer = None
@@ -772,7 +808,7 @@ async def process_user_message(message: types.Message):
 
         if cached_answer is not None:
             answer = cached_answer
-            status_text = f"💾 <code>{get_current_ai()[1]}</code> (из кэша)"
+            status_text = f"💾 <code>{_model}</code> (из кэша)"
             try:
                 await status.edit_text(status_text, parse_mode="HTML")
             except Exception:
@@ -886,7 +922,15 @@ async def process_user_message(message: types.Message):
         elif answer and cached_answer is None:
             # Кэшируем только финальный успешный ответ после всех стримов,
             # но не частично полученный текст.
-            _sem_cache.set(clean_q, answer)
+            _sem_cache.set(
+                clean_q,
+                answer,
+                chat_id=chat_id,
+                wing=cache_wing,
+                model=_model,
+                prompt_version=cache_prompt_version,
+                mode=cache_mode,
+            )
 
         # В историю попадает только реальный текст; сообщение об ошибке — нет.
         if answer:
