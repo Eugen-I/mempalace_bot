@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** не начата
+**Статус работы:** в работе (7/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 15:56 CET
+- **Дата последнего обновления:** 2026-10-25 16:04 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** см. `git log`; последний code-коммит S1.4a — `c2484f8`, docs-checkpoint — `4de320e`
-- **Текущий шаг:** `S1.4a` — завершён
+- **HEAD:** `c6da708` (S1.4b code); docs-checkpoint — см. `git log`
+- **Текущий шаг:** `S1.4b` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.4b` — async AI в `action_bar`, `palace/__init__`, `transkript`
-- **Бюджет текущего шага:** 35k
-- **Израсходовано (оценка):** ~16k (миграция 5 вызовов, обработка ошибок, 8 тестов, QA)
-- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
+- **Следующее действие:** `S1.5` — `_sync_ai_call`: инициализация текста и Gemini/мультимодальность
+- **Бюджет текущего шага:** 30k
+- **Израсходовано (оценка):** ~14k (5 вызовов, тесты, полный QA)
+- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md` (готовится docs-checkpoint); чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0), в финальном прогоне прошли.
-- **Последний QA:** 3542 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
+- **Последний QA:** 3545 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -93,7 +93,7 @@
 | S1.2 | `safe_html_format` и `_TAG_RE` | P0 | 25k | DONE | `b2a5089` | 2026-10-25 15:26 | ~20k |
 | S1.3 | Async-обёртка AI | P0 | 35k | DONE | `8d69c79` | 2026-10-25 15:46 | ~12k |
 | S1.4a | Async AI в `palace/navigation.py` | P0 | 35k | DONE | `c2484f8` | 2026-10-25 15:55 | ~16k |
-| S1.4b | Async AI в action_bar/palace/transkript | P0 | 30k | TODO | — | — | — |
+| S1.4b | Async AI в action_bar/palace/transkript | P0 | 30k | DONE | `c6da708` | 2026-10-25 16:04 | ~14k |
 | S1.5 | `_sync_ai_call`: unbound/Gemini | P0 | 40k | TODO | — | — | — |
 | S1.6 | Структурированный стриминг | P0 | 35k | TODO | — | — | — |
 | S1.7 | Не кэшировать ошибки стриминга | P0 | 35k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 4 | 0 | 9 |
+| 1 — P0 | 13 | 5 | 0 | 8 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **6** | **0** | **39** |
+| **Итого** | **45** | **7** | **0** | **38** |
 
 > Обновлять после каждого шага.
 
@@ -511,6 +511,52 @@
 
 ---
 
+### S1.4b — Async AI в `action_bar`, `palace/__init__`, `transkript`
+
+- Дата/время: 2026-10-25 16:00–16:04 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `c6da708`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 30k / ~14k
+- Файлы: `handlers/palace/action_bar.py`, `handlers/palace/__init__.py`, `handlers/transkript.py`, `tests/test_action_bar.py`, `tests/test_palace_action_bar.py`, `tests/test_transkript_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. В `action_bar.py` переведены на `await call_ai_async(...)` все **3** прямых sync-вызова: режимы анализа `a`/`c` и финальный ответ web-поиска (`_run_web_search_finalize`). План указывал только 2 якоря; третий вызов найден по grep на строке 508.
+  2. В `palace/__init__.py` переведён вызов анализа туннеля в `process_mcp_text_input`; локальный импорт `_sync_ai_call` удалён, `call_ai_async` импортируется на уровне модуля.
+  3. В `transkript.py` `_answer_tr_ai` переведён на `await call_ai_async(...)` для обычного и `with_web` путей. Добавлена обработка ошибок: `AITimeoutError` → «⏱️ ИИ не ответил вовремя. Попробуйте ещё раз.», прочие исключения → `format_user_error`. Статус «🤔 Анализирую…» больше не остаётся вечным.
+  4. Тесты `test_action_bar.py` и `test_palace_action_bar.py` переведены с патча sync-`_sync_ai_call` на async-`call_ai_async` через локальный helper `_async_ai`. В `test_transkript_handler.py` добавлены 3 теста: event loop не блокируется (heartbeat), обычная ошибка и таймаут заменяют статус.
+  5. Попутно устранены два pre-existing E501 в `tests/test_transkript_handler.py` (строки 156 и 366), которые блокировали pre-commit flake8 после изменения файла. Только форматирование, логика не менялась.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_action_bar.py tests/test_palace_action_bar.py tests/test_palace_init.py tests/test_transkript_handler.py tests/test_transkript_actions.py -q --tb=short --override-ini=addopts=-ra` → **333 passed, 1 warning in 3.63s**.
+  - `python3 -m pytest tests/test_transkript_handler.py -q ...` после E501-правки → **57 passed, 1 warning in 3.05s**.
+  - `make test` → **3545 passed, 1 failed, 6 warnings in 15.67s**, coverage **98%**.
+    - Единственное падение — pre-existing `tests/test_digest.py::test_day_bounds_midnight`.
+    - `handlers/palace/action_bar.py` — **100%**, `handlers/transkript.py` — **100%**, `handlers/palace/__init__.py` — **96%**.
+  - `make lint` → те же 9 baseline-замечаний, новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **74 Low, 0 Medium, 0 High** — baseline, новых 0.
+  - `python3 -m flake8 <изменённые файлы>` → 0; `git diff --check` → чисто.
+- QA:
+  - lint: baseline 9, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: baseline 74 Low, новых 0
+  - coverage: 98%; `action_bar.py` и `transkript.py` — 100%
+- AC:
+  - [x] В целевых файлах нет `_sync_ai_call`; `grep` находит только `call_ai_async`.
+  - [x] Оставшиеся прямые sync-вызовы вне scope — документированные sync-места: `messages.py`/`photos.py` вызываются через `asyncio.to_thread`, `settings.py` уже использует `to_thread`.
+  - [x] Targeted-тесты зелёные.
+  - [x] Транскрипция не блокирует event loop (heartbeat-тест).
+  - [x] Ошибки/таймауты AI не оставляют статус в вечном состоянии.
+- Коммит: `c6da708` (`fix(step-1.4b): offload remaining handler ai calls`)
+- Проблемы/решения:
+  - В `action_bar.py` было 3 вызова, а не 2, как в якорях плана; мигрированы все, чтобы не оставить блокировку в web-пути.
+  - Тесты патчили удалённый атрибут `ab._sync_ai_call`; обновлены на async-двойник, production-alias не добавлялся.
+  - Упомянутый в плане mypy-конфликт на `palace/__init__.py:589` не воспроизвёлся: осталась только baseline-ошибка `handlers/chat.py:32`.
+- Найдено попутно:
+  - INC-3 частично закрыт: `call_ai_async` теперь используется в `navigation`, `action_bar`, `palace/__init__` и `transkript`; старый `get_ai_response_async` с `ThreadPoolExecutor` на каждый вызов остаётся.
+- Следующее действие: `S1.5` — `_sync_ai_call`: инициализация текста и Gemini/мультимодальность.
+
+---
+
 ## 7. Журнал сессий
 
 | # | Дата | Агент/модель | Шаги | Результат | Токены (оценка) | Примечание |
@@ -521,6 +567,7 @@
 | 4 | 2026-10-25 15:15–15:26 | DeepSeek V4.1 Flash Free | S1.2 | DONE | ~20k | Safe HTML whitelist, code fence `<pre><code>`, unbalanced tags; 19 new tests |
 | 5 | 2026-10-25 15:43–15:46 | DeepSeek V4.1 Flash Free | S1.3 | DONE | ~12k | `call_ai_async` + timeout + heartbeat; 7 new tests; ai_engine 100% |
 | 6 | 2026-10-25 15:49–15:55 | DeepSeek V4.1 Flash Free | S1.4a | DONE | ~16k | 5 sync AI calls → `call_ai_async`; error statuses; 8 new tests; navigation/ai_engine 100% |
+| 7 | 2026-10-25 16:00–16:04 | DeepSeek V4.1 Flash Free | S1.4b | DONE | ~14k | 5 sync AI calls → `call_ai_async` in action_bar/palace/transkript; 3 new tests; transcription heartbeat |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -570,7 +617,7 @@
 |---|---|---|---|---|---|
 | INC-1 | 2026-10-25 | `tests/test_semantic_cache.py:60` | `test_ttl_eviction` флаки при `ttl=0`: `set()` и `get()` могут попасть в один тик, проверка `now - timestamp > 0` не срабатывает. В полном прогоне S1.2 упал один раз, отдельно 5/5 прошёл. | S4.x — стабилизировать тест/логику TTL | TODO |
 | INC-2 | 2026-10-25 | `handlers/palace/save.py:281`, `services/brainstorm.py:370`, `handlers/notes_agent.py:268` | Вызывающие оборачивают `safe_html_format(...)` в `<code>`; разрешённые теги внутри такого значения сохраняются как HTML, а не выводятся литерально. Для данных в code нужен `html.escape`. | S4.3 или отдельный шаг HTML-санитизации | TODO |
-| INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов; новый `call_ai_async` пока не используется. | S1.4/S1.5 или отдельный шаг | TODO |
+| INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов. `call_ai_async` уже внедрён в `navigation`, `action_bar`, `palace/__init__` и `transkript` (S1.4a/b); старый путь остаётся. | S1.5 или отдельный шаг | PARTIAL |
 
 ---
 
