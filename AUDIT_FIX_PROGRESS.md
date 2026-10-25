@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 15:26 CET
+- **Дата последнего обновления:** 2026-10-25 15:28 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** `b2a5089` (S1.2 code; docs-checkpoint — следующим коммитом)
+- **HEAD:** см. `git log`; последний code-коммит S1.2 — `b2a5089`, docs-checkpoint — `ec4cffc`
 - **Текущий шаг:** `S1.2` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S1.3` — async-обёртка AI
 - **Бюджет текущего шага:** 25k
 - **Израсходовано (оценка):** ~20k (sanitizer, code fence, тесты, QA)
-- **Незакоммиченные изменения:** только `AUDIT_FIX_PROGRESS.md`; чужие untracked-файлы не трогать.
+- **Незакоммиченные изменения:** нет; чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флаки `test_confirm_write_delete_requires_two_confirmations` и `test_semantic_cache::test_ttl_eviction` (TTL=0), в финальном прогоне прошли.
 - **Последний QA:** 3527 passed / 1 pre-existing failed, coverage 98%; lint/mypy/bandit — baseline без новых
