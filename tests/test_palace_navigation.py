@@ -549,6 +549,87 @@ def test_cb_cross_ai_article_success(monkeypatch):
     assert captured["ctx"]["parent_cb"] == "p_rdb"
 
 
+@pytest.mark.parametrize(
+    ("engine", "model"),
+    [("openai", "gpt-4o"), ("gemini", "gemini-2.5-pro")],
+)
+def test_cb_cross_ai_article_uses_configured_model(monkeypatch, engine, model):
+    from handlers.palace import shared as sh
+
+    _enable(monkeypatch)
+    sh.fsm.update_data(4242, _room_session={"wing": "w", "room": "r"})
+    mcp = FakeMCPSeq([
+        json.dumps({"drawers": [{"content_preview": "превью"}]}),
+    ])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+    monkeypatch.setattr(nav, "get_current_ai", lambda: (engine, model))
+    calls = []
+
+    async def fake_ai(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "статья"
+
+    monkeypatch.setattr(nav, "call_ai_async", fake_ai)
+
+    async def fake_finalize(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "handlers.palace.action_bar.finalize_answer", fake_finalize,
+    )
+    asyncio.run(nav.cb_cross_ai_article(FakeCb(data="p_cr_ai")))
+
+    assert calls[0][0][:2] == (engine, model)
+
+
+def test_cb_cross_ai_article_missing_model_shows_error(monkeypatch):
+    from handlers.palace import shared as sh
+
+    _enable(monkeypatch)
+    sh.fsm.update_data(4242, _room_session={"wing": "w", "room": "r"})
+    mcp = FakeMCPSeq([
+        json.dumps({"drawers": [{"content_preview": "превью"}]}),
+    ])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+    monkeypatch.setattr(nav, "get_current_ai", lambda: ("", ""))
+
+    async def must_not_call(*args, **kwargs):
+        pytest.fail("AI call must not happen without a configured model")
+
+    monkeypatch.setattr(nav, "call_ai_async", must_not_call)
+    cb = FakeCb(data="p_cr_ai")
+    asyncio.run(nav.cb_cross_ai_article(cb))
+
+    assert "Модель ИИ не настроена" in cb.message.edits[-1][0]
+    assert "/settings" in cb.message.edits[-1][0]
+
+
+def test_cb_cross_ai_article_model_resolution_error_shows_error(monkeypatch):
+    from handlers.palace import shared as sh
+
+    _enable(monkeypatch)
+    sh.fsm.update_data(4242, _room_session={"wing": "w", "room": "r"})
+    mcp = FakeMCPSeq([
+        json.dumps({"drawers": [{"content_preview": "превью"}]}),
+    ])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+
+    def broken_model():
+        raise RuntimeError("config broken")
+
+    monkeypatch.setattr(nav, "get_current_ai", broken_model)
+
+    async def must_not_call(*args, **kwargs):
+        pytest.fail("AI call must not happen without a configured model")
+
+    monkeypatch.setattr(nav, "call_ai_async", must_not_call)
+    cb = FakeCb(data="p_cr_ai")
+    asyncio.run(nav.cb_cross_ai_article(cb))
+
+    assert "Не удалось определить модель ИИ" in cb.message.edits[-1][0]
+    assert "/settings" in cb.message.edits[-1][0]
+
+
 def test_cb_cross_ai_article_error(monkeypatch):
     from handlers.palace import shared as sh
 

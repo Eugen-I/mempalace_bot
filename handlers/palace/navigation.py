@@ -351,8 +351,23 @@ async def cb_cross_ai_article(cb: types.CallbackQuery):
             f"из комнаты {wing}/{room}. "
             f"Отвечай на русском языке.\n\n{content}"
         )
+        try:
+            engine, model = get_current_ai()
+        except Exception as exc:  # noqa: BLE001 — показываем понятную ошибку
+            logger.error("[CROSS_AI] model resolution failed: %s", exc, exc_info=True)
+            await safe_edit_text(
+                cb.message,
+                "❌ Не удалось определить модель ИИ. Выберите модель в /settings.",
+            )
+            return
+        if not engine or not model:
+            await safe_edit_text(
+                cb.message,
+                "❌ Модель ИИ не настроена. Выберите модель в /settings.",
+            )
+            return
         result = await call_ai_async(
-            "gemini", "gemini-2.0-flash", [{"role": "user", "content": prompt}],
+            engine, model, [{"role": "user", "content": prompt}],
         )
         from .action_bar import finalize_answer
 
