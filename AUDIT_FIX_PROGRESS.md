@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-27 00:20 CET
+- **Дата последнего обновления:** 2026-10-27 00:22 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** последний code-коммит S2.1 — `da1fd12`, docs-checkpoint — будет после этого обновления
+- **HEAD:** code-коммит S2.1 — `da1fd12`, docs-коммит — `2150a14`
 - **Текущий шаг:** `S2.1` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S2.2` — сохранять always-on ответы в историю
 - **Бюджет текущего шага:** 20k
 - **Израсходовано (оценка):** ~14k (исправление, 6 тестов, QA)
-- **Незакоммиченные изменения:** только этот файл прогресса. В дереве также есть пользовательские Garmin-правки (`.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
+- **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса. В дереве также есть пользовательские Garmin-правки (`.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight` (date-dependent); флак `test_confirm_write_delete_requires_two_confirmations`; TTL-флак устранён в S1.9.
 - **Последний QA:** 3672 passed / 0 failed, coverage 97%; `agent_context.py` 72%; lint — 8 baseline, mypy — 1 baseline, bandit 75 Low (72 + 3 в пользовательских Garmin-файлах)
@@ -913,7 +913,6 @@
 - Найдено попутно:
   - Удалён baseline B110 (`try/except/pass`) в `ask_time`, поэтому bandit: 73 → 72 Low.
 - Следующее действие: `S2.1` — `has_active_button_session`: пустой список считается активной сессией.
-
 
 ### S2.1 — Пустая button-сессия активна
 
