@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (17/45 шагов `DONE`)
+**Статус работы:** в работе (18/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-27 00:55 CET
+- **Дата последнего обновления:** 2026-10-27 01:15 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** code-коммит S2.2 — `a32c95a`, docs-коммит — `7ccddef`
-- **Текущий шаг:** `S2.2` — завершён
+- **HEAD:** code-коммит S2.3 — `ddf9c82`, docs-checkpoint — будет после этого обновления
+- **Текущий шаг:** `S2.3` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S2.3` — убрать хардкод Gemini-модели в `palace/navigation.py`
-- **Бюджет текущего шага:** 25k
-- **Израсходовано (оценка):** ~22k (код, 5 тестов, QA)
-- **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса. В дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
+- **Следующее действие:** `S2.4` — обработка ошибок `load_chat`/`save_chat`
+- **Бюджет текущего шага:** 20k
+- **Израсходовано (оценка):** ~15k (код, 4 теста, QA)
+- **Незакоммиченные изменения:** только этот файл прогресса. В дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations`.
-- **Последний QA:** 3632 passed / 0 failed (без untracked Garmin), coverage 91%; `agent_context.py` 91%, `handlers/messages.py` 97%; lint — 7 baseline, mypy — 1 baseline, bandit — 75 Low + 2 Medium (Medium только в пользовательском `services/garmin/repository.py`)
+- **Последний QA:** 3636 passed / 0 failed (без untracked Garmin), coverage 89%; `handlers/palace/navigation.py` 100%; lint — 7 baseline, mypy — 1 baseline, bandit — 76 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -104,7 +104,7 @@
 | S1.12 | Напоминания: время/ключи/JSON | P0 | 30k | DONE | `df66c40` | 2026-10-27 00:05 | ~22k |
 | S2.1 | Пустая button-сессия активна | P1 | 20k | DONE | `da1fd12` | 2026-10-27 00:20 | ~14k |
 | S2.2 | `append_always_on` в историю | P1 | 25k | DONE | `a32c95a` | 2026-10-27 00:52 | ~22k |
-| S2.3 | Убрать хардкод Gemini-модели | P1 | 20k | TODO | — | — | — |
+| S2.3 | Убрать хардкод Gemini-модели | P1 | 20k | DONE | `ddf9c82` | 2026-10-27 01:15 | ~15k |
 | S2.4 | Ошибки `load_chat`/`save_chat` | P1 | 25k | TODO | — | — | — |
 | S2.5 | Graceful degradation | P1 | 35k | TODO | — | — | — |
 | S2.6 | Настройки: история | P1 | 35k | TODO | — | — | — |
@@ -141,10 +141,10 @@
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
-| 2 — P1 | 9 | 2 | 0 | 7 |
+| 2 — P1 | 9 | 3 | 0 | 6 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **17** | **0** | **28** |
+| **Итого** | **45** | **18** | **0** | **27** |
 
 > Обновлять после каждого шага.
 
@@ -1005,6 +1005,49 @@
   - Во время шага пользователь добавил untracked Garmin-тесты и `services/garmin/fit_wellness.py`; из-за отсутствия `fitparse` `make test` перестал собираться. Файлы не трогались и не устанавливались; проверка выполнена с исключением Garmin-тестов.
 - Следующее действие: `S2.3` — убрать захардкоженную пару `gemini/gemini-2.0-flash` в `handlers/palace/navigation.py`, брать модель из настроек.
 
+### S2.3 — Модель из настроек в palace navigation
+
+- Дата/время: 2026-10-27 01:00–01:15 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `ddf9c82`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 20k / ~15k
+- Файлы: `handlers/palace/navigation.py`, `tests/test_palace_navigation.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. В `cb_cross_ai_article` убрана захардкоженная пара `gemini/gemini-2.0-flash`. Теперь engine/model берутся из общего `get_current_ai()`.
+  2. Выбранные пользователем engine/model передаются в `call_ai_async` без изменений; смена модели в настройках влияет на вызов.
+  3. Если resolver выбрасывает исключение или возвращает пустые engine/model, обработчик не вызывает ИИ и показывает понятное сообщение с предложением выбрать модель в `/settings`.
+  4. Существующая обработка ошибок самого AI-вызова сохранена: ошибка показывается пользователю, статус не зависает.
+  5. Добавлены 4 теста: параметризованный выбор `openai/gpt-4o` и `gemini/gemini-2.5-pro`, пустая модель, исключение resolver. В сценариях недоступной модели проверяется, что AI-вызов не выполняется.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_palace_navigation.py -q --no-cov` → **218 passed, 1 warning in 3.46s**.
+  - `python3 -m flake8 handlers/palace/navigation.py tests/test_palace_navigation.py` → **0**.
+  - `make test` (текущее дерево) → **exit 2**, 8 collection errors в untracked Garmin-тестах: `ModuleNotFoundError: No module named 'fitparse'`. Это пользовательские файлы, не наш регресс.
+  - `python3 -m pytest -q --tb=short --strict-markers --ignore-glob='tests/test_garmin_*.py'` → **3636 passed, 0 failed, 6 warnings in 18.74s**, coverage **89%**.
+    - `handlers/palace/navigation.py` — **100%**.
+  - `make lint` → **7 baseline-замечаний** (6 в `scripts/verify_garmin_login.py`, 1 в `services/deps_guard.py`), новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0 (проверено 108 файлов).
+  - `make security` → **76 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py` (B608), в изменённых файлах новых нет.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 76 Low + 2 Medium (оба Medium в пользовательском Garmin), новых в наших файлах 0
+  - coverage: 89% без untracked Garmin; `navigation.py` — 100%
+- AC:
+  - [x] В обработчике нет захардкоженной пары `gemini/gemini-2.0-flash`.
+  - [x] Используется выбранная пользователем модель; тест с двумя разными парами engine/model.
+  - [x] Смена модели влияет на аргументы `call_ai_async`.
+  - [x] При недоступной/пустой модели показывается понятная ошибка и AI не вызывается.
+- Коммит: `ddf9c82` (`fix(step-2.3): use configured model in palace navigation`)
+- Проблемы/решения:
+  - `get_current_ai()` сам имеет fallback на `gemini` с текущим тегом, если тег не найден в `models.json`; этот дефолт не менялся, как требует план. Обработчик дополнительно проверяет пустые значения и исключения resolver.
+  - Для ошибок AI-вызова оставлена прежняя широкая обработка; для отсутствующей модели добавлены отдельные сообщения, чтобы не запускать вызов впустую.
+- Найдено попутно:
+  - Пользовательские untracked Garmin-тесты продолжили расти; `make test` теперь даёт 8 collection errors из-за отсутствующего `fitparse`. Файлы не трогались, зависимости не устанавливались.
+  - Новых INC нет.
+- Следующее действие: `S2.4` — `load_chat`/`save_chat`: битый JSON, резервная копия, видимая ошибка сохранения.
+
 ---
 
 ## 7. Журнал сессий
@@ -1028,6 +1071,7 @@
 | 15 | 2026-10-25 17:30–2026-10-27 00:05 | DeepSeek V4.1 Flash Free | S1.12 | DONE | ~22k | Past-time guards, UUID reminder keys, JSON fallbacks, aware datetime; 12 tests; reminder 98%; full suite green |
 | 16 | 2026-10-27 00:10–00:20 | DeepSeek V4.1 Flash Free | S2.1 | DONE | ~14k | Empty button session active; 6 tests; da1fd12; full suite green (3672) |
 | 17 | 2026-10-27 00:30–00:52 | DeepSeek V4.1 Flash Free | S2.2 | DONE | ~22k | Persist successful always-on replies, retry dedupe; 5 tests; a32c95a; 3632 passed without untracked Garmin |
+| 18 | 2026-10-27 01:00–01:15 | DeepSeek V4.1 Flash Free | S2.3 | DONE | ~15k | Configured AI model in palace navigation; 4 tests; ddf9c82; 3636 passed without untracked Garmin |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
