@@ -1,7 +1,8 @@
 import json
 import logging
 import time
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 
 from aiogram import F, Router, types
 from aiogram.dispatcher.event.bases import SkipHandler
@@ -34,11 +35,29 @@ def _is_reminder(text: str) -> bool:
     return any(k in t for k in REMINDER_KEYWORDS)
 
 
+PAST_TIME_TEXT = (
+    "❌ Это время уже прошло. Укажи будущее время, например «завтра в 15:00»."
+)
+
+
+def _now_local() -> datetime:
+    """Текущее локальное время с явным часовым поясом."""
+    return datetime.now().astimezone()
+
+
+def _local_dt(ts: float) -> datetime:
+    """Epoch → локальное aware-время для отображения."""
+    return datetime.fromtimestamp(ts).astimezone()
+
+
+def _is_past(ts: float, now_ts: float | None = None) -> bool:
+    return ts <= (time.time() if now_ts is None else now_ts)
+
+
 def _parse_time_description(hour: int, minute: int, day_offset: int) -> float:
-    now_local = datetime.now()
+    now_local = _now_local()
     target = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if day_offset > 0:
-        from datetime import timedelta
         target += timedelta(days=day_offset)
     return target.timestamp()
 
@@ -46,7 +65,7 @@ def _parse_time_description(hour: int, minute: int, day_offset: int) -> float:
 async def _parse_reminder(text: str) -> dict:
     from services.ai_engine import get_ai_response_async, get_current_ai
 
-    now = datetime.now()
+    now = _now_local()
     weekday_ru = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"][now.weekday()]
     prompt = (
         f"Ты — парсер напоминаний.\n"
@@ -86,7 +105,7 @@ async def _parse_reminder(text: str) -> dict:
 
 
 async def _show_reminder_confirm(reply_func, text: str, ts: float, time_desc: str = ""):
-    dt = datetime.fromtimestamp(ts) if ts else None
+    dt = _local_dt(ts) if ts else None
     desc = time_desc or (dt.strftime("%d.%m %H:%M") if dt else "?")
     kb = InlineKeyboardBuilder()
     kb.row(
@@ -116,6 +135,11 @@ async def detect_reminder(msg: types.Message):
     reminder_text = parsed.get("reminder_text") or ""
     unix_ts = parsed.get("unix_timestamp")
     time_desc = parsed.get("time_description") or ""
+
+    if unix_ts and _is_past(unix_ts):
+        _remind_pending.pop(uid, None)
+        await msg.answer(PAST_TIME_TEXT, parse_mode="HTML")
+        return
 
     if reminder_text and unix_ts:
         _remind_pending[uid] = {"text": reminder_text, "ts": unix_ts, "step": "confirm"}
@@ -155,6 +179,9 @@ async def cb_remind_confirm(cb: types.CallbackQuery):
     ts = data.get("ts", 0)
     if not text or not ts:
         return await cb.message.edit_text("❌ Ошибка: не хватает данных.")
+    if _is_past(ts):
+        _remind_pending.pop(uid, None)
+        return await cb.message.edit_text(PAST_TIME_TEXT)
 
     kb = InlineKeyboardBuilder()
     kb.row(
@@ -163,7 +190,7 @@ async def cb_remind_confirm(cb: types.CallbackQuery):
     )
     kb.row(types.InlineKeyboardButton(text="⚡ В оба", callback_data="rem_tgt:both"))
     kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="rem_no"))
-    dt = datetime.fromtimestamp(ts)
+    dt = _local_dt(ts)
     await cb.message.edit_text(
         f"📅 <b>Напомнить:</b>\n🕐 {dt.strftime('%d.%m.%Y %H:%M')}\n"
         f"{safe_html_format(text)}\n\n"
@@ -189,6 +216,8 @@ async def cb_remind_target(cb: types.CallbackQuery):
     ts = data.get("ts", 0)
     if not text or not ts:
         return await cb.message.edit_text("❌ Ошибка: не хватает данных.")
+    if _is_past(ts):
+        return await cb.message.edit_text(PAST_TIME_TEXT)
 
     await cb.message.edit_text("⏳ Сохраняю…")
     parts: list[str] = []
@@ -196,7 +225,7 @@ async def cb_remind_target(cb: types.CallbackQuery):
     if target in ("bot", "both"):
         try:
             kv = get_kv_store()
-            key = f"rem{int(ts)}_{uid}_{int(time.time())}"
+            key = f"rem{int(ts)}_{uid}_{uuid.uuid4().hex}"
             kv.set(
                 key,
                 {
@@ -229,7 +258,7 @@ async def cb_remind_target(cb: types.CallbackQuery):
             logger.error("[REM] calendar save failed: %s", e)
             parts.append(f"📅 <b>Apple Calendar:</b> ❌ {safe_html_format(str(e)[:100])}")
 
-    dt = datetime.fromtimestamp(ts)
+    dt = _local_dt(ts)
     summary = (
         f"✅ <b>Напоминание сохранено!</b>\n"
         f"🕐 {dt.strftime('%d.%m.%Y %H:%M')}\n"
@@ -248,6 +277,11 @@ async def cb_remind_cancel(cb: types.CallbackQuery):
 
 
 def _clean_json(raw: str) -> dict:
+    if not isinstance(raw, str):
+        logger.warning(
+            "[REM] JSON parser expected str, got %s", type(raw).__name__,
+        )
+        return {}
     cleaned = raw.strip()
     for p in ("```json", "```"):
         cleaned = cleaned.removeprefix(p)
@@ -264,6 +298,7 @@ def _clean_json(raw: str) -> dict:
                 return json.loads(cleaned[start:end])
             except json.JSONDecodeError:
                 pass
+    logger.warning("[REM] failed to parse JSON (length=%d)", len(cleaned))
     return {}
 
 
@@ -274,9 +309,13 @@ async def handle_reminder_text(uid: int, text: str, reply_func) -> bool:
         return False
     step = data.get("step", "")
     if step == "ask_text":
-        _remind_pending[uid] = {"text": text, "ts": data.get("ts"), "step": "confirm"}
         ts = data.get("ts", 0)
-        dt = datetime.fromtimestamp(ts) if ts else None
+        if ts and _is_past(ts):
+            _remind_pending.pop(uid, None)
+            await reply_func(PAST_TIME_TEXT)
+            return True
+        _remind_pending[uid] = {"text": text, "ts": ts, "step": "confirm"}
+        dt = _local_dt(ts) if ts else None
         desc = dt.strftime("%d.%m %H:%M") if dt else "?"
         kb = InlineKeyboardBuilder()
         kb.row(
@@ -293,7 +332,7 @@ async def handle_reminder_text(uid: int, text: str, reply_func) -> bool:
     if step == "ask_time":
         from services.ai_engine import get_ai_response_async, get_current_ai
 
-        now = datetime.now()
+        now = _now_local()
         weekday_ru = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"][now.weekday()]
         prompt = (
             f"Сегодня: {now.strftime('%Y-%m-%d')} ({weekday_ru})\n"
@@ -323,12 +362,16 @@ async def handle_reminder_text(uid: int, text: str, reply_func) -> bool:
                     minute=int(parsed["minute"]),
                     day_offset=int(parsed.get("day_offset", 0)),
                 )
+                if _is_past(ts):
+                    _remind_pending.pop(uid, None)
+                    await reply_func(PAST_TIME_TEXT)
+                    return True
                 _remind_pending[uid] = {
                     "text": data.get("text"),
                     "ts": ts,
                     "step": "confirm",
                 }
-                dt = datetime.fromtimestamp(ts)
+                dt = _local_dt(ts)
                 desc = parsed.get("time_description", dt.strftime("%d.%m %H:%M"))
                 kb = InlineKeyboardBuilder()
                 kb.row(
@@ -341,18 +384,28 @@ async def handle_reminder_text(uid: int, text: str, reply_func) -> bool:
                     reply_markup=kb.as_markup(),
                 )
                 return True
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.error("[REM] ask_time parse failed: %s", e)
         _remind_pending.pop(uid, None)
         await reply_func("❌ Не удалось определить время. Начни заново с «напомни».")
         return True
 
     if step == "ask_all":
         _remind_pending.pop(uid, None)
-        parsed = await _parse_reminder(text)
+        try:
+            parsed = await _parse_reminder(text)
+        except Exception as e:  # noqa: BLE001
+            logger.error("[REM] ask_all parse failed: %s", e, exc_info=True)
+            await reply_func(
+                "❌ Не удалось разобрать напоминание. Начни заново с «напомни».",
+            )
+            return True
         reminder_text = parsed.get("reminder_text") or ""
         unix_ts = parsed.get("unix_timestamp")
         time_desc = parsed.get("time_description") or ""
+        if unix_ts and _is_past(unix_ts):
+            await reply_func(PAST_TIME_TEXT)
+            return True
         if reminder_text and unix_ts:
             _remind_pending[uid] = {
                 "text": reminder_text,
