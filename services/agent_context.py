@@ -54,6 +54,14 @@ class AgentContextStore:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             msgs = data.get("messages", [])
+            # Ретрай того же ответа не должен создавать дубль в истории.
+            if (
+                msgs
+                and isinstance(msgs[-1], dict)
+                and msgs[-1].get("role") == role
+                and msgs[-1].get("content") == content
+            ):
+                return
             msgs.append({"role": role, "content": content})
             data["messages"] = msgs[-50:]
             with open(path, "w", encoding="utf-8") as f:

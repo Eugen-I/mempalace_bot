@@ -564,7 +564,13 @@ async def process_user_message(message: types.Message):
         ctx_store = get_agent_context_store()
         history = ctx_store.get_always_on_context(uid)
 
-        await _run_agent_reply(uid, status, prompt, clean_q, ctx=ctx, conversation_history=history)
+        agent_result = await _run_agent_reply(
+            uid, status, prompt, clean_q, ctx=ctx, conversation_history=history,
+        )
+        # Сохраняем только успешный непустой ответ. Ошибки и пустые ответы
+        # не должны попадать в always-on историю.
+        if agent_result is not None and agent_result.ok and agent_result.final_answer:
+            ctx_store.append_always_on(uid, "assistant", agent_result.final_answer)
         return None
 
     # === 🧠 ЯДРО ИИ (со стримингом) ===

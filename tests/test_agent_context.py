@@ -1,4 +1,6 @@
-"""Unit tests for services.agent_context — lifecycle button-сессии."""
+"""Unit tests for services.agent_context — lifecycle and history."""
+
+import json
 
 import pytest
 
@@ -57,3 +59,51 @@ def test_followup_before_first_assistant_reply(store):
     assert store.get_button_context(session_id) == [
         {"role": "user", "content": "продолжай"},
     ]
+
+
+def _chat_file(tmp_path, monkeypatch, messages):
+    monkeypatch.setattr(ac, "CHATS_DIR", str(tmp_path))
+    monkeypatch.setitem(ac.user_sessions, 4242, "chat.json")
+    path = tmp_path / "chat.json"
+    path.write_text(
+        json.dumps({"summary": "", "messages": messages}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_append_always_on_persists_and_reloads(store, tmp_path, monkeypatch):
+    path = _chat_file(
+        tmp_path, monkeypatch,
+        [{"role": "user", "content": "старый вопрос"}],
+    )
+
+    store.append_always_on(4242, "assistant", "ответ агента")
+
+    assert store.get_always_on_context(4242) == [
+        {"role": "user", "content": "старый вопрос"},
+        {"role": "assistant", "content": "ответ агента"},
+    ]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["messages"][-1] == {"role": "assistant", "content": "ответ агента"}
+    assert ac.AgentContextStore().get_always_on_context(4242) == [
+        {"role": "user", "content": "старый вопрос"},
+        {"role": "assistant", "content": "ответ агента"},
+    ]
+
+
+def test_append_always_on_does_not_duplicate_retry(store, tmp_path, monkeypatch):
+    _chat_file(tmp_path, monkeypatch, [])
+
+    store.append_always_on(4242, "assistant", "ответ агента")
+    store.append_always_on(4242, "assistant", "ответ агента")
+
+    assert store.get_always_on_context(4242) == [
+        {"role": "assistant", "content": "ответ агента"},
+    ]
+
+
+def test_append_always_on_without_chat_session_is_noop(store):
+    store.append_always_on(4242, "assistant", "ответ агента")
+
+    assert store.get_always_on_context(4242) == []

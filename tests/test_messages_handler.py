@@ -492,6 +492,72 @@ def test_agent_mode_scoped_by_user_context(monkeypatch):
     assert calls[0]["ctx"]["wing"] == "Философия"
 
 
+# ---------- always-on history persistence ----------
+
+
+class FakeAlwaysOnStore:
+    def __init__(self, history=None):
+        self.history = list(history or [])
+        self.appended = []
+
+    def get_always_on_context(self, uid):
+        return list(self.history)
+
+    def append_always_on(self, uid, role, content):
+        self.appended.append((uid, role, content))
+
+
+def test_agent_mode_persists_successful_reply(monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(
+        "services.agent_settings.get_agent_enabled", lambda uid: True,
+    )
+    from services import agent_engine as ae
+
+    store = FakeAlwaysOnStore([{"role": "user", "content": "раньше"}])
+    monkeypatch.setattr(
+        "services.agent_context.get_agent_context_store", lambda: store,
+    )
+    seen = {}
+
+    async def fake_run(
+        uid, status, prompt, question, ctx=None, include_write=False,
+        conversation_history=None,
+    ):
+        seen["history"] = conversation_history
+        return ae.AgentResult(final_answer="ответ агента")
+
+    monkeypatch.setattr("handlers.agent._run_agent_reply", fake_run)
+    msg = FakeMessage(text="новый вопрос")
+
+    result = asyncio.run(messages.process_user_message(msg))
+
+    assert result is None
+    assert seen["history"] == [{"role": "user", "content": "раньше"}]
+    assert store.appended == [(4242, "assistant", "ответ агента")]
+
+
+def test_agent_mode_does_not_persist_failed_reply(monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(
+        "services.agent_settings.get_agent_enabled", lambda uid: True,
+    )
+    from services import agent_engine as ae
+
+    store = FakeAlwaysOnStore()
+    monkeypatch.setattr(
+        "services.agent_context.get_agent_context_store", lambda: store,
+    )
+
+    async def fake_run(*args, **kwargs):
+        return ae.AgentResult.failure("ошибка модели")
+
+    monkeypatch.setattr("handlers.agent._run_agent_reply", fake_run)
+    asyncio.run(messages.process_user_message(FakeMessage(text="вопрос")))
+
+    assert store.appended == []
+
+
 # ---------- YouTube: video mode ----------
 
 
