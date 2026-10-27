@@ -269,6 +269,44 @@ def test_process_mcp_text_input_button_agent_error_is_safe(monkeypatch):
     assert any("поломка агента" in text for text, _ in msg.edits)
 
 
+def test_process_mcp_text_input_button_followup_before_assistant_reply(
+    monkeypatch, tmp_path,
+):
+    from handlers import agent as agent_handler
+    from services import agent_context as ac
+    from services import agent_engine as ae
+    from services.kv_store import KVStore
+
+    kv = KVStore(db_path=str(tmp_path / "agent_context.sqlite"))
+    monkeypatch.setattr(ac, "get_kv_store", lambda: kv)
+    store = ac.AgentContextStore()
+    session_id = store.create_button_session("answer-1")
+    store.bind_button_session_to_uid(4242, session_id)
+    monkeypatch.setattr(
+        "services.agent_context.get_agent_context_store", lambda: store,
+    )
+    seen = {}
+
+    async def fake_run_agent(
+        uid, status, system_prompt, question, ctx=None, conversation_history=None,
+    ):
+        seen["history"] = conversation_history
+        return ae.AgentResult(final_answer="готово")
+
+    monkeypatch.setattr(agent_handler, "_run_agent_reply", fake_run_agent)
+    try:
+        result, _msg, _ = _run_process(monkeypatch, 4242, "продолжай")
+    finally:
+        kv.close()
+
+    assert result is True
+    assert seen["history"] == [{"role": "user", "content": "продолжай"}]
+    assert store.get_button_context(session_id) == [
+        {"role": "user", "content": "продолжай"},
+        {"role": "assistant", "content": "готово"},
+    ]
+
+
 # ---------- list_rooms: "*" ----------
 
 

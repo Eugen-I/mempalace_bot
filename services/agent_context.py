@@ -109,9 +109,13 @@ class AgentContextStore:
 
     def has_active_button_session(self, uid: int) -> str | None:
         session_id = self._kv.get(f"uid:{uid}", namespace=AGENT_CTX_NAMESPACE)
+        # Пустая история — валидная сессия до первого ответа ассистента.
+        # Проверяем именно None (отсутствие/истечение), а не truthiness списка.
         if session_id and self._kv.get(
-            self._session_key(session_id), namespace=AGENT_CTX_NAMESPACE
-        ):
+            self._session_key(session_id),
+            namespace=AGENT_CTX_NAMESPACE,
+            default=None,
+        ) is not None:
             return session_id
         return None
 
