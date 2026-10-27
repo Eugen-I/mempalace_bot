@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-27 01:15 CET
+- **Дата последнего обновления:** 2026-10-27 01:18 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** code-коммит S2.3 — `ddf9c82`, docs-checkpoint — будет после этого обновления
+- **HEAD:** code-коммит S2.3 — `ddf9c82`, docs-коммит — `9d3b68c`
 - **Текущий шаг:** `S2.3` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S2.4` — обработка ошибок `load_chat`/`save_chat`
 - **Бюджет текущего шага:** 20k
 - **Израсходовано (оценка):** ~15k (код, 4 теста, QA)
-- **Незакоммиченные изменения:** только этот файл прогресса. В дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
+- **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса. В дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations`.
 - **Последний QA:** 3636 passed / 0 failed (без untracked Garmin), coverage 89%; `handlers/palace/navigation.py` 100%; lint — 7 baseline, mypy — 1 baseline, bandit — 76 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
