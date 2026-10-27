@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (16/45 шагов `DONE`)
+**Статус работы:** в работе (17/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-27 00:22 CET
+- **Дата последнего обновления:** 2026-10-27 00:52 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** code-коммит S2.1 — `da1fd12`, docs-коммит — `2150a14`
-- **Текущий шаг:** `S2.1` — завершён
+- **HEAD:** code-коммит S2.2 — `a32c95a`, docs-checkpoint — будет после этого обновления
+- **Текущий шаг:** `S2.2` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S2.2` — сохранять always-on ответы в историю
-- **Бюджет текущего шага:** 20k
-- **Израсходовано (оценка):** ~14k (исправление, 6 тестов, QA)
-- **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса. В дереве также есть пользовательские Garmin-правки (`.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
+- **Следующее действие:** `S2.3` — убрать хардкод Gemini-модели в `palace/navigation.py`
+- **Бюджет текущего шага:** 25k
+- **Израсходовано (оценка):** ~22k (код, 5 тестов, QA)
+- **Незакоммиченные изменения:** только этот файл прогресса. В дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight` (date-dependent); флак `test_confirm_write_delete_requires_two_confirmations`; TTL-флак устранён в S1.9.
-- **Последний QA:** 3672 passed / 0 failed, coverage 97%; `agent_context.py` 72%; lint — 8 baseline, mypy — 1 baseline, bandit 75 Low (72 + 3 в пользовательских Garmin-файлах)
+- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations`.
+- **Последний QA:** 3632 passed / 0 failed (без untracked Garmin), coverage 91%; `agent_context.py` 91%, `handlers/messages.py` 97%; lint — 7 baseline, mypy — 1 baseline, bandit — 75 Low + 2 Medium (Medium только в пользовательском `services/garmin/repository.py`)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -103,7 +103,7 @@
 | S1.11 | Circuit breaker: сброс счётчика | P0 | 15k | DONE | `c677438` | 2026-10-25 17:20 | ~10k |
 | S1.12 | Напоминания: время/ключи/JSON | P0 | 30k | DONE | `df66c40` | 2026-10-27 00:05 | ~22k |
 | S2.1 | Пустая button-сессия активна | P1 | 20k | DONE | `da1fd12` | 2026-10-27 00:20 | ~14k |
-| S2.2 | `append_always_on` в историю | P1 | 25k | TODO | — | — | — |
+| S2.2 | `append_always_on` в историю | P1 | 25k | DONE | `a32c95a` | 2026-10-27 00:52 | ~22k |
 | S2.3 | Убрать хардкод Gemini-модели | P1 | 20k | TODO | — | — | — |
 | S2.4 | Ошибки `load_chat`/`save_chat` | P1 | 25k | TODO | — | — | — |
 | S2.5 | Graceful degradation | P1 | 35k | TODO | — | — | — |
@@ -141,10 +141,10 @@
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
-| 2 — P1 | 9 | 1 | 0 | 8 |
+| 2 — P1 | 9 | 2 | 0 | 7 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **16** | **0** | **29** |
+| **Итого** | **45** | **17** | **0** | **28** |
 
 > Обновлять после каждого шага.
 
@@ -959,6 +959,52 @@
   - Новых INC не добавлено.
 - Следующее действие: `S2.2` — сохранять always-on ответы через `append_always_on`, не дублировать при ретраях и не сохранять ошибки.
 
+
+### S2.2 — Сохранение always-on ответов
+
+- Дата/время: 2026-10-27 00:30–00:52 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `a32c95a`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 25k / ~22k
+- Файлы: `handlers/messages.py`, `services/agent_context.py`, `tests/test_agent_context.py`, `tests/test_messages_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. В always-on ветке `process_user_message` результат `_run_agent_reply` теперь сохраняется в переменную и после успеха вызывается `ctx_store.append_always_on(uid, "assistant", agent_result.final_answer)`.
+  2. Сохраняется только результат с `ok=True` и непустым `final_answer`; ошибки, `max_iterations`, пустые ответы и `None` (например, из старых mock-тестов) не пишутся в историю.
+  3. `AgentContextStore.append_always_on` не создаёт дубль, если последняя запись уже имеет те же `role` и `content`. Это защищает от повторного сохранения того же ответа при ретрае.
+  4. Формат записи прежний: `{"role": "assistant", "content": "..."}`, с ограничением истории до 50 сообщений.
+  5. Добавлены 3 unit-теста в `tests/test_agent_context.py` (сохранение и перезагрузка из файла, отсутствие дубля при повторе, no-op без сессии) и 2 теста в `tests/test_messages_handler.py` (успех сохраняет ровно один assistant-ответ и передаёт загруженную историю агенту; ошибка не сохраняется).
+- Тесты и команды: 5 новых тестов.
+  - `python3 -m pytest tests/test_agent_context.py tests/test_messages_handler.py tests/test_agent_handler.py -q --no-cov` → **134 passed, 1 warning in 4.68s**.
+  - `python3 -m flake8 handlers/messages.py services/agent_context.py tests/test_agent_context.py tests/test_messages_handler.py` → **0**.
+  - `make test` (до появления новых untracked Garmin-тестов) → **3677 passed, 0 failed, 6 warnings in 18.98s**, coverage **94%**.
+  - `make test` (текущее дерево) → **exit 2**, collection errors в untracked `tests/test_garmin_fit_wellness.py` и `tests/test_garmin_wellness_import.py`: `ModuleNotFoundError: No module named 'fitparse'`. Это пользовательские файлы, не наш регресс.
+  - `python3 -m pytest -q --tb=short --strict-markers --ignore-glob='tests/test_garmin_*.py'` → **3632 passed, 0 failed, 6 warnings in 18.04s**, coverage **91%**.
+    - `handlers/messages.py` — **97%**, `services/agent_context.py` — **91%**.
+  - `make lint` → **7 baseline-замечаний** (6 в `scripts/verify_garmin_login.py`, 1 в `services/deps_guard.py`), новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0 (проверено 105 файлов).
+  - `make security` → **75 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py` (B608), в изменённых файлах новых нет.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 75 Low + 2 Medium (оба Medium в пользовательском Garmin), новых в наших файлах 0
+  - coverage: 91% без untracked Garmin; `messages.py` 97%, `agent_context.py` 91%
+- AC:
+  - [x] Успешный always-on ответ сохраняется в историю.
+  - [x] Повторное сохранение того же ответа не создаёт дубль.
+  - [x] Ошибка/пустой ответ не сохраняется.
+  - [x] Перезагрузка истории видит сохранённую запись.
+- Коммит: `a32c95a` (`fix(step-2.2): persist always-on replies`)
+- Проблемы/решения:
+  - Сохраняется только assistant-ответ, как требует шаг. Пользовательская реплика в always-on ветке по-прежнему не пишется в chat file — зафиксировано как INC-7; это шире S2.2 и относится к унификации chat store.
+  - Дедупликация сравнивает только последнюю запись. Это не полноценная идемпотентность между перезапусками, но закрывает повторное сохранение того же ответа при ретрае.
+  - Проверка `agent_result is not None` сохранена для совместимости с существующими тестами и mock-вызовами.
+- Найдено попутно:
+  - INC-7: в always-on режиме сообщение пользователя не попадает в chat file, поэтому следующая история содержит assistant-ответ без вопроса. Предлагаемый шаг — S3.1 (единый chat store) или отдельный шаг.
+  - Во время шага пользователь добавил untracked Garmin-тесты и `services/garmin/fit_wellness.py`; из-за отсутствия `fitparse` `make test` перестал собираться. Файлы не трогались и не устанавливались; проверка выполнена с исключением Garmin-тестов.
+- Следующее действие: `S2.3` — убрать захардкоженную пару `gemini/gemini-2.0-flash` в `handlers/palace/navigation.py`, брать модель из настроек.
+
 ---
 
 ## 7. Журнал сессий
@@ -981,6 +1027,7 @@
 | 14 | 2026-10-25 17:15–17:20 | DeepSeek V4.1 Flash Free | S1.11 | DONE | ~10k | Reset failure_count on success in CLOSED/HALF_OPEN; 4 tests; circuit_breaker 100% |
 | 15 | 2026-10-25 17:30–2026-10-27 00:05 | DeepSeek V4.1 Flash Free | S1.12 | DONE | ~22k | Past-time guards, UUID reminder keys, JSON fallbacks, aware datetime; 12 tests; reminder 98%; full suite green |
 | 16 | 2026-10-27 00:10–00:20 | DeepSeek V4.1 Flash Free | S2.1 | DONE | ~14k | Empty button session active; 6 tests; da1fd12; full suite green (3672) |
+| 17 | 2026-10-27 00:30–00:52 | DeepSeek V4.1 Flash Free | S2.2 | DONE | ~22k | Persist successful always-on replies, retry dedupe; 5 tests; a32c95a; 3632 passed without untracked Garmin |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1034,6 +1081,7 @@
 | INC-4 | 2026-10-25 | `services/ai_engine.py` (`stream_ai_events_async`) | Gemini-ветка стриминга игнорирует `images` и system-сообщение из `messages`, используя только `system_prompt`. Sync-путь исправлен в S1.5. | Отдельный шаг стримингового Gemini-контракта | TODO |
 | INC-5 | 2026-10-25 | `handlers/messages.py` (ветка `search_web`) | При исключении `search_web` исходный ответ с `SEARCH: ...` остаётся в `answer` и может быть сохранён/закэширован как обычный ответ; `test_ai_search_pattern_error` закрепляет это поведение. | Отдельный шаг обработки ошибок web search | TODO |
 | INC-6 | 2026-10-25 | `services/palace_mcp.py` (`start`/`stop`) | Нет lifecycle-lock: конкурентные `start()`/`stop()` могут гонять создание и завершение процесса; два одновременных `start()` теоретически оставят один процесс без ссылки. | Отдельный шаг сериализации lifecycle | TODO |
+| INC-7 | 2026-10-27 | `handlers/messages.py` (always-on ветка) | При успешном ответе сохраняется только assistant-сообщение; реплика пользователя не пишется в chat file, поэтому следующая история не содержит вопроса. | S3.1 (единый chat store) или отдельный шаг | TODO |
 
 ---
 
