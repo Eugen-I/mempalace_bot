@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (9/45 шагов `DONE`)
+**Статус работы:** в работе (16/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-27 00:07 CET
+- **Дата последнего обновления:** 2026-10-27 00:20 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** последний code-коммит S1.12 — `df66c40`, docs-коммит — `ab495ed`
-- **Текущий шаг:** `S1.12` — завершён
+- **HEAD:** последний code-коммит S2.1 — `da1fd12`, docs-checkpoint — будет после этого обновления
+- **Текущий шаг:** `S2.1` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S2.1` — `has_active_button_session`: пустой список считается активной сессией
-- **Бюджет текущего шага:** 30k
-- **Израсходовано (оценка):** ~22k (прошлое время, UUID-ключи, JSON/таймзоны, 12 тестов, QA)
-- **Незакоммиченные изменения:** только этот файл прогресса; `.env` и чужие untracked-файлы не трогать.
+- **Следующее действие:** `S2.2` — сохранять always-on ответы в историю
+- **Бюджет текущего шага:** 20k
+- **Израсходовано (оценка):** ~14k (исправление, 6 тестов, QA)
+- **Незакоммиченные изменения:** только этот файл прогресса. В дереве также есть пользовательские Garmin-правки (`.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight` (date-dependent); флак `test_confirm_write_delete_requires_two_confirmations`; TTL-флак устранён в S1.9.
-- **Последний QA:** 3621 passed / 0 failed, coverage 98%; `reminder.py` 98%; lint — 8 baseline, mypy — 1 baseline, bandit 72 Low (на 1 меньше)
+- **Последний QA:** 3672 passed / 0 failed, coverage 97%; `agent_context.py` 72%; lint — 8 baseline, mypy — 1 baseline, bandit 75 Low (72 + 3 в пользовательских Garmin-файлах)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -102,7 +102,7 @@
 | S1.10 | Токен и пути `.env` | P0 | 20k | DONE | `21953ac` | 2026-10-25 17:10 | ~18k |
 | S1.11 | Circuit breaker: сброс счётчика | P0 | 15k | DONE | `c677438` | 2026-10-25 17:20 | ~10k |
 | S1.12 | Напоминания: время/ключи/JSON | P0 | 30k | DONE | `df66c40` | 2026-10-27 00:05 | ~22k |
-| S2.1 | Пустая button-сессия активна | P1 | 20k | TODO | — | — | — |
+| S2.1 | Пустая button-сессия активна | P1 | 20k | DONE | `da1fd12` | 2026-10-27 00:20 | ~14k |
 | S2.2 | `append_always_on` в историю | P1 | 25k | TODO | — | — | — |
 | S2.3 | Убрать хардкод Gemini-модели | P1 | 20k | TODO | — | — | — |
 | S2.4 | Ошибки `load_chat`/`save_chat` | P1 | 25k | TODO | — | — | — |
@@ -141,10 +141,10 @@
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
-| 2 — P1 | 9 | 0 | 0 | 9 |
+| 2 — P1 | 9 | 1 | 0 | 8 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **15** | **0** | **30** |
+| **Итого** | **45** | **16** | **0** | **29** |
 
 > Обновлять после каждого шага.
 
@@ -914,6 +914,52 @@
   - Удалён baseline B110 (`try/except/pass`) в `ask_time`, поэтому bandit: 73 → 72 Low.
 - Следующее действие: `S2.1` — `has_active_button_session`: пустой список считается активной сессией.
 
+
+### S2.1 — Пустая button-сессия активна
+
+- Дата/время: 2026-10-27 00:10–00:20 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `da1fd12`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 20k / ~14k
+- Файлы: `services/agent_context.py`, `tests/test_agent_context.py` (новый), `tests/test_palace_init.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. В `has_active_button_session` проверка истории заменена с truthiness на `is not None`; `KVStore.get` вызывается с `default=None`. Пустой список `[]` теперь считается валидной активной сессией до первого ответа ассистента, а отсутствие ключа, истечение TTL или сохранённый `None` — неактивной.
+  2. Проверены все вызовы: `handlers/palace/__init__.py` использует truthiness возвращённого `session_id` (непустой hex-идентификатор), `handlers/messages.py` передаёт управление в `process_mcp_text_input`, `handlers/agent.py` создаёт и привязывает сессию до вызова модели. Изменений в вызовах не потребовалось.
+  3. Проверен жизненный цикл: `create_button_session` создаёт пустой список, `bind_button_session_to_uid` привязывает его к uid, `append_button_context` добавляет первое сообщение пользователя, `end_button_session` удаляет ключ сессии; после удаления сессия неактивна даже при оставшейся uid-привязке.
+  4. Добавлены 5 unit-тестов в новом `tests/test_agent_context.py`: пустой список активен, несвязанный uid неактивен, завершённая сессия неактивна, явно сохранённый `None` неактивен, follow-up до первого ответа ассистента виден в истории.
+  5. Добавлен интеграционный тест в `tests/test_palace_init.py`: реальный `AgentContextStore` на временной `KVStore`, пустая сессия и fake `_run_agent_reply`. Проверяется, что follow-up попадает в button-ветку, агент получает историю с сообщением пользователя, а после успешного ответа история содержит `user` + `assistant`.
+- Тесты и команды: 6 новых тестов (5 unit + 1 интеграционный).
+  - `python3 -m pytest tests/test_agent_context.py tests/test_palace_init.py tests/test_agent_handler.py -q --no-cov` → **85 passed, 1 warning in 3.60s**.
+  - `python3 -m flake8 services/agent_context.py tests/test_agent_context.py tests/test_palace_init.py` → **0**.
+  - `python3 -m mypy --explicit-package-bases services/agent_context.py` → **1 baseline-ошибка** `handlers/chat.py:32` (импорт через `handlers.chat`), новых 0.
+  - `make test` → **3672 passed, 0 failed, 6 warnings in 18.03s**, coverage **97%**.
+    - В дереве появились пользовательские untracked Garmin-тесты, поэтому общее число тестов выросло; они не относятся к шагу.
+    - `services/agent_context.py` — **72%** (покрыт изменённый метод; остальные сценарии — в S2.2).
+  - `make lint` → **8 baseline-замечаний**, новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **75 Low, 0 Medium, 0 High**; 72 прежних + 3 в пользовательских Garmin-файлах, в изменённых файлах новых 0. B110 в `services/agent_context.py:61` — pre-existing.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 8, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 75 Low (+3 пользовательских Garmin), новых в наших файлах 0
+  - coverage: 97% общая; `agent_context.py` — 72%
+- AC:
+  - [x] Пустой список является активной button-сессией.
+  - [x] `None` (нет ключа/истёк TTL/явный null) — неактивная сессия.
+  - [x] Follow-up до первого сообщения ассистента обрабатывается и попадает в историю.
+- Коммит: `da1fd12` (`fix(step-2.1): treat empty button session as active`)
+- Проблемы/решения:
+  - `[]` — это валидная пустая история, поэтому проверять её truthiness нельзя; неактивность определяется только отсутствием значения (`is None`).
+  - Проверка `if session_id` сохранена: пустой/некорректный идентификатор сессии не должен считаться активным.
+  - `get_button_context` по-прежнему возвращает `[]` для отсутствующей сессии; это не менялось, чтобы не расширять шаг.
+  - `end_button_session` удаляет ключ сессии, но не uid-привязку; активность корректно определяется по отсутствию ключа.
+- Найдено попутно:
+  - В рабочем дереве обнаружены незакоммиченные пользовательские Garmin-изменения (`.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`). Они не изменялись и не коммитились; из-за них выросли общий test count и bandit baseline.
+  - Новых INC не добавлено.
+- Следующее действие: `S2.2` — сохранять always-on ответы через `append_always_on`, не дублировать при ретраях и не сохранять ошибки.
+
 ---
 
 ## 7. Журнал сессий
@@ -935,6 +981,7 @@
 | 13 | 2026-10-25 17:00–17:10 | DeepSeek V4.1 Flash Free | S1.10 | DONE | ~18k | No production test-token, startup validation, root→legacy .env, env priority; 14 new tests; config 97% |
 | 14 | 2026-10-25 17:15–17:20 | DeepSeek V4.1 Flash Free | S1.11 | DONE | ~10k | Reset failure_count on success in CLOSED/HALF_OPEN; 4 tests; circuit_breaker 100% |
 | 15 | 2026-10-25 17:30–2026-10-27 00:05 | DeepSeek V4.1 Flash Free | S1.12 | DONE | ~22k | Past-time guards, UUID reminder keys, JSON fallbacks, aware datetime; 12 tests; reminder 98%; full suite green |
+| 16 | 2026-10-27 00:10–00:20 | DeepSeek V4.1 Flash Free | S2.1 | DONE | ~14k | Empty button session active; 6 tests; da1fd12; full suite green (3672) |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
