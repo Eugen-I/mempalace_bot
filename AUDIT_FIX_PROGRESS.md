@@ -52,15 +52,15 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-27 00:52 CET
+- **Дата последнего обновления:** 2026-10-27 00:55 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** code-коммит S2.2 — `a32c95a`, docs-checkpoint — будет после этого обновления
+- **HEAD:** code-коммит S2.2 — `a32c95a`, docs-коммит — `7ccddef`
 - **Текущий шаг:** `S2.2` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S2.3` — убрать хардкод Gemini-модели в `palace/navigation.py`
 - **Бюджет текущего шага:** 25k
 - **Израсходовано (оценка):** ~22k (код, 5 тестов, QA)
-- **Незакоммиченные изменения:** только этот файл прогресса. В дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
+- **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса. В дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations`.
 - **Последний QA:** 3632 passed / 0 failed (без untracked Garmin), coverage 91%; `agent_context.py` 91%, `handlers/messages.py` 97%; lint — 7 baseline, mypy — 1 baseline, bandit — 75 Low + 2 Medium (Medium только в пользовательском `services/garmin/repository.py`)
@@ -978,7 +978,7 @@
   - `python3 -m pytest tests/test_agent_context.py tests/test_messages_handler.py tests/test_agent_handler.py -q --no-cov` → **134 passed, 1 warning in 4.68s**.
   - `python3 -m flake8 handlers/messages.py services/agent_context.py tests/test_agent_context.py tests/test_messages_handler.py` → **0**.
   - `make test` (до появления новых untracked Garmin-тестов) → **3677 passed, 0 failed, 6 warnings in 18.98s**, coverage **94%**.
-  - `make test` (текущее дерево) → **exit 2**, collection errors в untracked `tests/test_garmin_fit_wellness.py` и `tests/test_garmin_wellness_import.py`: `ModuleNotFoundError: No module named 'fitparse'`. Это пользовательские файлы, не наш регресс.
+  - `make test` (текущее дерево) → **exit 2**, collection errors в untracked Garmin-тестах (например, `tests/test_garmin_fit_wellness.py`, `tests/test_garmin_wellness_import.py`): `ModuleNotFoundError: No module named 'fitparse'`. Это пользовательские файлы, не наш регресс.
   - `python3 -m pytest -q --tb=short --strict-markers --ignore-glob='tests/test_garmin_*.py'` → **3632 passed, 0 failed, 6 warnings in 18.04s**, coverage **91%**.
     - `handlers/messages.py` — **97%**, `services/agent_context.py` — **91%**.
   - `make lint` → **7 baseline-замечаний** (6 в `scripts/verify_garmin_login.py`, 1 в `services/deps_guard.py`), новых 0.
