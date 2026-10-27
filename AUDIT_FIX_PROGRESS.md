@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-25 17:22 CET
+- **Дата последнего обновления:** 2026-10-27 00:05 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** последний code-коммит S1.11 — `c677438`, docs-коммит — `58c64e3`
-- **Текущий шаг:** `S1.11` — завершён
+- **HEAD:** последний code-коммит S1.12 — `df66c40`, docs-checkpoint — будет после этого обновления
+- **Текущий шаг:** `S1.12` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S1.12` — напоминания: прошлое время, уникальные ключи, безопасный JSON
-- **Бюджет текущего шага:** 15k
-- **Израсходовано (оценка):** ~10k (исправление, 4 теста, QA)
+- **Следующее действие:** `S2.1` — `has_active_button_session`: пустой список считается активной сессией
+- **Бюджет текущего шага:** 30k
+- **Израсходовано (оценка):** ~22k (прошлое время, UUID-ключи, JSON/таймзоны, 12 тестов, QA)
 - **Незакоммиченные изменения:** только этот файл прогресса; `.env` и чужие untracked-файлы не трогать.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations`; TTL-флак устранён в S1.9 (детерминированные часы).
-- **Последний QA:** 3608 passed / 1 pre-existing failed, coverage 98%; `circuit_breaker.py` 100%; lint — 8 baseline, mypy — 1 baseline, bandit 73 Low
+- **Известные блокеры:** нет. Pre-existing: `test_day_bounds_midnight` (date-dependent); флак `test_confirm_write_delete_requires_two_confirmations`; TTL-флак устранён в S1.9.
+- **Последний QA:** 3621 passed / 0 failed, coverage 98%; `reminder.py` 98%; lint — 8 baseline, mypy — 1 baseline, bandit 72 Low (на 1 меньше)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -101,7 +101,7 @@
 | S1.9 | Контекстный semantic cache | P0 | 35k | DONE | `62af728` | 2026-10-25 16:55 | ~30k |
 | S1.10 | Токен и пути `.env` | P0 | 20k | DONE | `21953ac` | 2026-10-25 17:10 | ~18k |
 | S1.11 | Circuit breaker: сброс счётчика | P0 | 15k | DONE | `c677438` | 2026-10-25 17:20 | ~10k |
-| S1.12 | Напоминания: время/ключи/JSON | P0 | 30k | TODO | — | — | — |
+| S1.12 | Напоминания: время/ключи/JSON | P0 | 30k | DONE | `df66c40` | 2026-10-27 00:05 | ~22k |
 | S2.1 | Пустая button-сессия активна | P1 | 20k | TODO | — | — | — |
 | S2.2 | `append_always_on` в историю | P1 | 25k | TODO | — | — | — |
 | S2.3 | Убрать хардкод Gemini-модели | P1 | 20k | TODO | — | — | — |
@@ -140,11 +140,11 @@
 | Фаза | Всего шагов | DONE | PARTIAL/BLOCKED | TODO |
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
-| 1 — P0 | 13 | 12 | 0 | 1 |
+| 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 0 | 0 | 9 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **14** | **0** | **31** |
+| **Итого** | **45** | **15** | **0** | **30** |
 
 > Обновлять после каждого шага.
 
@@ -869,6 +869,53 @@
 
 ---
 
+### S1.12 — Напоминания: прошлое время, ключи, JSON, часовой пояс
+
+- Дата/время: 2026-10-25 17:30 — 2026-10-27 00:05 CET (сессия с паузами)
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `df66c40`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 30k / ~22k
+- Файлы: `handlers/reminder.py`, `tests/test_reminder_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Добавлена проверка прошедшего времени (`_is_past`) на всех этапах: при разборе сообщения, при подтверждении, при сохранении и в шагах `ask_text`/`ask_time`/`ask_all`. Вместо создания/немедленной отправки пользователь получает `PAST_TIME_TEXT` с предложением будущего времени.
+  2. Ключ напоминания теперь `rem<timestamp>_<uid>_<uuid4hex>`: два напоминания одного пользователя на одну секунду больше не перезаписывают друг друга.
+  3. `_clean_json` защищён от не-строк, логирует битый JSON (без содержимого) и возвращает `{}`. В `ask_all` вызов `_parse_reminder` обёрнут в `try/except` с понятным fallback-сообщением и `logger.error(..., exc_info=True)`.
+  4. `ask_time` больше не глотает исключения через `except: pass`: ошибка логируется.
+  5. Время переведено на aware datetime: `_now_local()`, `_local_dt()`; `_parse_time_description` работает с aware-временем, отображение — через локальное aware-время. Naive/aware не смешиваются.
+- Тесты и команды: 12 новых тестов (`tests/test_reminder_handler.py` 39 → 51). Покрыты прошлое время на всех входах, stale-подтверждение, уникальные ключи в одну секунду, битый/нестроковый JSON, ошибка AI в `ask_all`, aware datetime, будущее время.
+  - `python3 -m pytest tests/test_reminder_handler.py tests/test_reminder_scheduler.py -q --no-cov` → **64 passed, 1 warning**.
+  - `python3 -m flake8 handlers/reminder.py tests/test_reminder_handler.py` → 0; `mypy handlers/reminder.py` → Success.
+  - `make test` (первый прогон) → **3620 passed, 1 failed, 6 warnings in 21.30s**; упал известный флак `tests/test_notes_agent_handler.py::test_confirm_write_delete_requires_two_confirmations`.
+  - Этот тест отдельно 3 раза подряд → **3 passed**; полный повторный прогон → **3621 passed, 0 failed, 6 warnings in 21.87s**, coverage **98%**.
+    - `handlers/reminder.py` — **98%** (непокрыты ветки без `cb.data` и обработка ошибок календаря).
+  - `make lint` → **8 baseline-замечаний**, новых 0.
+  - `make typecheck` → та же 1 baseline-ошибка `handlers/chat.py:32`, новых 0.
+  - `make security` → **72 Low, 0 Medium, 0 High** (на 1 меньше: удалён `except: pass`/B110 в `ask_time`), новых 0.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 8, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 72 Low, новых 0 (один baseline B110 устранён)
+  - coverage: 98%; `reminder.py` — 98%
+- AC:
+  - [x] Прошлое время не срабатывает немедленно: блокируется на вводе, подтверждении и сохранении.
+  - [x] Нет коллизий ключей: UUID4 в ключе; тест с одинаковым `time.time()`.
+  - [x] Нет необработанного JSON: битый JSON, не-строка и исключение AI дают fallback + лог.
+  - [x] Часовой пояс: aware datetime без смешивания naive/aware.
+- Коммит: `df66c40` (`fix(step-1.12): harden reminder scheduling`)
+- Проблемы/решения:
+  - Граница `ts == now` считается прошедшим временем (`<=`), чтобы не отправлять напоминание мгновенно.
+  - Проверка добавлена и в callback-и: пользователь мог подтвердить напоминание уже после наступления времени.
+  - UUID4 выбран вместо timestamp+random: не требует дополнительного состояния и не зависит от разрешения часов.
+  - В лог пишется только длина невалидного JSON, без содержимого пользователя.
+  - Первый полный прогон дал известный флак; повторный полный прогон полностью зелёный.
+- Найдено попутно:
+  - Удалён baseline B110 (`try/except/pass`) в `ask_time`, поэтому bandit: 73 → 72 Low.
+- Следующее действие: `S2.1` — `has_active_button_session`: пустой список считается активной сессией.
+
+---
+
 ## 7. Журнал сессий
 
 | # | Дата | Агент/модель | Шаги | Результат | Токены (оценка) | Примечание |
@@ -887,6 +934,7 @@
 | 12 | 2026-10-25 16:45–16:55 | DeepSeek V4.1 Flash Free | S1.9 | DONE | ~30k | Context-scoped semantic cache, model invalidation, prompt/image fingerprint; 21 new tests; semantic_cache 100% |
 | 13 | 2026-10-25 17:00–17:10 | DeepSeek V4.1 Flash Free | S1.10 | DONE | ~18k | No production test-token, startup validation, root→legacy .env, env priority; 14 new tests; config 97% |
 | 14 | 2026-10-25 17:15–17:20 | DeepSeek V4.1 Flash Free | S1.11 | DONE | ~10k | Reset failure_count on success in CLOSED/HALF_OPEN; 4 tests; circuit_breaker 100% |
+| 15 | 2026-10-25 17:30–2026-10-27 00:05 | DeepSeek V4.1 Flash Free | S1.12 | DONE | ~22k | Past-time guards, UUID reminder keys, JSON fallbacks, aware datetime; 12 tests; reminder 98%; full suite green |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
