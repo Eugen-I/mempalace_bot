@@ -164,7 +164,7 @@ def _enable(monkeypatch, tmp_path=None):
     monkeypatch.setattr(messages, "is_coding_context", lambda q, msgs: False)
     monkeypatch.setattr(messages, "get_smart_prompt", lambda **kw: "SYSTEM-PROMPT")
     monkeypatch.setattr(messages, "get_voice_settings", lambda uid: {"mode": "text"})
-    monkeypatch.setattr(messages, "save_chat", lambda *a, **k: None)
+    monkeypatch.setattr(messages, "save_chat", lambda *a, **k: True)
     monkeypatch.setattr(messages, "get_cache", lambda: FakeCache())
     monkeypatch.setattr(messages, "schedule_linking", lambda *a, **k: None)
     monkeypatch.setattr(messages, "extract_and_store_facts", _async_none)
@@ -1024,6 +1024,18 @@ def test_waiting_for_name_save_error(monkeypatch, tmp_path):
     result = asyncio.run(messages.process_user_message(msg))
     assert result is not None
     assert "❌ Ошибка создания чата." in result.text
+    assert 4242 not in user_sessions
+
+
+def test_waiting_for_name_save_returns_false(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    waiting_for_name[4242] = True
+    monkeypatch.setattr(messages, "save_chat", lambda path, data: False)
+    msg = FakeMessage(text="Чат")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is not None
+    assert "❌ Ошибка создания чата." in result.text
+    assert 4242 not in user_sessions
 
 
 # ---------- auto chat activation ----------
@@ -1051,6 +1063,16 @@ def test_auto_create_chat(monkeypatch, tmp_path):
     asyncio.run(messages.process_user_message(msg))
     assert user_sessions[999].startswith("ch_auto_")
     assert any("🆕 Создан чат" in a[0] for a in msg.answers)
+
+
+def test_auto_create_chat_save_failure(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    monkeypatch.setattr(messages, "save_chat", lambda path, data: False)
+    msg = FakeMessage(uid=999, text="привет")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is not None
+    assert "❌ Ошибка создания чата." in result.text
+    assert 999 not in user_sessions
 
 
 # ---------- chat load error ----------
@@ -1206,7 +1228,12 @@ def _ai_setup(
         data.update(data_extra)
     monkeypatch.setattr(messages, "load_chat", lambda path: data)
     saves = []
-    monkeypatch.setattr(messages, "save_chat", lambda path, d: saves.append((path, d)))
+
+    def fake_save(path, d):
+        saves.append((path, d))
+        return True
+
+    monkeypatch.setattr(messages, "save_chat", fake_save)
     calls = {}
     bot = FakeBot()
     monkeypatch.setattr(messages, "bot", bot)
@@ -1740,6 +1767,20 @@ def test_ai_save_chat_failure(monkeypatch, tmp_path):
     msg = FakeMessage(text="привет")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
+    assert any(
+        "Не удалось сохранить ответ в историю чата" in a[0] for a in msg.answers
+    )
+
+
+def test_ai_save_chat_returns_false_warns(monkeypatch, tmp_path):
+    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(messages, "save_chat", lambda path, d: False)
+    msg = FakeMessage(text="привет")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert any(
+        "Не удалось сохранить ответ в историю чата" in a[0] for a in msg.answers
+    )
 
 
 # ---------- final branches ----------

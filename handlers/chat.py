@@ -7,7 +7,9 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import tempfile
+from datetime import datetime
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
@@ -38,27 +40,81 @@ def _short_id(fname: str) -> str:
     return sid
 
 
+def _backup_corrupt_chat(filepath: str) -> str | None:
+    """Копирует битый файл чата рядом с оригиналом, не удаляя его."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    backup_path = f"{filepath}.corrupt.{timestamp}"
+    try:
+        shutil.copy2(filepath, backup_path)
+    except OSError as exc:
+        logger.error(
+            "Не удалось создать резервную копию битого чата %s: %s",
+            filepath, exc,
+        )
+        return None
+    return backup_path
+
+
 def load_chat(filepath: str) -> dict:
+    empty = {"summary": "", "messages": []}
     if not os.path.exists(filepath):
-        return {"summary": "", "messages": []}
-    with open(filepath, encoding="utf-8") as f:
-        data = json.load(f)
+        return empty
+
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        backup_path = _backup_corrupt_chat(filepath)
+        logger.error(
+            "Битый JSON в чате %s: %s; резервная копия: %s",
+            filepath, exc, backup_path or "не создана",
+        )
+        return empty
+    except OSError as exc:
+        logger.error("Не удалось прочитать чат %s: %s", filepath, exc)
+        return empty
+
     if isinstance(data, list):
         data = {"summary": "", "messages": data}
-        save_chat(filepath, data)
+        if not save_chat(filepath, data):
+            logger.error("Не удалось мигрировать чат %s", filepath)
+        return data
+
+    if not isinstance(data, dict):
+        backup_path = _backup_corrupt_chat(filepath)
+        logger.error(
+            "Некорректная структура чата %s (%s); резервная копия: %s",
+            filepath, type(data).__name__, backup_path or "не создана",
+        )
+        return empty
     return data
 
 
-def save_chat(filepath: str, data: dict):
+def save_chat(filepath: str, data: dict) -> bool:
+    """Атомарно сохраняет чат. Возвращает False, если запись не удалась."""
+    tmp_path: str | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            "w", dir=os.path.dirname(filepath), delete=False, encoding="utf-8",
+            "w", dir=os.path.dirname(os.path.abspath(filepath)),
+            delete=False, encoding="utf-8",
         ) as tmp:
-            json.dump(data, tmp, ensure_ascii=False, indent=2)
             tmp_path = tmp.name
+            json.dump(data, tmp, ensure_ascii=False, indent=2)
         os.replace(tmp_path, filepath)
-    except Exception as e:
-        print(f"❌ Ошибка сохранения чата {filepath}: {e}")
+        return True
+    except Exception as exc:
+        logger.error(
+            "Не удалось сохранить чат %s: %s", filepath, exc, exc_info=True,
+        )
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError as cleanup_exc:
+                logger.warning(
+                    "Не удалось удалить временный файл %s: %s",
+                    tmp_path, cleanup_exc,
+                )
+        return False
 
 
 def save_summary_file(chat_name: str, summary: str):

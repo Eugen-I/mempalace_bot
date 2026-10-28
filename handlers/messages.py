@@ -426,13 +426,20 @@ async def process_user_message(message: types.Message):
         user_sessions[uid] = fname
         waiting_for_name[uid] = False
         try:
-            save_chat(os.path.join(CHATS_DIR, fname), {"summary": "", "messages": []})
-            return await message.answer(
-                f"✅ Чат создан: <code>{fname}</code>", parse_mode="HTML",
+            saved = save_chat(
+                os.path.join(CHATS_DIR, fname), {"summary": "", "messages": []},
             )
         except Exception:
-            pass
-        return await message.answer("❌ Ошибка создания чата.")
+            logger.exception("Не удалось создать чат %s", fname)
+            saved = False
+        if not saved:
+            user_sessions.pop(uid, None)
+            return await message.answer(
+                "❌ Ошибка создания чата. Проверьте доступ к диску.",
+            )
+        return await message.answer(
+            f"✅ Чат создан: <code>{fname}</code>", parse_mode="HTML",
+        )
 
     # 5. Проверка/Авто-создание чата
     if uid not in user_sessions:
@@ -449,7 +456,19 @@ async def process_user_message(message: types.Message):
         else:
             fname = f"ch_auto_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
             user_sessions[uid] = fname
-            save_chat(os.path.join(CHATS_DIR, fname), {"summary": "", "messages": []})
+            try:
+                saved = save_chat(
+                    os.path.join(CHATS_DIR, fname),
+                    {"summary": "", "messages": []},
+                )
+            except Exception:
+                logger.exception("Не удалось создать чат %s", fname)
+                saved = False
+            if not saved:
+                user_sessions.pop(uid, None)
+                return await message.answer(
+                    "❌ Ошибка создания чата. Проверьте доступ к диску.",
+                )
             await message.answer(
                 f"🆕 Создан чат: <code>{fname}</code>", parse_mode="HTML",
             )
@@ -685,7 +704,8 @@ async def process_user_message(message: types.Message):
         if is_code and not data.get("is_coding_mode"):
             data["is_coding_mode"] = True
             data["project_dir"] = ensure_project_dir(fname)
-            save_chat(fpath, data)
+            if not save_chat(fpath, data):
+                logger.error("Не удалось сохранить режим кодинга в %s", fpath)
 
         _engine, _model = get_current_ai()
 
@@ -939,14 +959,21 @@ async def process_user_message(message: types.Message):
             )
 
         # В историю попадает только реальный текст; сообщение об ошибке — нет.
+        history_saved = True
         if answer:
             msgs.append({"role": "user", "content": clean_q})
             msgs.append({"role": "assistant", "content": answer})
             data["messages"] = msgs[-50:]
             try:
-                save_chat(fpath, data)
-            except Exception as e:
-                logger.warning(f"Не удалось сохранить чат: {e}")
+                history_saved = save_chat(fpath, data)
+            except Exception:
+                logger.exception("Не удалось сохранить чат %s", fpath)
+                history_saved = False
+            if not history_saved:
+                logger.error(
+                    "История чата не сохранена: %s (данные остались в памяти)",
+                    fpath,
+                )
 
         if stream_error is None:
             await bus.publish(
@@ -984,6 +1011,17 @@ async def process_user_message(message: types.Message):
                     )
                 except Exception as e:
                     logger.debug(f"Не удалось отправить предупреждение: {e}")
+
+        if not history_saved:
+            try:
+                await message.answer(
+                    "⚠️ Не удалось сохранить ответ в историю чата. "
+                    "Данные остались только в текущей сессии.",
+                )
+            except Exception as e:
+                logger.debug(
+                    "Не удалось предупредить о сбое сохранения чата: %s", e,
+                )
 
         # Частичный ответ не кэшируем и не рассылаем как успешный.
         if stream_error is None:

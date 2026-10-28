@@ -1,7 +1,6 @@
 """Unit tests for handlers.chat."""
 
 import json
-import os
 from types import SimpleNamespace
 
 import pytest
@@ -122,22 +121,104 @@ def test_load_chat_dict(monkeypatch, tmp_path):
     assert data["summary"] == "sum"
 
 
+def test_load_chat_corrupt_json_backs_up_original(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    p = d / "ch_bad.json"
+    p.write_text("{broken", encoding="utf-8")
+
+    data = ch.load_chat(str(p))
+
+    assert data == {"summary": "", "messages": []}
+    assert p.exists()
+    assert p.read_text(encoding="utf-8") == "{broken"
+    backups = list(d.glob("ch_bad.json.corrupt.*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "{broken"
+
+
+def test_load_chat_invalid_root_backs_up_original(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    p = d / "ch_scalar.json"
+    p.write_text('"not a chat"', encoding="utf-8")
+
+    data = ch.load_chat(str(p))
+
+    assert data == {"summary": "", "messages": []}
+    assert p.exists()
+    assert len(list(d.glob("ch_scalar.json.corrupt.*"))) == 1
+
+
+def test_load_chat_corrupt_backup_failure_is_safe(
+    monkeypatch, tmp_path, caplog,
+):
+    d = _enable(monkeypatch, tmp_path)
+    p = d / "ch_bad.json"
+    p.write_text("{broken", encoding="utf-8")
+
+    def boom(*a, **kw):
+        raise OSError("backup failed")
+
+    monkeypatch.setattr(ch.shutil, "copy2", boom)
+
+    assert ch.load_chat(str(p)) == {"summary": "", "messages": []}
+    assert p.read_text(encoding="utf-8") == "{broken"
+    assert "резервная копия: не создана" in caplog.text
+
+
+def test_load_chat_list_migration_save_failure_returns_data(
+    monkeypatch, tmp_path, caplog,
+):
+    d = _enable(monkeypatch, tmp_path)
+    p = d / "ch_list.json"
+    p.write_text('[{"role": "user", "content": "hi"}]', encoding="utf-8")
+    monkeypatch.setattr(ch, "save_chat", lambda path, data: False)
+
+    data = ch.load_chat(str(p))
+
+    assert data["messages"] == [{"role": "user", "content": "hi"}]
+    assert "Не удалось мигрировать чат" in caplog.text
+
+
 def test_save_chat_roundtrip(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     p = d / "ch_1.json"
-    ch.save_chat(str(p), {"summary": "s", "messages": []})
+    assert ch.save_chat(str(p), {"summary": "s", "messages": []}) is True
     data = json.loads(p.read_text(encoding="utf-8"))
     assert data == {"summary": "s", "messages": []}
 
 
-def test_save_chat_error_swallowed(monkeypatch, tmp_path):
+def test_save_chat_error_returns_false(monkeypatch, tmp_path, caplog):
     _enable(monkeypatch, tmp_path)
 
     def boom(*a, **kw):
         raise OSError("disk")
 
     monkeypatch.setattr(ch.tempfile, "NamedTemporaryFile", boom)
-    ch.save_chat(str(tmp_path / "x.json"), {"messages": []})
+    assert ch.save_chat(str(tmp_path / "x.json"), {"messages": []}) is False
+    assert "Не удалось сохранить чат" in caplog.text
+
+
+def test_save_chat_missing_directory_returns_false(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    target = tmp_path / "missing" / "x.json"
+    assert ch.save_chat(str(target), {"messages": []}) is False
+    assert not target.exists()
+
+
+def test_save_chat_replace_error_keeps_original(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    p = d / "ch_1.json"
+    original = '{"summary": "old", "messages": []}'
+    p.write_text(original, encoding="utf-8")
+
+    def boom(src, dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(ch.os, "replace", boom)
+
+    assert ch.save_chat(str(p), {"summary": "new", "messages": []}) is False
+    assert p.read_text(encoding="utf-8") == original
+    assert list(d.iterdir()) == [p]
 
 
 def test_save_summary_file(monkeypatch, tmp_path):
@@ -388,7 +469,9 @@ async def test_generate_fresh_summary_error(monkeypatch, tmp_path):
 async def test_update_summary_if_needed_skip_under_5(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     p = _write_chat(d, "ch_1.json", [{"role": "user", "content": "x"}])
-    assert await ch.update_summary_if_needed(4242, str(p), [{"role": "user", "content": "x"}]) is None
+    assert await ch.update_summary_if_needed(
+        4242, str(p), [{"role": "user", "content": "x"}],
+    ) is None
     data = json.loads(p.read_text(encoding="utf-8"))
     assert data["summary"] == ""
 
@@ -844,7 +927,7 @@ async def test_cmd_export_no_md(monkeypatch, tmp_path):
 async def test_cmd_export_success(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     ch.user_sessions[4242] = "ch_1.json"
-    p = _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
+    _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
     msg = FakeMessage()
     await ch.cmd_export(msg)
     assert msg.sent_document is not None
