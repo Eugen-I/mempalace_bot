@@ -605,11 +605,156 @@ async def test_cmd_callback_export_send_error(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cmd_callback_insights(monkeypatch, tmp_path):
+async def test_cmd_callback_insights_lists_files(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
+    import os
+    from datetime import datetime
+
+    insights = tmp_path / "insights"
+    insights.mkdir()
+    (insights / "a.txt").write_text("short", encoding="utf-8")
+    os.utime(insights / "a.txt", (1_700_000_000, 1_700_000_000))
+    (insights / "b.txt").write_text("x" * 2048, encoding="utf-8")
+    os.utime(insights / "b.txt", (1_700_000_100, 1_700_000_100))
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+
     cb = FakeCb(4242, data="cmd:insights")
     await st.cmd_callback_handler(cb)
-    assert "insights" in cb.message.answers[0][0]
+    text, parse_mode, _ = cb.message.answers[0]
+    assert parse_mode == "HTML"
+    assert "📌 <b>Последние инсайты:</b>" in text
+    assert text.index("b.txt") < text.index("a.txt")
+    assert "2.0 КБ" in text
+    assert "5 Б" in text
+    expected_dt = datetime.fromtimestamp(1_700_000_100).strftime("%d.%m.%Y %H:%M")
+    assert expected_dt in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_empty_dir(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    insights = tmp_path / "insights_empty"
+    insights.mkdir()
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    assert "Папка пуста" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_missing_dir(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(tmp_path / "no_insights"))
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    assert "Папка пуста" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_escapes_names(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    insights = tmp_path / "insights_html"
+    insights.mkdir()
+    (insights / '<b>&"x".txt').write_text("data", encoding="utf-8")
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "&lt;b&gt;&amp;&quot;x&quot;.txt" in text
+    assert '<b>&"x".txt' not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_access_error(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+
+    def broken_scandir(path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(st.os, "scandir", broken_scandir)
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    assert "Не удалось прочитать папку" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_entry_stat_error(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+
+    class BadEntry:
+        name = "bad.txt"
+
+        def is_file(self, follow_symlinks=False):
+            return True
+
+        def stat(self, follow_symlinks=False):
+            raise OSError("stat failed")
+
+    class FakeScandir:
+        def __enter__(self):
+            return [BadEntry()]
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(st.os, "scandir", lambda path: FakeScandir())
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    assert "Папка пуста" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_limit_10(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    import os
+
+    insights = tmp_path / "insights_many"
+    insights.mkdir()
+    for i in range(1, 13):
+        path = insights / f"note{i:02d}.txt"
+        path.write_text("x", encoding="utf-8")
+        os.utime(path, (1_700_000_000 + i, 1_700_000_000 + i))
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "note12.txt" in text
+    assert "note03.txt" in text
+    assert "note02.txt" not in text
+    assert "note01.txt" not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_skips_dirs_hidden_and_symlinks(
+    monkeypatch, tmp_path,
+):
+    _enable(monkeypatch, tmp_path)
+    import os
+
+    insights = tmp_path / "insights_mixed"
+    insights.mkdir()
+    (insights / "real.txt").write_text("data", encoding="utf-8")
+    (insights / "subdir").mkdir()
+    (insights / ".hiddenfile").write_text("data", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("data", encoding="utf-8")
+    os.symlink(outside, insights / "link.txt")
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "real.txt" in text
+    assert "subdir" not in text
+    assert "hiddenfile" not in text
+    assert "link.txt" not in text
+
+
+def test_format_size_boundaries():
+    assert st._format_size(0) == "0 Б"
+    assert st._format_size(1023) == "1023 Б"
+    assert st._format_size(1024) == "1.0 КБ"
+    assert st._format_size(1024 * 1024 - 1) == "1024.0 КБ"
+    assert st._format_size(1024 * 1024) == "1.0 МБ"
 
 
 @pytest.mark.asyncio

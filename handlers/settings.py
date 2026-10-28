@@ -7,6 +7,7 @@ import html
 import json
 import logging
 import os
+from datetime import datetime
 
 from aiogram import F, Router, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -23,12 +24,59 @@ logger = logging.getLogger("SettingsHandler")
 
 HISTORY_MESSAGES_LIMIT = 20
 HISTORY_PREVIEW_CHARS = 150
+DIRECTORY_FILES_LIMIT = 10
 
 _ROLE_LABELS = {
     "user": "👤 Вы",
     "assistant": "🤖 Бот",
     "system": "⚙️ Система",
 }
+
+
+def _format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} Б"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} КБ"
+    return f"{size / (1024 * 1024):.1f} МБ"
+
+
+def format_directory_listing(
+    directory: str, title: str, limit: int | None = None,
+) -> str:
+    """Список последних файлов каталога: имя, дата, размер (HTML-safe)."""
+    limit = limit or DIRECTORY_FILES_LIMIT
+    try:
+        entries = []
+        with os.scandir(directory) as it:
+            for entry in it:
+                if entry.name.startswith("."):
+                    continue
+                try:
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    stat = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                entries.append((entry.name, stat.st_mtime, stat.st_size))
+    except FileNotFoundError:
+        return f"{title}\n\n📁 Папка пуста."
+    except OSError:
+        logger.error("Не удалось прочитать каталог %s", directory, exc_info=True)
+        return f"{title}\n\n❌ Не удалось прочитать папку."
+
+    if not entries:
+        return f"{title}\n\n📁 Папка пуста."
+
+    entries.sort(key=lambda item: item[1], reverse=True)
+    lines = [title, ""]
+    for name, mtime, size in entries[:limit]:
+        dt = datetime.fromtimestamp(mtime).strftime("%d.%m.%Y %H:%M")
+        lines.append(
+            f"• <b>{html.escape(name)}</b> — {dt}, {_format_size(size)}",
+        )
+
+    return "\n".join(lines)
 
 
 def format_chat_history(
@@ -300,9 +348,16 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
             logger.error("Не удалось отправить экспорт %s", md_path, exc_info=True)
             await callback.message.answer("❌ Не удалось отправить файл экспорта.")
 
-    elif command in ["insights", "research"]:
-        target = "research" if command == "research" else "insights"
-        await callback.message.answer(f"📌 Показываю последние записи из {target}/...")
+    elif command == "insights":
+        from config import INSIGHTS_DIR
+
+        text = format_directory_listing(
+            INSIGHTS_DIR, "📌 <b>Последние инсайты:</b>",
+        )
+        await callback.message.answer(text, parse_mode="HTML")
+
+    elif command == "research":
+        await callback.message.answer("📌 Показываю последние записи из research/...")
         # Здесь можно показать последние файлы из папки
 
     elif command == "sync":
