@@ -63,6 +63,27 @@ class TestDegradationManager:
         mgr.record_failure("memory")
         assert mgr.should_use_memory() is False
 
+    def test_should_use_memory_uses_health_not_level(self):
+        mgr = DegradationManager()
+        mgr.record_failure("memory")
+        assert mgr.level == DegradationLevel.MEDIUM
+        assert mgr.should_use_memory() is False
+
+    def test_should_use_palace_stays_available_for_retry(self):
+        mgr = DegradationManager()
+        mgr.record_failure("palace_search")
+        assert mgr.level == DegradationLevel.MEDIUM
+        assert mgr.should_use_palace() is True
+        mgr.record_success("palace_search")
+        assert mgr.level == DegradationLevel.FULL
+
+    def test_palace_only_medium_keeps_palace_and_drops_memory(self):
+        mgr = DegradationManager()
+        mgr.record_failure("memory")
+        assert mgr.level == DegradationLevel.MEDIUM
+        assert mgr.should_use_palace() is True
+        assert mgr.should_use_memory() is False
+
     def test_whisper_independent(self):
         mgr = DegradationManager()
         assert mgr.should_use_whisper() is True
@@ -77,7 +98,8 @@ class TestDegradationManager:
         mgr.record_failure("palace_mcp")
         mgr.record_failure("palace_search")
         assert mgr.get_status_text() == "🟠 basic"
-        mgr.level = DegradationLevel.EMERGENCY
+        mgr.record_failure("whisper")
+        assert mgr.level == DegradationLevel.EMERGENCY
         assert mgr.get_status_text() == "🔴 emergency"
 
     def test_get_available_features_full(self):
@@ -112,6 +134,47 @@ class TestDegradationManager:
         mgr.record_success("unknown")
 
 
+class TestEmergencyState:
+    def test_all_components_down_is_emergency(self):
+        mgr = DegradationManager()
+        for component in ("palace_mcp", "palace_search", "memory", "whisper"):
+            mgr.record_failure(component)
+        assert mgr.level == DegradationLevel.EMERGENCY
+        assert mgr.should_use_palace() is False
+        assert mgr.should_use_memory() is False
+        assert mgr.should_use_whisper() is False
+        assert mgr.get_status_text() == "🔴 emergency"
+
+    def test_all_data_down_with_whisper_is_basic_not_emergency(self):
+        mgr = DegradationManager()
+        for component in ("palace_mcp", "palace_search", "memory"):
+            mgr.record_failure(component)
+        assert mgr.level == DegradationLevel.BASIC
+
+    def test_emergency_recovers_step_by_step(self):
+        mgr = DegradationManager()
+        for component in ("palace_mcp", "palace_search", "memory", "whisper"):
+            mgr.record_failure(component)
+        assert mgr.level == DegradationLevel.EMERGENCY
+
+        mgr.record_success("whisper")
+        assert mgr.level == DegradationLevel.BASIC
+
+        mgr.record_success("memory")
+        assert mgr.level == DegradationLevel.MEDIUM
+        assert mgr.should_use_memory() is True
+        assert mgr.health.palace_search is False
+        # Попытка поиска разрешена, чтобы поймать восстановление backend'а.
+        assert mgr.should_use_palace() is True
+
+        mgr.record_success("palace_search")
+        assert mgr.level == DegradationLevel.MEDIUM
+        assert mgr.should_use_palace() is True
+
+        mgr.record_success("palace_mcp")
+        assert mgr.level == DegradationLevel.FULL
+
+
 class TestDegradationManagerMutants:
     def test_get_status_text_exact(self):
         mgr = DegradationManager()
@@ -142,7 +205,9 @@ class TestDegradationManagerMutants:
 
     def test_features_emergency_exact(self):
         mgr = DegradationManager()
-        mgr.level = DegradationLevel.EMERGENCY
+        for component in ("palace_mcp", "palace_search", "memory", "whisper"):
+            mgr.record_failure(component)
+        assert mgr.level == DegradationLevel.EMERGENCY
         assert mgr.get_available_features() == ["Emergency responses only"]
 
     def test_record_success_whisper(self):

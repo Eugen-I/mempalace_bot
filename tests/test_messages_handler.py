@@ -170,7 +170,7 @@ def _enable(monkeypatch, tmp_path=None):
     monkeypatch.setattr(messages, "extract_and_store_facts", _async_none)
     monkeypatch.setattr(messages, "cache_ai_response", lambda *a, **k: None)
     monkeypatch.setattr(messages, "auto_sync_chat", _async_none)
-    monkeypatch.setattr(messages, "search_with_kg", _async(""))
+    monkeypatch.setattr(messages, "search_with_kg_status", _async(("", True)))
     monkeypatch.setattr(messages, "get_memory_context", lambda q, uid: "memory-ctx")
     monkeypatch.setattr(messages, "report_failure", lambda *a: None)
     monkeypatch.setattr(messages, "report_success", lambda *a: None)
@@ -1577,7 +1577,9 @@ def test_ai_context_mcp_error(monkeypatch, tmp_path):
 def test_ai_degrade_palace_found(monkeypatch, tmp_path):
     data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "get_degradation_manager", lambda: FakeDeg(palace=True))
-    monkeypatch.setattr(messages, "search_with_kg", _async("источники [1] текст"))
+    monkeypatch.setattr(
+        messages, "search_with_kg_status", _async(("источники [1] текст", True)),
+    )
     success = []
     monkeypatch.setattr(messages, "report_success", lambda *a: success.append(a))
     msg = FakeMessage(text="вопрос")
@@ -1590,6 +1592,21 @@ def test_ai_degrade_palace_found(monkeypatch, tmp_path):
 def test_ai_degrade_palace_empty(monkeypatch, tmp_path):
     data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "get_degradation_manager", lambda: FakeDeg(palace=True))
+    failure = []
+    success = []
+    monkeypatch.setattr(messages, "report_failure", lambda *a: failure.append(a))
+    monkeypatch.setattr(messages, "report_success", lambda *a: success.append(a))
+    msg = FakeMessage(text="вопрос")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert failure == []
+    assert success == [("palace_search",)]
+
+
+def test_ai_degrade_palace_unavailable(monkeypatch, tmp_path):
+    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(messages, "get_degradation_manager", lambda: FakeDeg(palace=True))
+    monkeypatch.setattr(messages, "search_with_kg_status", _async(("", False)))
     failure = []
     monkeypatch.setattr(messages, "report_failure", lambda *a: failure.append(a))
     msg = FakeMessage(text="вопрос")

@@ -226,7 +226,7 @@ async def _search_via_api(
 
     except Exception as e:
         logger.warning(f"[PALACE_SEARCH] API error: {e}", exc_info=True)
-        return {"text": "", "sources": []}
+        return {"text": "", "sources": [], "error": True}
 
 
 async def _search_via_cli(
@@ -261,7 +261,7 @@ async def _search_via_cli(
         if proc.returncode != 0:
             err = stderr.decode().strip()
             logger.warning(f"MemPalace search error: {err}")
-            return {"text": "", "sources": []}
+            return {"text": "", "sources": [], "error": True}
 
         result = stdout.decode("utf-8").strip()
         if not result or "No results found" in result or "Ничего не найдено" in result:
@@ -281,7 +281,7 @@ async def _search_via_cli(
         return result
     except Exception as e:
         logger.error(f"Error searching MemPalace via CLI: {e}", exc_info=True)
-        return {"text": "", "sources": []}
+        return {"text": "", "sources": [], "error": True}
 
 
 async def _search_connected_rooms(
@@ -336,14 +336,27 @@ async def _search_connected_rooms(
     return ""
 
 
-async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
-    """Комбинированный поиск: текст + Knowledge Graph + туннели."""
-    result = await _search_palace_context_impl(query, limit, wing)
+async def search_with_kg_status(
+    query: str, limit: int = 5, wing: str = "",
+) -> tuple[str, bool]:
+    """Комбинированный поиск: текст + Knowledge Graph + туннели.
+
+    Возвращает ``(text, available)``. ``available=False`` означает отказ
+    backend'а (API/CLI), а пустой ``text`` при ``available=True`` — штатное
+    «ничего не найдено».
+    """
+    try:
+        result = await _search_palace_context_impl(query, limit, wing)
+    except Exception as e:
+        logger.error(f"[PALACE_SEARCH] Unexpected search error: {e}", exc_info=True)
+        return "", False
+
     text = result.get("text", "")
     sources = result.get("sources", [])
+    available = not result.get("error", False)
 
     if not text:
-        return ""
+        return "", available
 
     source_lines = ["\n--- ИСТОЧНИКИ ---"]
     for s in sources:
@@ -398,7 +411,13 @@ async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
     if tunnel_block:
         combined += "\n" + tunnel_block
 
-    return combined
+    return combined, True
+
+
+async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
+    """Совместимая обёртка: возвращает только текст результата."""
+    text, _available = await search_with_kg_status(query, limit, wing)
+    return text
 
 
 def export_chat_verbatim(chat_path: str, chat_name: str) -> str | None:

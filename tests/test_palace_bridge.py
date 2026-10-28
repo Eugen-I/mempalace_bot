@@ -12,7 +12,6 @@ import pytest
 import services.palace_bridge as pb
 import services.palace_mcp as palace_mcp
 from services.circuit_breaker import (
-    CircuitBreaker,
     CircuitBreakerOpenError,
     get_palace_circuit_breaker,
 )
@@ -139,6 +138,7 @@ async def test_search_palace_with_sources_circuit_breaker_open(monkeypatch, pala
 
     monkeypatch.setattr(pb, "_search_palace_context_impl", boom)
     assert await pb.search_palace_with_sources("q") == ("", [])
+
     async def boom(q, limit=5, wing="", room=""):
         raise ValueError("nope")
 
@@ -206,6 +206,21 @@ async def test_impl_cli_fallback_when_api_empty(monkeypatch):
     monkeypatch.setattr(pb, "_search_via_cli", fake_cli)
     out = await pb._search_palace_context_impl("запрос", wing="projects")
     assert out["text"] == "cli hit"
+
+
+@pytest.mark.asyncio
+async def test_impl_propagates_cli_error(monkeypatch):
+    async def empty(q, limit=5, wing="", room=""):
+        return {"text": "", "sources": []}
+
+    async def broken_cli(q, limit=5, wing="", room=""):
+        return {"text": "", "sources": [], "error": True}
+
+    monkeypatch.setattr(pb, "_search_via_api", empty)
+    monkeypatch.setattr(pb, "_search_via_cli", broken_cli)
+    out = await pb._search_palace_context_impl("запрос")
+    assert out["text"] == ""
+    assert out["error"] is True
 
 
 # ---------- _rank_hits ----------
@@ -372,7 +387,9 @@ async def test_api_exception(monkeypatch):
     monkeypatch.setitem(sys.modules, "mempalace", type(sys)("mempalace"))
     monkeypatch.setitem(sys.modules, "mempalace.searcher", search_module)
     monkeypatch.setitem(sys.modules, "mempalace.config", config_module)
-    assert await pb._search_via_api("q") == {"text": "", "sources": []}
+    out = await pb._search_via_api("q")
+    assert out["text"] == ""
+    assert out.get("error") is True
 
 
 # ---------- _search_via_cli ----------
@@ -426,7 +443,9 @@ async def test_cli_nonzero_returncode(monkeypatch):
         _FakeProc(1, b"", b"search crashed"),
     ])
     monkeypatch.setattr(pb.asyncio, "create_subprocess_exec", runner)
-    assert await pb._search_via_cli("q") == {"text": "", "sources": []}
+    out = await pb._search_via_cli("q")
+    assert out["text"] == ""
+    assert out.get("error") is True
 
 
 @pytest.mark.asyncio
@@ -466,7 +485,9 @@ async def test_cli_exception(monkeypatch):
         raise OSError("no such proc")
 
     monkeypatch.setattr(pb.asyncio, "create_subprocess_exec", boom)
-    assert await pb._search_via_cli("q") == {"text": "", "sources": []}
+    out = await pb._search_via_cli("q")
+    assert out["text"] == ""
+    assert out.get("error") is True
 
 
 # ---------- _search_connected_rooms ----------
@@ -562,6 +583,7 @@ async def test_connected_rooms_skips_missing_wing_or_room(monkeypatch):
     assert out == ""
     assert mcp.calls == []
 
+
 @pytest.mark.asyncio
 async def test_connected_rooms_empty_connection_and_label_variants(monkeypatch):
     mcp = _FakeMCP(json.dumps([
@@ -592,6 +614,37 @@ async def test_search_with_kg_no_text(monkeypatch, palace_cb):
 
     monkeypatch.setattr(pb, "_search_palace_context_impl", fake_impl)
     assert await pb.search_with_kg("пусто") == ""
+
+
+@pytest.mark.asyncio
+async def test_search_with_kg_status_empty_is_available(monkeypatch, palace_cb):
+    async def fake_impl(q, limit=5, wing=""):
+        return {"text": "", "sources": []}
+
+    monkeypatch.setattr(pb, "_search_palace_context_impl", fake_impl)
+    assert await pb.search_with_kg_status("пусто") == ("", True)
+
+
+@pytest.mark.asyncio
+async def test_search_with_kg_status_backend_error_is_unavailable(
+    monkeypatch, palace_cb,
+):
+    async def fake_impl(q, limit=5, wing=""):
+        return {"text": "", "sources": [], "error": True}
+
+    monkeypatch.setattr(pb, "_search_palace_context_impl", fake_impl)
+    assert await pb.search_with_kg_status("пусто") == ("", False)
+
+
+@pytest.mark.asyncio
+async def test_search_with_kg_status_unexpected_exception_is_unavailable(
+    monkeypatch, palace_cb,
+):
+    async def boom(q, limit=5, wing=""):
+        raise RuntimeError("backend exploded")
+
+    monkeypatch.setattr(pb, "_search_palace_context_impl", boom)
+    assert await pb.search_with_kg_status("пусто") == ("", False)
 
 
 @pytest.mark.asyncio

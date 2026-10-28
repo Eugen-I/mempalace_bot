@@ -53,7 +53,7 @@ from services.graceful_degradation import get_degradation_manager, report_failur
 from services.memory import extract_and_store_facts, get_memory_context
 from services.multimodal import check_capability, encode_image_to_base64, list_photos
 from services.note_linker import schedule_linking
-from services.palace_bridge import search_with_kg
+from services.palace_bridge import search_with_kg_status
 from services.prompts import get_smart_prompt
 from services.semantic_cache import get_cache
 from services.sender import send_response_with_mode
@@ -687,8 +687,11 @@ async def process_user_message(message: types.Message):
             logger.info("[USER_CONTEXT] No user context, using regular search")
 
         if not palace_context and deg.should_use_palace():
-            palace_context = await search_with_kg(clean_q, limit=5, wing=target_wing)
-            if not palace_context:
+            palace_context, palace_available = await search_with_kg_status(
+                clean_q, limit=5, wing=target_wing,
+            )
+            if not palace_available:
+                # Пустой ответ при available=True — это «нет данных», не отказ.
                 report_failure("palace_search")
             else:
                 report_success("palace_search")
