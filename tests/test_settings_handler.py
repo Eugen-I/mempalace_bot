@@ -19,6 +19,7 @@ class FakeMessage:
         self.text = text
         self.answers = []
         self.edits = []
+        self.documents = []
 
     async def answer(self, text, parse_mode=None, reply_markup=None):
         self.answers.append((text, parse_mode, reply_markup))
@@ -26,6 +27,11 @@ class FakeMessage:
         status.edit_text = _make_edit(status)
         self.status = status
         return status
+
+    async def answer_document(self, document, caption=None, parse_mode=None,
+                              reply_markup=None):
+        self.documents.append((document, caption, parse_mode))
+        return SimpleNamespace(document=document)
 
     async def _edit(self, text, parse_mode=None):
         pass
@@ -490,11 +496,112 @@ def test_format_chat_history_custom_limit_and_unknown_role():
 
 
 @pytest.mark.asyncio
-async def test_cmd_callback_export(monkeypatch, tmp_path):
+async def test_cmd_callback_export_success(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [
+        {"role": "user", "content": "привет"},
+        {"role": "assistant", "content": "ответ"},
+    ])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    monkeypatch.setattr("handlers.chat.CHATS_DIR", str(chats))
     cb = FakeCb(4242, data="cmd:export")
     await st.cmd_callback_handler(cb)
-    assert "Экспортирую" in cb.message.answers[0][0]
+
+    assert len(cb.message.documents) == 1
+    document, caption, parse_mode = cb.message.documents[0]
+    md_path = chats / "exports" / "chat_4242.md"
+    assert str(document.path) == str(md_path)
+    assert md_path.exists()
+    content = md_path.read_text(encoding="utf-8")
+    assert "# 💬 Диалог: chat_4242" in content
+    assert "👤 Вы\nпривет" in content
+    assert "🤖 ИИ\nответ" in content
+    assert "chat_4242.md" in caption
+    assert parse_mode is None
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_export_no_active_chat(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.delitem(user_sessions, 4242, raising=False)
+    cb = FakeCb(4242, data="cmd:export")
+    await st.cmd_callback_handler(cb)
+    assert "Нет активного чата" in cb.message.answers[0][0]
+    assert cb.message.documents == []
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_export_empty_chat(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:export")
+    await st.cmd_callback_handler(cb)
+    assert "Чат пуст" in cb.message.answers[0][0]
+    assert cb.message.documents == []
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_export_missing_file(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = tmp_path / "no_chats"
+    chats.mkdir()
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:export")
+    await st.cmd_callback_handler(cb)
+    assert "Чат пуст или файл не найден" in cb.message.answers[0][0]
+    assert cb.message.documents == []
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_export_write_error(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [{"role": "user", "content": "привет"}])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+
+    def broken_export(path):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("handlers.chat.export_chat_to_md", broken_export)
+    cb = FakeCb(4242, data="cmd:export")
+    await st.cmd_callback_handler(cb)
+    assert "Не удалось экспортировать" in cb.message.answers[0][0]
+    assert cb.message.documents == []
+    assert not (chats / "exports").exists()
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_export_send_error(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [{"role": "user", "content": "привет"}])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    monkeypatch.setattr("handlers.chat.CHATS_DIR", str(chats))
+
+    async def broken_send(self, document, caption=None, parse_mode=None,
+                          reply_markup=None):
+        raise RuntimeError("telegram down")
+
+    monkeypatch.setattr(FakeMessage, "answer_document", broken_send)
+    cb = FakeCb(4242, data="cmd:export")
+    await st.cmd_callback_handler(cb)
+    assert "Не удалось отправить файл экспорта" in cb.message.answers[0][0]
 
 
 @pytest.mark.asyncio

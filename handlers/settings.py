@@ -270,8 +270,35 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
             await callback.message.answer(text, parse_mode=None)
 
     elif command == "export":
-        await callback.message.answer("📤 Экспортирую чат в Markdown...")
-        # Здесь можно вызвать export_chat_to_md()
+        from config import CHATS_DIR
+        from handlers.chat import export_chat_to_md, user_sessions
+
+        fname = user_sessions.get(callback.from_user.id)
+        if not fname:
+            return await callback.message.answer(
+                "⚠️ Нет активного чата для экспорта.",
+            )
+
+        chat_path = os.path.join(CHATS_DIR, fname)
+        try:
+            md_path = export_chat_to_md(chat_path)
+        except Exception:
+            logger.error("Не удалось экспортировать чат %s", chat_path, exc_info=True)
+            return await callback.message.answer(
+                "❌ Не удалось экспортировать чат. Подробности в логе.",
+            )
+
+        if not md_path or not os.path.exists(md_path):
+            return await callback.message.answer("📁 Чат пуст или файл не найден.")
+
+        try:
+            await callback.message.answer_document(
+                document=types.FSInputFile(md_path),
+                caption=f"✅ Чат экспортирован в Markdown: {os.path.basename(md_path)}",
+            )
+        except Exception:
+            logger.error("Не удалось отправить экспорт %s", md_path, exc_info=True)
+            await callback.message.answer("❌ Не удалось отправить файл экспорта.")
 
     elif command in ["insights", "research"]:
         target = "research" if command == "research" else "insights"
