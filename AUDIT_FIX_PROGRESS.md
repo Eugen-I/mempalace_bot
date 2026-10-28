@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (18/45 шагов `DONE`)
+**Статус работы:** в работе (19/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-27 01:18 CET
+- **Дата последнего обновления:** 2026-10-28 16:55 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** code-коммит S2.3 — `ddf9c82`, docs-коммит — `9d3b68c`
-- **Текущий шаг:** `S2.3` — завершён
+- **HEAD:** S2.4 — код `a217934`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S2.4` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S2.4` — обработка ошибок `load_chat`/`save_chat`
-- **Бюджет текущего шага:** 20k
-- **Израсходовано (оценка):** ~15k (код, 4 теста, QA)
-- **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса. В дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
+- **Следующее действие:** `S2.5` — graceful degradation: health и состояния
+- **Бюджет текущего шага:** 25k
+- **Израсходовано (оценка):** ~12k (код, тесты, QA)
+- **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations`.
-- **Последний QA:** 3636 passed / 0 failed (без untracked Garmin), coverage 89%; `handlers/palace/navigation.py` 100%; lint — 7 baseline, mypy — 1 baseline, bandit — 76 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
+- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations` (в полном прогоне может падать, отдельно проходит).
+- **Последний QA:** 3645 passed / 0 failed (без untracked Garmin), coverage 87%; `handlers/chat.py` 99%, `handlers/messages.py` 96% (targeted); lint — 7 baseline, mypy — 1 baseline, bandit — 75 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -105,7 +105,7 @@
 | S2.1 | Пустая button-сессия активна | P1 | 20k | DONE | `da1fd12` | 2026-10-27 00:20 | ~14k |
 | S2.2 | `append_always_on` в историю | P1 | 25k | DONE | `a32c95a` | 2026-10-27 00:52 | ~22k |
 | S2.3 | Убрать хардкод Gemini-модели | P1 | 20k | DONE | `ddf9c82` | 2026-10-27 01:15 | ~15k |
-| S2.4 | Ошибки `load_chat`/`save_chat` | P1 | 25k | TODO | — | — | — |
+| S2.4 | Ошибки `load_chat`/`save_chat` | P1 | 25k | DONE | `a217934` | 2026-10-28 16:55 | ~12k |
 | S2.5 | Graceful degradation | P1 | 35k | TODO | — | — | — |
 | S2.6 | Настройки: история | P1 | 35k | TODO | — | — | — |
 | S2.7 | Настройки: экспорт | P1 | 35k | TODO | — | — | — |
@@ -141,10 +141,10 @@
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
-| 2 — P1 | 9 | 3 | 0 | 6 |
+| 2 — P1 | 9 | 4 | 0 | 5 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **18** | **0** | **27** |
+| **Итого** | **45** | **19** | **0** | **26** |
 
 > Обновлять после каждого шага.
 
@@ -1048,6 +1048,47 @@
   - Новых INC нет.
 - Следующее действие: `S2.4` — `load_chat`/`save_chat`: битый JSON, резервная копия, видимая ошибка сохранения.
 
+### S2.4 — Ошибки `load_chat`/`save_chat`
+
+- Дата/время: 2026-10-28 16:35–16:55 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `a217934`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 25k / ~12k
+- Файлы: `handlers/chat.py`, `handlers/messages.py`, `tests/test_chat_handler.py`, `tests/test_messages_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. `load_chat` при `JSONDecodeError`/`UnicodeDecodeError`/неверном корне создаёт резервную копию `<file>.corrupt.<timestamp>`, пишет ERROR в лог и возвращает пустую структуру. Оригинал не удаляется и не перезаписывается; при `OSError` чтения также возвращается пустая структура с логом.
+  2. `save_chat` стал атомарным с абсолютным каталогом для временного файла, возвращает `bool`, логирует ошибку с traceback и удаляет временный файл при сбое. При ошибке `os.replace` оригинал остаётся нетронутым.
+  3. Миграция list→dict проверяет результат `save_chat`; при неудаче данные всё равно возвращаются вызывающему, а ошибка логируется.
+  4. В `handlers/messages.py` проверка создания чата (ручное имя и авто-создание) стала достижимой: `False` или исключение → пользователь видит «Ошибка создания чата», сессия не активируется.
+  5. При сбое сохранения истории ответа пользователь получает предупреждение, данные остаются в памяти; сохранение режима кодинга также проверяется по результату.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_chat_handler.py tests/test_messages_handler.py -q --no-cov --tb=short` → **171 passed, 1 warning in 6.05s**.
+  - `python3 -m pytest tests/test_chat_handler.py tests/test_messages_handler.py -q --cov=handlers.chat --cov=handlers.messages --cov-report=term-missing` → **171 passed**; `handlers/chat.py` — **99%**, `handlers/messages.py` — **96%**.
+  - `python3 -m pytest -q --tb=short --strict-markers --ignore-glob='tests/test_garmin_*.py'` → **3645 passed, 0 failed, 6 warnings in 18.53s**, coverage **87%**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний** (6 в `scripts/verify_garmin_login.py`, 1 в `services/deps_guard.py`), новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **1 baseline-ошибка** `handlers/chat.py:34` (`TtlDict` generic), новых 0 (проверено 110 файлов).
+  - `python3 -m bandit -r handlers/ services/` → **75 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, в изменённых файлах новых нет.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 75 Low + 2 Medium (оба Medium в пользовательском Garmin), новых в наших файлах 0
+  - coverage: 87% без untracked Garmin; targeted `chat.py` 99%, `messages.py` 96%
+- AC:
+  - [x] Отсутствующий файл → пустая структура без исключения.
+  - [x] Битый JSON → лог, резервная копия, оригинал сохранён.
+  - [x] Ошибка записи → `save_chat` возвращает `False`, временный файл удалён, оригинал не изменён.
+  - [x] Успешное сохранение → `True` и корректный JSON на диске.
+  - [x] Сбой виден вызывающему; в основном чате пользователь получает предупреждение, данные не теряются молча.
+- Коммит: `a217934` (`fix(step-2.4): handle chat storage failures`)
+- Проблемы/решения:
+  - В `save_chat` намеренно оставлен широкий `except Exception`: контракт функции — вернуть `bool`, I/O-ошибки не должны ронять обработчик; traceback пишется в лог.
+  - Проверки `if not saved` после `try/except` защищают от будущих реализаций и от тестовых monkeypatch, где `save_chat` может бросить исключение.
+- Найдено попутно:
+  - INC-8: summary-пути в `handlers/chat.py` (`generate_fresh_summary`, `cmd_context`, callback обновления саммари) и CLI игнорируют bool от `save_chat`; сбой логируется внутри функции, но пользователь не уведомляется. Предлагаемый шаг — S2.6/S3.1.
+- Следующее действие: `S2.5` — graceful degradation: `should_use_memory` учитывает health, состояние `EMERGENCY`, различать «нет данных» и «сервис недоступен».
+
 ---
 
 ## 7. Журнал сессий
@@ -1072,6 +1113,7 @@
 | 16 | 2026-10-27 00:10–00:20 | DeepSeek V4.1 Flash Free | S2.1 | DONE | ~14k | Empty button session active; 6 tests; da1fd12; full suite green (3672) |
 | 17 | 2026-10-27 00:30–00:52 | DeepSeek V4.1 Flash Free | S2.2 | DONE | ~22k | Persist successful always-on replies, retry dedupe; 5 tests; a32c95a; 3632 passed without untracked Garmin |
 | 18 | 2026-10-27 01:00–01:15 | DeepSeek V4.1 Flash Free | S2.3 | DONE | ~15k | Configured AI model in palace navigation; 4 tests; ddf9c82; 3636 passed without untracked Garmin |
+| 19 | 2026-10-28 16:35–16:55 | DeepSeek V4.1 Flash Free | S2.4 | DONE | ~12k | Corrupt-JSON backup, atomic save with bool result, visible chat-create/history errors; 171 targeted, 3645 full; a217934 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1126,6 +1168,7 @@
 | INC-5 | 2026-10-25 | `handlers/messages.py` (ветка `search_web`) | При исключении `search_web` исходный ответ с `SEARCH: ...` остаётся в `answer` и может быть сохранён/закэширован как обычный ответ; `test_ai_search_pattern_error` закрепляет это поведение. | Отдельный шаг обработки ошибок web search | TODO |
 | INC-6 | 2026-10-25 | `services/palace_mcp.py` (`start`/`stop`) | Нет lifecycle-lock: конкурентные `start()`/`stop()` могут гонять создание и завершение процесса; два одновременных `start()` теоретически оставят один процесс без ссылки. | Отдельный шаг сериализации lifecycle | TODO |
 | INC-7 | 2026-10-27 | `handlers/messages.py` (always-on ветка) | При успешном ответе сохраняется только assistant-сообщение; реплика пользователя не пишется в chat file, поэтому следующая история не содержит вопроса. | S3.1 (единый chat store) или отдельный шаг | TODO |
+| INC-8 | 2026-10-28 | `handlers/chat.py` (`generate_fresh_summary`, `cmd_context`, callback саммари), `cli/*` | Результат `save_chat` игнорируется в путях сохранения саммари и CLI: сбой логируется внутри функции, но вызывающий/пользователь не уведомляется. | S2.6/S3.1 — обработать bool или бросить исключение на уровне сценария | TODO |
 
 ---
 
