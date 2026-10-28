@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (22/45 шагов `DONE`)
+**Статус работы:** в работе (23/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-28 17:07 CET
+- **Дата последнего обновления:** 2026-10-28 17:11 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S2.7 — код `a407277`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S2.7` — завершён
+- **HEAD:** S2.8 — код `07cb528`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S2.8` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S2.8` — реализовать «Инсайты» в настройках
+- **Следующее действие:** `S2.9` — реализовать «Исследования» в настройках через общий helper
 - **Бюджет текущего шага:** 35k
-- **Израсходовано (оценка):** ~16k (код, тесты, QA)
+- **Израсходовано (оценка):** ~18k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations` (в полном прогоне может падать, отдельно проходит).
-- **Последний QA:** 3669 passed / 0 failed (без untracked Garmin); targeted `handlers/settings.py` — 98%; lint — 7 baseline, mypy — 1 baseline, bandit — 75 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
+- **Последний QA:** 3677 passed / 0 failed (без untracked Garmin); targeted `handlers/settings.py` — 98%; lint — 7 baseline, mypy — 1 baseline, bandit — 75 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -109,7 +109,7 @@
 | S2.5 | Graceful degradation | P1 | 35k | DONE | `56886de` | 2026-10-28 16:58 | ~18k |
 | S2.6 | Настройки: история | P1 | 35k | DONE | `0edb963` | 2026-10-28 17:02 | ~20k |
 | S2.7 | Настройки: экспорт | P1 | 35k | DONE | `a407277` | 2026-10-28 17:07 | ~16k |
-| S2.8 | Настройки: инсайты | P1 | 35k | TODO | — | — | — |
+| S2.8 | Настройки: инсайты | P1 | 35k | DONE | `07cb528` | 2026-10-28 17:11 | ~18k |
 | S2.9 | Настройки: исследования | P1 | 30k | TODO | — | — | — |
 | S3.1 | Единый chat store | P2 | 40k | TODO | — | — | — |
 | S3.2 | Единая синхронизация дворца | P2 | 25k | TODO | — | — | — |
@@ -141,10 +141,10 @@
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
-| 2 — P1 | 9 | 7 | 0 | 2 |
+| 2 — P1 | 9 | 8 | 0 | 1 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **22** | **0** | **23** |
+| **Итого** | **45** | **23** | **0** | **22** |
 
 > Обновлять после каждого шага.
 
@@ -1216,6 +1216,47 @@
   - Нет новых INC; INC-8/INC-9 остаются открытыми.
 - Следующее действие: `S2.8` — реализовать «Инсайты» в настройках: последние N файлов из `INSIGHTS_DIR` с датой/размером, лимит, пустая папка, ошибки доступа.
 
+### S2.8 — Реализовать «Инсайты» в настройках
+
+- Дата/время: 2026-10-28 17:07–17:11 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `07cb528`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 35k / ~18k
+- Файлы: `handlers/settings.py`, `tests/test_settings_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Ветка `insights` показывает последние `DIRECTORY_FILES_LIMIT = 10` файлов из `INSIGHTS_DIR`: имя, дата `ДД.ММ.ГГГГ ЧЧ:ММ`, размер (`Б`/`КБ`/`МБ`).
+  2. Добавлен переиспользуемый helper `format_directory_listing(directory, title, limit)` — в S2.9 он же будет использован для `research` без копирования кода.
+  3. Содержимое файлов не читается: только `os.scandir` + `stat`; каталоги, скрытые файлы и симлинки (`follow_symlinks=False`) пропускаются, поэтому наружу не попадают пути за пределами каталога.
+  4. Имена экранируются через `html.escape`, вывод идёт с `parse_mode="HTML"`; показывается только имя, без полного пути.
+  5. Обработаны отсутствующая/пустая папка («Папка пуста»), `OSError` доступа («Не удалось прочитать папку» с логом) и сбой `stat` отдельной записи (запись пропускается, остальные показываются).
+  6. Ветка `research` намеренно оставлена заглушкой до S2.9.
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_settings_handler.py --tb=short -p no:cacheprovider --no-cov` → **66 passed, 1 warning in 2.77s**.
+  - `python3 -m pytest -q --tb=short --strict-markers --ignore-glob='tests/test_garmin_*.py' -p no:cacheprovider --no-cov` → **3677 passed, 0 failed, 6 warnings in 13.77s**.
+  - `python3 -m pytest tests/test_settings_handler.py --cov=handlers.settings --cov-report=term-missing` → `handlers/settings.py` **98%** (непокрыты HTML-fallback истории `316-318` и pre-existing ветки `cb_set_ai` `480-481`, `487->493`).
+  - `python3 -m flake8 .` → **7 baseline-замечаний** (6 в `scripts/verify_garmin_login.py`, 1 в `services/deps_guard.py`), новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **1 baseline-ошибка** `handlers/chat.py:34` (`TtlDict` generic), новых 0 (проверено 110 файлов).
+  - `python3 -m bandit -q -r handlers/ services/` → **75 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, в изменённых файлах новых нет.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 75 Low + 2 Medium (оба Medium в пользовательском Garmin), новых в наших файлах 0
+  - coverage: `handlers/settings.py` 98% (targeted)
+- AC:
+  - [x] Ветка `insights` показывает реальные файлы из `INSIGHTS_DIR`.
+  - [x] Показаны имя, дата и размер; содержимое не читается.
+  - [x] Лимит N=10, пустая/отсутствующая папка и ошибки доступа обработаны.
+  - [x] Имена экранированы, пути за пределами каталога не показываются.
+- Коммит: `07cb528` (`feat(step-2.8): implement insights listing`)
+- Проблемы/решения:
+  - `os.scandir` выбран вместо `os.listdir`: даёт `stat` без лишних системных вызовов и `follow_symlinks=False` для безопасного пропуска симлинков.
+  - Ошибка `stat` одной записи не роняет весь список — запись пропускается, остальные остаются.
+- Найдено попутно:
+  - Нет новых INC; INC-8/INC-9 остаются открытыми.
+- Следующее действие: `S2.9` — подключить `research` к тому же `format_directory_listing` с `RESEARCH_DIR`; тест на то, что каталоги не перепутаны.
+
 ---
 
 ## 7. Журнал сессий
@@ -1244,6 +1285,7 @@
 | 20 | 2026-10-28 16:55–16:58 | DeepSeek V4.1 Flash Free | S2.5 | DONE | ~18k | Health-aware memory, reachable EMERGENCY, no-data vs backend-down status; 208 targeted, 3656 full; 56886de |
 | 21 | 2026-10-28 16:58–17:02 | DeepSeek V4.1 Flash Free | S2.6 | DONE | ~20k | Real last-20 chat history in settings, HTML-escaped and user-scoped; 9 new tests; 3664 full; 0edb963 |
 | 22 | 2026-10-28 17:03–17:07 | DeepSeek V4.1 Flash Free | S2.7 | DONE | ~16k | Settings export via existing exporter + FSInputFile, empty/no-session/write/send errors; 6 new tests; 3669 full; a407277 |
+| 23 | 2026-10-28 17:07–17:11 | DeepSeek V4.1 Flash Free | S2.8 | DONE | ~18k | Reusable directory listing helper, last 10 insights with date/size, HTML-escaped, symlink/access guards; 9 new tests; 3677 full; 07cb528 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
