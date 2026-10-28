@@ -3,6 +3,7 @@
 ИСПРАВЛЕНО: Убран импорт set_current_ai, используется прямая запись в конфиг.
 """
 
+import html
 import json
 import logging
 import os
@@ -19,6 +20,40 @@ from services.error_formatter import format_user_error
 
 router = Router()
 logger = logging.getLogger("SettingsHandler")
+
+HISTORY_MESSAGES_LIMIT = 20
+HISTORY_PREVIEW_CHARS = 150
+
+_ROLE_LABELS = {
+    "user": "👤 Вы",
+    "assistant": "🤖 Бот",
+    "system": "⚙️ Система",
+}
+
+
+def format_chat_history(
+    messages: list, limit: int | None = None,
+) -> str:
+    """Форматирует последние сообщения чата для Telegram (HTML-safe)."""
+    limit = limit or HISTORY_MESSAGES_LIMIT
+    recent = messages[-limit:]
+
+    entries = []
+    for msg in recent:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role", "unknown")
+        content = str(msg.get("content", ""))
+        label = _ROLE_LABELS.get(role, f"❔ {html.escape(str(role))}")
+        preview = content[:HISTORY_PREVIEW_CHARS].replace("\n", " ")
+        if len(content) > HISTORY_PREVIEW_CHARS:
+            preview += "…"
+        entries.append(f"{label}: {html.escape(preview)}")
+
+    lines = [f"📜 <b>Последние {len(entries)} сообщений:</b>", ""]
+    lines.extend(entries)
+
+    return "\n\n".join(lines)
 
 
 def build_settings_kb(user_id: int):
@@ -167,7 +202,6 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
         )
         # Здесь можно вызвать логику анализа, как в handle_photo
         import asyncio
-        import os
 
         from config import PHOTOS_DIR
         from services.ai_engine import _sync_ai_call, get_current_ai
@@ -214,8 +248,26 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
             await status_msg.edit_text("❌ Ошибка кодирования фото.")
 
     elif command == "history":
-        await callback.message.answer("📜 Загружаю историю текущего чата...")
-        # Здесь можно вызвать логику показа истории из chat.py
+        from config import CHATS_DIR
+        from handlers.chat import load_chat, user_sessions
+
+        fname = user_sessions.get(callback.from_user.id)
+        if not fname:
+            return await callback.message.answer(
+                "⚠️ Нет активного чата. Создайте новый командой /new.",
+            )
+
+        data = load_chat(os.path.join(CHATS_DIR, fname))
+        messages = data.get("messages", [])
+        if not isinstance(messages, list) or not messages:
+            return await callback.message.answer("📁 Чат пуст или ещё не начат.")
+
+        text = format_chat_history(messages)
+        try:
+            await callback.message.answer(text, parse_mode="HTML")
+        except Exception:
+            logger.warning("HTML-разметка истории не принята Telegram", exc_info=True)
+            await callback.message.answer(text, parse_mode=None)
 
     elif command == "export":
         await callback.message.answer("📤 Экспортирую чат в Markdown...")
@@ -228,7 +280,6 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
 
     elif command == "sync":
         await callback.message.answer("🔄 Синхронизирую с MemPalace...")
-        import os
 
         from config import CHATS_DIR
         from handlers.chat import user_sessions

@@ -332,11 +332,161 @@ def test_build_settings_kb_ai_file_missing(monkeypatch, tmp_path):
     assert curr == "gemini-flash-latest"
 
 
-async def test_cmd_callback_history(monkeypatch, tmp_path):
+def _chats_dir(tmp_path, messages, fname="chat_4242.json"):
+    chats = tmp_path / "chats"
+    chats.mkdir(exist_ok=True)
+    (chats / fname).write_text(
+        json.dumps({"summary": "", "messages": messages}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return chats
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_shows_real_messages(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [
+        {"role": "user", "content": "привет"},
+        {"role": "assistant", "content": "здравствуйте"},
+    ])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
     cb = FakeCb(4242, data="cmd:history")
     await st.cmd_callback_handler(cb)
-    assert "историю" in cb.message.answers[0][0]
+    text, parse_mode, _ = cb.message.answers[0]
+    assert "👤 Вы: привет" in text
+    assert "🤖 Бот: здравствуйте" in text
+    assert parse_mode == "HTML"
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_no_active_chat(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.delitem(user_sessions, 4242, raising=False)
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    assert "Нет активного чата" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_empty_chat(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    assert "Чат пуст" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_missing_file(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = tmp_path / "empty_chats"
+    chats.mkdir()
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    assert "Чат пуст" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_long_message_truncated(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [{"role": "user", "content": "а" * 200}])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert ("а" * st.HISTORY_PREVIEW_CHARS + "…") in text
+    assert ("а" * (st.HISTORY_PREVIEW_CHARS + 1)) not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_limit_20(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    messages = [
+        {"role": "user", "content": f"m{i:02d}"} for i in range(1, 26)
+    ]
+    chats = _chats_dir(tmp_path, messages)
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "Последние 20 сообщений" in text
+    assert "m05" not in text
+    assert "m06" in text
+    assert "m25" in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_escapes_html(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [
+        {"role": "user", "content": '<b>&"тег"</b>'},
+    ])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "&lt;b&gt;&amp;&quot;тег&quot;&lt;/b&gt;" in text
+    assert "<b>&" not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_does_not_leak_other_chats(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    monkeypatch.setitem(user_sessions, 9999, "chat_9999.json")
+    chats = _chats_dir(tmp_path, [{"role": "user", "content": "секрет А"}])
+    (chats / "chat_9999.json").write_text(
+        json.dumps({
+            "summary": "",
+            "messages": [{"role": "user", "content": "секрет Б"}],
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "секрет А" in text
+    assert "секрет Б" not in text
+
+
+def test_format_chat_history_custom_limit_and_unknown_role():
+    text = st.format_chat_history(
+        [
+            {"role": "system", "content": "служебное"},
+            {"role": "tool", "content": "результат"},
+            "не-словарь",
+        ],
+        limit=3,
+    )
+    assert "Последние 2 сообщений" in text
+    assert "⚙️ Система: служебное" in text
+    assert "❔ tool: результат" in text
+    assert "не-словарь" not in text
 
 
 @pytest.mark.asyncio
