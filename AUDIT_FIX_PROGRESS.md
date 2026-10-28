@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (19/45 шагов `DONE`)
+**Статус работы:** в работе (20/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-28 16:55 CET
+- **Дата последнего обновления:** 2026-10-28 16:58 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S2.4 — код `a217934`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S2.4` — завершён
+- **HEAD:** S2.5 — код `56886de`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S2.5` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S2.5` — graceful degradation: health и состояния
-- **Бюджет текущего шага:** 25k
-- **Израсходовано (оценка):** ~12k (код, тесты, QA)
+- **Следующее действие:** `S2.6` — реализовать «История» в настройках
+- **Бюджет текущего шага:** 35k
+- **Израсходовано (оценка):** ~18k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations` (в полном прогоне может падать, отдельно проходит).
-- **Последний QA:** 3645 passed / 0 failed (без untracked Garmin), coverage 87%; `handlers/chat.py` 99%, `handlers/messages.py` 96% (targeted); lint — 7 baseline, mypy — 1 baseline, bandit — 75 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
+- **Последний QA:** 3656 passed / 0 failed (без untracked Garmin), coverage 87%; `services/graceful_degradation.py` 94%, `services/palace_bridge.py` 99%, `handlers/messages.py` 96% (targeted); lint — 7 baseline, mypy — 1 baseline, bandit — 75 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -106,7 +106,7 @@
 | S2.2 | `append_always_on` в историю | P1 | 25k | DONE | `a32c95a` | 2026-10-27 00:52 | ~22k |
 | S2.3 | Убрать хардкод Gemini-модели | P1 | 20k | DONE | `ddf9c82` | 2026-10-27 01:15 | ~15k |
 | S2.4 | Ошибки `load_chat`/`save_chat` | P1 | 25k | DONE | `a217934` | 2026-10-28 16:55 | ~12k |
-| S2.5 | Graceful degradation | P1 | 35k | TODO | — | — | — |
+| S2.5 | Graceful degradation | P1 | 35k | DONE | `56886de` | 2026-10-28 16:58 | ~18k |
 | S2.6 | Настройки: история | P1 | 35k | TODO | — | — | — |
 | S2.7 | Настройки: экспорт | P1 | 35k | TODO | — | — | — |
 | S2.8 | Настройки: инсайты | P1 | 35k | TODO | — | — | — |
@@ -141,10 +141,10 @@
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
-| 2 — P1 | 9 | 4 | 0 | 5 |
+| 2 — P1 | 9 | 5 | 0 | 4 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **19** | **0** | **26** |
+| **Итого** | **45** | **20** | **0** | **25** |
 
 > Обновлять после каждого шага.
 
@@ -1089,6 +1089,49 @@
   - INC-8: summary-пути в `handlers/chat.py` (`generate_fresh_summary`, `cmd_context`, callback обновления саммари) и CLI игнорируют bool от `save_chat`; сбой логируется внутри функции, но пользователь не уведомляется. Предлагаемый шаг — S2.6/S3.1.
 - Следующее действие: `S2.5` — graceful degradation: `should_use_memory` учитывает health, состояние `EMERGENCY`, различать «нет данных» и «сервис недоступен».
 
+### S2.5 — Graceful degradation: health и состояния
+
+- Дата/время: 2026-10-28 16:55–16:58 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `56886de`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 35k / ~18k
+- Файлы: `services/graceful_degradation.py`, `services/palace_bridge.py`, `handlers/messages.py`, `tests/test_graceful_degradation.py`, `tests/test_palace_bridge.py`, `tests/test_messages_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. `should_use_memory` теперь возвращает `health.memory_store`, а не проверяет уровень: при `MEDIUM` с живым только palace память больше не используется.
+  2. `EMERGENCY` стал достижимым по явному критерию: все четыре компонента (`palace_mcp`, `palace_search`, `memory`, `whisper`) недоступны. Если данные недоступны, а whisper жив — остаётся `BASIC`.
+  3. Добавлены переходы восстановления `EMERGENCY → BASIC → MEDIUM → FULL` и тесты на каждый шаг.
+  4. `should_use_palace` оставлен уровневым (`FULL`/`MEDIUM`), чтобы после сбоя поиска можно было повторить запрос и восстановить health; иначе false-флаг навсегда отключил бы поиск.
+  5. В `palace_bridge` добавлен `search_with_kg_status(...) -> (text, available)`: API/CLI помечают реальный отказ `error=True`, а пустой результат остаётся `available=True` («нет данных»). `search_with_kg` сохранён как строковая обёртка для совместимости.
+  6. `handlers/messages.py` сообщает `report_failure("palace_search")` только при `available=False`; пустой, но успешный поиск даёт `report_success` и не деградирует уровень.
+- Тесты и команды:
+  - `python3 -m pytest tests/test_graceful_degradation.py tests/test_palace_bridge.py tests/test_messages_handler.py -q --no-cov --tb=short` → **208 passed, 1 warning in 4.52s**.
+  - Coverage targeted → **208 passed**; `services/graceful_degradation.py` — **94%**, `services/palace_bridge.py` — **99%**, `handlers/messages.py` — **96%**.
+  - `python3 -m pytest -q --tb=short --strict-markers --ignore-glob='tests/test_garmin_*.py'` → **3656 passed, 0 failed, 6 warnings in 19.14s**, coverage **87%**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний** (6 в `scripts/verify_garmin_login.py`, 1 в `services/deps_guard.py`), новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **1 baseline-ошибка** `handlers/chat.py:34` (`TtlDict` generic), новых 0 (проверено 110 файлов).
+  - `python3 -m bandit -r handlers/ services/` → **75 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, в изменённых файлах новых нет.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 75 Low + 2 Medium (оба Medium в пользовательском Garmin), новых в наших файлах 0
+  - coverage: 87% без untracked Garmin; targeted graceful 94%, palace_bridge 99%, messages 96%
+- AC:
+  - [x] `should_use_memory` соответствует `health.memory_store`.
+  - [x] `EMERGENCY` достижим по явному критерию и восстанавливается по шагам.
+  - [x] Пустой результат palace не считается отказом.
+  - [x] Отличаются «нет данных» (`available=True`, пустой текст) и «сервис недоступен» (`available=False`).
+  - [x] Переходы и восстановление покрыты тестами.
+- Коммит: `56886de` (`fix(step-2.5): correct graceful degradation states`)
+- Проблемы/решения:
+  - `should_use_palace` намеренно не привязан к `health.palace_search`: иначе после первого же сбоя поиск был бы отключён навсегда и не смог бы восстановиться. Попытки ограничены уровнями `FULL`/`MEDIUM`.
+  - `should_use_memory` привязан к health согласно плану; фонового health-check/cooldown нет, восстановление требует явного `report_success` (см. INC-9).
+  - В `tests/test_palace_bridge.py` попутно устранены 3 pre-existing flake8-замечания (F401/E306/E302), которые проявились при pre-commit-проверке изменённого файла; логика тестов не менялась.
+- Найдено попутно:
+  - INC-9: после `report_failure("memory")` `should_use_memory()` остаётся `False` до внешнего `report_success`; фонового health-check/cooldown нет. Сейчас в production `report_failure("memory")` не вызывается, поэтому риск отложенный. Предлагаемый шаг — health-check/cooldown или S3.1.
+- Следующее действие: `S2.6` — реализовать «История» в настройках: последние N сообщений текущего чата, роли, обрезка, HTML-экранирование, пустое состояние.
+
 ---
 
 ## 7. Журнал сессий
@@ -1114,6 +1157,7 @@
 | 17 | 2026-10-27 00:30–00:52 | DeepSeek V4.1 Flash Free | S2.2 | DONE | ~22k | Persist successful always-on replies, retry dedupe; 5 tests; a32c95a; 3632 passed without untracked Garmin |
 | 18 | 2026-10-27 01:00–01:15 | DeepSeek V4.1 Flash Free | S2.3 | DONE | ~15k | Configured AI model in palace navigation; 4 tests; ddf9c82; 3636 passed without untracked Garmin |
 | 19 | 2026-10-28 16:35–16:55 | DeepSeek V4.1 Flash Free | S2.4 | DONE | ~12k | Corrupt-JSON backup, atomic save with bool result, visible chat-create/history errors; 171 targeted, 3645 full; a217934 |
+| 20 | 2026-10-28 16:55–16:58 | DeepSeek V4.1 Flash Free | S2.5 | DONE | ~18k | Health-aware memory, reachable EMERGENCY, no-data vs backend-down status; 208 targeted, 3656 full; 56886de |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1169,6 +1213,7 @@
 | INC-6 | 2026-10-25 | `services/palace_mcp.py` (`start`/`stop`) | Нет lifecycle-lock: конкурентные `start()`/`stop()` могут гонять создание и завершение процесса; два одновременных `start()` теоретически оставят один процесс без ссылки. | Отдельный шаг сериализации lifecycle | TODO |
 | INC-7 | 2026-10-27 | `handlers/messages.py` (always-on ветка) | При успешном ответе сохраняется только assistant-сообщение; реплика пользователя не пишется в chat file, поэтому следующая история не содержит вопроса. | S3.1 (единый chat store) или отдельный шаг | TODO |
 | INC-8 | 2026-10-28 | `handlers/chat.py` (`generate_fresh_summary`, `cmd_context`, callback саммари), `cli/*` | Результат `save_chat` игнорируется в путях сохранения саммари и CLI: сбой логируется внутри функции, но вызывающий/пользователь не уведомляется. | S2.6/S3.1 — обработать bool или бросить исключение на уровне сценария | TODO |
+| INC-9 | 2026-10-28 | `services/graceful_degradation.py`, `handlers/messages.py` | Нет фонового health-check/cooldown: после `report_failure("memory")` `should_use_memory()` остаётся `False` до внешнего `report_success`. Сейчас `report_failure("memory")` в production не вызывается. | Health-check/cooldown или S3.1 | TODO |
 
 ---
 
