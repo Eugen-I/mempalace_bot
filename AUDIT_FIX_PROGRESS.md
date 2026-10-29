@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (25/45 шагов `DONE`)
+**Статус работы:** в работе (26/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-29 12:50 CET
+- **Дата последнего обновления:** 2026-10-29 13:34 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S3.1 — код `bb31e83`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S3.1` — завершён
+- **HEAD:** S3.2 — код `ae7364f`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S3.2` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S3.2` — единое действие синхронизации дворца (`sync_active_chat`/`sync_chat_file`)
-- **Бюджет текущего шага:** 40k
-- **Израсходовано (оценка):** ~22k (код, тесты, QA)
+- **Следующее действие:** `S3.3` — единый рендер списка чатов и автоактивация
+- **Бюджет текущего шага:** 25k
+- **Израсходовано (оценка):** ~14k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations` — в этом полном прогоне не воспроизвёлся.
-- **Последний QA:** 3697 passed / 0 failed (без untracked Garmin); targeted `services/chat_store.py` — 100%, `handlers/chat.py` — 99%, `services/agent_context.py` — 85%; lint — 7 baseline, mypy — 0 (baseline `TtlDict` закрыт), bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
+- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations` — первый полный прогон упал на нём, изолированно и на повторном полном прогоне прошёл.
+- **Последний QA:** 3705 passed / 0 failed (без untracked Garmin, повторный прогон); targeted `services/chat_sync.py` — 100%; lint — 7 baseline, mypy — 0, bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -112,7 +112,7 @@
 | S2.8 | Настройки: инсайты | P1 | 35k | DONE | `07cb528` | 2026-10-28 17:11 | ~18k |
 | S2.9 | Настройки: исследования | P1 | 30k | DONE | `3644e3c` | 2026-10-29 12:12 | ~14k |
 | S3.1 | Единый chat store | P2 | 40k | DONE | `bb31e83` | 2026-10-29 12:49 | ~22k |
-| S3.2 | Единая синхронизация дворца | P2 | 25k | TODO | — | — | — |
+| S3.2 | Единая синхронизация дворца | P2 | 25k | DONE | `ae7364f` | 2026-10-29 13:32 | ~14k |
 | S3.3 | Единый список чатов | P2 | 30k | TODO | — | — | — |
 | S3.4 | Единый summary | P2 | 45k | TODO | — | — | — |
 | S3.5 | Единый wing registry | P2 | 20k | TODO | — | — | — |
@@ -142,9 +142,9 @@
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
-| 3 — P2 дублирование | 11 | 1 | 0 | 10 |
+| 3 — P2 дублирование | 11 | 2 | 0 | 9 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **25** | **0** | **20** |
+| **Итого** | **45** | **26** | **0** | **19** |
 
 > Обновлять после каждого шага.
 
@@ -1335,6 +1335,46 @@
   - INC-10: дублирующий chat JSON-I/O в CLI (не входил в якоря S3.1). INC-7/INC-8/INC-9 остаются открытыми; S3.1 не менял сценарии сохранения пользовательской реплики, summary и health-check.
 - Следующее действие: `S3.2` — вынести `sync_active_chat`/`sync_chat_file` и использовать в `handlers/chat.py`, `main.py`, `handlers/settings.py`.
 
+### S3.2 — Единая синхронизация дворца
+
+- Дата/время: 2026-10-29 12:51–13:34 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `ae7364f`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 25k / ~14k
+- Файлы: `services/chat_sync.py` (новый), `handlers/chat.py`, `main.py`, `handlers/settings.py`, `tests/test_chat_sync.py` (новый), `tests/test_chat_handler.py`, `tests/test_main.py`, `tests/test_settings_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Создан `services/chat_sync.py`: `sync_chat_file` централизует экспорт `export_chat_verbatim` и вызов `sync_to_palace`; `sync_active_chat` принимает session-map, разрешает активный чат и возвращает типизированный `ChatSyncResult` (`NO_ACTIVE_CHAT` / `EMPTY_CHAT` / `RESULT`).
+  2. Все три ручных входа переведены на общий helper: `/sync` в `handlers/chat.py`, кнопка «Синхронизация» в `main.py` и callback `cmd:sync` в `handlers/settings.py`; прямых копий экспорта/синка больше нет.
+  3. Сохранены тексты и UI-поведение: команда и кнопка показывают статус «🔄 Синхронизирую с MemPalace (verbatim)...» и редактируют его результатом; настройки сначала отправляют «🔄 Синхронизирую с MemPalace...», затем отдельным сообщением результат/ошибку.
+  4. Ошибки экспорта и неожиданные ошибки sync превращаются в `❌ Ошибка синхронизации: ...`; пустой чат и отсутствие активного чата возвращают прежние сообщения.
+  5. Добавлены 8 тестов: сервисные сценарии (пустой экспорт, успех, ошибка экспорта, ошибка sync, нет сессии, пустой чат, результат) и отображение ошибки в `/sync`.
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_chat_sync.py tests/test_chat_handler.py tests/test_main.py tests/test_settings_handler.py --tb=short -p no:cacheprovider --no-cov` → **165 passed, 6 warnings in 4.06s**.
+  - `python3 -m pytest -q tests/test_chat_sync.py tests/test_chat_handler.py tests/test_main.py tests/test_settings_handler.py --cov=services.chat_sync --cov-report=term-missing -p no:cacheprovider` → **165 passed in 5.39s**; `services/chat_sync.py` **100%**.
+  - Первый полный прогон → **3704 passed, 1 failed** — известный флак `test_confirm_write_delete_requires_two_confirmations`; изолированно → **1 passed in 2.73s**; повторный полный прогон → **3705 passed, 6 warnings in 13.60s**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0 (6 в `scripts/verify_garmin_login.py`, 1 в `services/deps_guard.py`).
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 112 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **74 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, новых в наших файлах 0.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: 0 ошибок
+  - bandit: 74 Low + 2 Medium, новых в наших файлах 0
+  - coverage: `services/chat_sync.py` 100% (targeted)
+- AC:
+  - [x] Нет трёх копий сценария синхронизации: все три входа используют `sync_active_chat`.
+  - [x] Тексты и обработка ошибок сохранены; пустой чат и отсутствие активного чата не изменились.
+  - [x] Тесты покрывают все три входа, отсутствие сессии, пустой чат и ошибку sync.
+- Коммит: `ae7364f` (`refactor(step-3.2): unify palace sync action`)
+- Проблемы/решения:
+  - `sync_active_chat` принимает session-map явно, чтобы сервис не импортировал `handlers.chat` и не создавал циклический импорт; все три handler'а передают свой `user_sessions`.
+  - `sync_chat_file` ловит ошибки экспорта/синка и возвращает пользовательский текст; штатная обработка ошибок `sync_to_palace` сохранена.
+  - `services/auto_sync.py` сохраняет отдельный автоматический сценарий (тихий лог без UI) — зафиксировано в INC-11.
+- Найдено попутно:
+  - INC-11: `services/auto_sync.py` дублирует export+sync, но имеет другую политику (автосинхронизация без ответа пользователю); S3.2 не менял. INC-7/8/9/10 остаются открытыми.
+- Следующее действие: `S3.3` — вынести рендер списка чатов и выбор активного чата, использовать в `handlers/chat.py` и `handlers/messages.py`.
+
 ---
 
 ## 7. Журнал сессий
@@ -1366,6 +1406,7 @@
 | 23 | 2026-10-28 17:07–17:11 | DeepSeek V4.1 Flash Free | S2.8 | DONE | ~18k | Reusable directory listing helper, last 10 insights with date/size, HTML-escaped, symlink/access guards; 9 new tests; 3677 full; 07cb528 |
 | 24 | 2026-10-29 12:09–12:12 | DeepSeek V4.1 Flash Free | S2.9 | DONE | ~14k | Research branch reuses S2.8 helper with RESEARCH_DIR, directory-isolation test; 6 new tests; 3682 full (after known flake retry); 3644e3c |
 | 25 | 2026-10-29 12:13–12:49 | DeepSeek V4.1 Flash Free | S3.1 | DONE | ~22k | Shared chat store with locked atomic append, corrupt backup/list migration; generic TtlDict; 15 new tests; 3697 full; bb31e83 |
+| 26 | 2026-10-29 12:51–13:34 | DeepSeek V4.1 Flash Free | S3.2 | DONE | ~14k | Shared manual sync scenario for /sync, main button and settings; typed result, error mapping; 8 new tests; 3705 full; ae7364f |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1423,6 +1464,7 @@
 | INC-8 | 2026-10-28 | `handlers/chat.py` (`generate_fresh_summary`, `cmd_context`, callback саммари), `cli/*` | Результат `save_chat` игнорируется в путях сохранения саммари и CLI: сбой логируется внутри функции, но вызывающий/пользователь не уведомляется. | S3.1 — обработать bool или бросить исключение на уровне сценария (S2.6 закрыл только «Историю») | TODO |
 | INC-9 | 2026-10-28 | `services/graceful_degradation.py`, `handlers/messages.py` | Нет фонового health-check/cooldown: после `report_failure("memory")` `should_use_memory()` остаётся `False` до внешнего `report_success`. Сейчас `report_failure("memory")` в production не вызывается. | Health-check/cooldown или S3.1 | TODO |
 | INC-10 | 2026-10-29 | `cli/menu.py`, `cli/utils.py` | Собственные `load_chat`/`save_chat` с прямым JSON-I/O и атомарной записью дублируют `services/chat_store.py`; S3.1 перевёл только потребителей из якорей плана. | Отдельный шаг унификации CLI-хранилища | TODO |
+| INC-11 | 2026-10-29 | `services/auto_sync.py` | Автосинхронизация сама вызывает `export_chat_verbatim` + `sync_to_palace`, дублируя `services/chat_sync.sync_chat_file`; политика другая (тихий лог без UI), S3.2 не менял. | Перевести `auto_sync_chat` на общий `sync_chat_file` | TODO |
 
 ---
 
