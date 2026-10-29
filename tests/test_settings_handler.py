@@ -865,8 +865,8 @@ async def test_cmd_callback_sync_empty_chat(monkeypatch, tmp_path):
     monkeypatch.setitem(user_sessions, 4242, "chat_4242.md")
     chats = tmp_path / "chats"
     chats.mkdir()
-    monkeypatch.setattr("config.CHATS_DIR", str(chats))
-    monkeypatch.setattr("services.palace_bridge.export_chat_verbatim", lambda p, f: None)
+    monkeypatch.setattr("services.chat_sync.CHATS_DIR", str(chats))
+    monkeypatch.setattr("services.chat_sync.export_chat_verbatim", lambda p, f: None)
     cb = FakeCb(4242, data="cmd:sync")
     await st.cmd_callback_handler(cb)
     assert "Чат пуст или не найден" in cb.message.answers[1][0]
@@ -881,13 +881,13 @@ async def test_cmd_callback_sync_success(monkeypatch, tmp_path):
     chats = tmp_path / "chats"
     chats.mkdir()
     (chats / "chat_4242.md").write_text("данные", encoding="utf-8")
-    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    monkeypatch.setattr("services.chat_sync.CHATS_DIR", str(chats))
     monkeypatch.setattr(
-        "services.palace_bridge.export_chat_verbatim",
+        "services.chat_sync.export_chat_verbatim",
         lambda p, f: {"text": "экспорт"},
     )
     monkeypatch.setattr(
-        "services.palace_bridge.sync_to_palace",
+        "services.chat_sync.sync_to_palace",
         _async_result("✅ Синхронизировано"),
     )
     cb = FakeCb(4242, data="cmd:sync")

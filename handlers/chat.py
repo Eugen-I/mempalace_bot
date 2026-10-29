@@ -15,10 +15,7 @@ from config import CHATS_DIR, allowed_callback, allowed_only
 from services.ai_cache import cache_ai_response
 from services.ai_engine import get_ai_response_async, get_current_ai
 from services.chat_store import load_chat, save_chat
-from services.palace_bridge import (
-    export_chat_verbatim,
-    sync_to_palace,
-)
+from services.chat_sync import ChatSyncStatus, sync_active_chat
 from services.prompts import get_summary_prompt
 from services.text_formatter import safe_html_format, split_message
 from services.ttl_dict import TtlDict
@@ -460,18 +457,12 @@ async def cb_refresh_summary(callback: types.CallbackQuery):
 @allowed_only
 async def cmd_sync_palace(message: types.Message):
     """Ручная синхронизация текущего чата с MemPalace."""
-    fname = user_sessions.get(message.from_user.id)
-    if not fname:
-        return await message.answer("⚠️ Нет активного чата для синхронизации.")
-
-    fpath = os.path.join(CHATS_DIR, fname)
-    exported = export_chat_verbatim(fpath, fname)
-    if not exported:
-        return await message.answer("ℹ️ Чат пуст или не найден.")
+    result = await sync_active_chat(message.from_user.id, user_sessions)
+    if result.status is not ChatSyncStatus.RESULT:
+        return await message.answer(result.message)
 
     status = await message.answer("🔄 Синхронизирую с MemPalace (verbatim)...")
-    result = await sync_to_palace(exported)
-    await status.edit_text(result)
+    await status.edit_text(result.message)
 
 
 async def get_ai_context(user_id: int) -> tuple:

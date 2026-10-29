@@ -367,21 +367,11 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
     elif command == "sync":
         await callback.message.answer("🔄 Синхронизирую с MemPalace...")
 
-        from config import CHATS_DIR
         from handlers.chat import user_sessions
-        from services.palace_bridge import export_chat_verbatim, sync_to_palace
+        from services.chat_sync import sync_active_chat
 
-        fname = user_sessions.get(callback.from_user.id)
-        if not fname:
-            return await callback.message.answer(
-                "⚠️ Нет активного чата для синхронизации.",
-            )
-        fpath = os.path.join(CHATS_DIR, fname)
-        exported = export_chat_verbatim(fpath, fname)
-        if not exported:
-            return await callback.message.answer("ℹ️ Чат пуст или не найден.")
-        result = await sync_to_palace(exported)
-        await callback.message.answer(result)
+        result = await sync_active_chat(callback.from_user.id, user_sessions)
+        await callback.message.answer(result.message)
 
 
 async def render_ollama_list(cb: types.CallbackQuery):

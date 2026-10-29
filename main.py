@@ -2,7 +2,6 @@
    Message handlers extracted to handlers/messages.py"""
 
 import asyncio
-import os
 import sys
 
 from aiogram import F, Router, types
@@ -10,10 +9,10 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import (
-    CHATS_DIR, DATA_DIR, allowed_callback, allowed_only, validate_config,
+    DATA_DIR, allowed_callback, allowed_only, validate_config,
 )
 from handlers.chat import user_sessions
-from services.palace_bridge import export_chat_verbatim, sync_to_palace
+from services.chat_sync import ChatSyncStatus, sync_active_chat
 from services.palace_mcp import get_mcp
 from services.logging_setup import setup_logging
 
@@ -125,16 +124,11 @@ async def cmd_notes_agent_button(message: types.Message):
 @fallback_router.message(F.text == "🔄 Синхронизация")
 @allowed_only
 async def cmd_sync_button(message: types.Message):
-    fname = user_sessions.get(message.from_user.id)
-    if not fname:
-        return await message.answer("⚠️ Нет активного чата для синхронизации.")
-    fpath = os.path.join(CHATS_DIR, fname)
-    exported = export_chat_verbatim(fpath, fname)
-    if not exported:
-        return await message.answer("ℹ️ Чат пуст или не найден.")
+    result = await sync_active_chat(message.from_user.id, user_sessions)
+    if result.status is not ChatSyncStatus.RESULT:
+        return await message.answer(result.message)
     status = await message.answer("🔄 Синхронизирую с MemPalace (verbatim)...")
-    result = await sync_to_palace(exported)
-    await status.edit_text(result)
+    await status.edit_text(result.message)
 
 
 @fallback_router.message(F.text == "🔍 Поиск")

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from handlers import chat as ch
-from services import chat_store
+from services import chat_store, chat_sync
 
 
 class FakeUser:
@@ -835,7 +835,7 @@ async def test_cmd_sync_palace_empty_export(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     ch.user_sessions[4242] = "ch_1.json"
     _write_chat(d, "ch_1.json", [])
-    monkeypatch.setattr(ch, "export_chat_verbatim", lambda p, f: None)
+    monkeypatch.setattr(chat_sync, "export_chat_verbatim", lambda p, f: None)
     msg = FakeMessage()
     await ch.cmd_sync_palace(msg)
     assert msg.answers[0][0] == "ℹ️ Чат пуст или не найден."
@@ -846,12 +846,30 @@ async def test_cmd_sync_palace_success(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     ch.user_sessions[4242] = "ch_1.json"
     _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
-    monkeypatch.setattr(ch, "export_chat_verbatim", lambda p, f: {"text": "экспорт"})
-    monkeypatch.setattr(ch, "sync_to_palace", _async_result("✅ Синхронизировано"))
+    monkeypatch.setattr(chat_sync, "CHATS_DIR", str(d))
+    monkeypatch.setattr(chat_sync, "export_chat_verbatim", lambda p, f: {"text": "экспорт"})
+    monkeypatch.setattr(chat_sync, "sync_to_palace", _async_result("✅ Синхронизировано"))
     msg = FakeMessage()
     await ch.cmd_sync_palace(msg)
     assert msg.answers[0][0] == "🔄 Синхронизирую с MemPalace (verbatim)..."
     assert msg.edits[-1][0] == "✅ Синхронизировано"
+
+
+@pytest.mark.asyncio
+async def test_cmd_sync_palace_error_is_shown(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    ch.user_sessions[4242] = "ch_1.json"
+    _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
+    monkeypatch.setattr(chat_sync, "export_chat_verbatim", lambda p, f: "exported")
+
+    async def boom(exported):
+        raise RuntimeError("palace down")
+
+    monkeypatch.setattr(chat_sync, "sync_to_palace", boom)
+    msg = FakeMessage()
+    await ch.cmd_sync_palace(msg)
+    assert msg.answers[0][0] == "🔄 Синхронизирую с MemPalace (verbatim)..."
+    assert msg.edits[-1][0] == "❌ Ошибка синхронизации: palace down"
 
 
 @pytest.mark.asyncio
