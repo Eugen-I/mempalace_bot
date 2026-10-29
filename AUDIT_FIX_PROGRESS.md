@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (23/45 шагов `DONE`)
+**Статус работы:** в работе (24/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-28 17:11 CET
+- **Дата последнего обновления:** 2026-10-29 12:12 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S2.8 — код `07cb528`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S2.8` — завершён
+- **HEAD:** S2.9 — код `3644e3c`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S2.9` — завершён (фаза 2 закрыта)
 - **Статус:** `DONE`
-- **Следующее действие:** `S2.9` — реализовать «Исследования» в настройках через общий helper
-- **Бюджет текущего шага:** 35k
-- **Израсходовано (оценка):** ~18k (код, тесты, QA)
+- **Следующее действие:** `S3.1` — единый chat store (`services/chat_store.py`)
+- **Бюджет текущего шага:** 30k
+- **Израсходовано (оценка):** ~14k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations` (в полном прогоне может падать, отдельно проходит).
-- **Последний QA:** 3677 passed / 0 failed (без untracked Garmin); targeted `handlers/settings.py` — 98%; lint — 7 baseline, mypy — 1 baseline, bandit — 75 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
+- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations` (в первом полном прогоне упал, отдельно и на повторном полном прогоне прошёл).
+- **Последний QA:** 3682 passed / 0 failed (без untracked Garmin, повторный прогон); targeted `handlers/settings.py` — 98%; lint — 7 baseline, mypy — 1 baseline, bandit — 75 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -110,7 +110,7 @@
 | S2.6 | Настройки: история | P1 | 35k | DONE | `0edb963` | 2026-10-28 17:02 | ~20k |
 | S2.7 | Настройки: экспорт | P1 | 35k | DONE | `a407277` | 2026-10-28 17:07 | ~16k |
 | S2.8 | Настройки: инсайты | P1 | 35k | DONE | `07cb528` | 2026-10-28 17:11 | ~18k |
-| S2.9 | Настройки: исследования | P1 | 30k | TODO | — | — | — |
+| S2.9 | Настройки: исследования | P1 | 30k | DONE | `3644e3c` | 2026-10-29 12:12 | ~14k |
 | S3.1 | Единый chat store | P2 | 40k | TODO | — | — | — |
 | S3.2 | Единая синхронизация дворца | P2 | 25k | TODO | — | — | — |
 | S3.3 | Единый список чатов | P2 | 30k | TODO | — | — | — |
@@ -141,10 +141,10 @@
 |---|---:|---:|---:|---:|
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
-| 2 — P1 | 9 | 8 | 0 | 1 |
+| 2 — P1 | 9 | 9 | 0 | 0 |
 | 3 — P2 дублирование | 11 | 0 | 0 | 11 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **23** | **0** | **22** |
+| **Итого** | **45** | **24** | **0** | **21** |
 
 > Обновлять после каждого шага.
 
@@ -1257,6 +1257,44 @@
   - Нет новых INC; INC-8/INC-9 остаются открытыми.
 - Следующее действие: `S2.9` — подключить `research` к тому же `format_directory_listing` с `RESEARCH_DIR`; тест на то, что каталоги не перепутаны.
 
+### S2.9 — Реализовать «Исследования» в настройках
+
+- Дата/время: 2026-10-29 12:09–12:12 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `3644e3c`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 30k / ~14k
+- Файлы: `handlers/settings.py`, `tests/test_settings_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Ветка `research` подключена к тому же `format_directory_listing` из S2.8 с `RESEARCH_DIR` — дублирующего кода нет.
+  2. Заголовок «📌 Последние исследования:», лимит N=10, дата/размер и HTML-экранирование наследуются от общего helper.
+  3. Поведение идентично инсайтам: пустая/отсутствующая папка → «Папка пуста», ошибка доступа → «Не удалось прочитать папку», симлинки/каталоги/скрытые файлы пропускаются.
+  4. Тест с двумя разными каталогами подтверждает, что `research` не читает `INSIGHTS_DIR`.
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_settings_handler.py --tb=short -p no:cacheprovider --no-cov` → **71 passed, 1 warning in 3.13s**.
+  - Первый полный прогон → **3681 passed, 1 failed** — известный флак `test_confirm_write_delete_requires_two_confirmations` (`kb is None`); изолированно → **1 passed in 2.96s**; повторный полный прогон → **3682 passed, 0 failed, 6 warnings in 15.11s**.
+  - `python3 -m pytest tests/test_settings_handler.py --cov=handlers.settings --cov-report=term-missing` → `handlers/settings.py` **98%** (непокрыты HTML-fallback истории `316-318` и pre-existing ветки `cb_set_ai` `484-485`, `491->497`).
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **1 baseline-ошибка** `handlers/chat.py:34`, новых 0 (110 файлов).
+  - `python3 -m bandit -q -r handlers/ services/` → **75 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: baseline 1, новых 0
+  - bandit: 75 Low + 2 Medium, новых в наших файлах 0
+  - coverage: `handlers/settings.py` 98% (targeted)
+- AC:
+  - [x] Ветка `research` показывает реальные файлы из `RESEARCH_DIR`.
+  - [x] Использован общий helper S2.8, дублирования кода нет.
+  - [x] Каталоги `INSIGHTS_DIR` и `RESEARCH_DIR` не перепутаны (тест с двумя папками).
+  - [x] Ограничения N, пусто, безопасность имён и ошибки доступа сохранены.
+- Коммит: `3644e3c` (`feat(step-2.9): implement research listing`)
+- Проблемы/решения:
+  - Флак `test_confirm_write_delete_requires_two_confirmations` воспроизвёлся в первом полном прогоне и прошёл изолированно и на повторе — это известная pre-existing нестабильность, к S2.9 не относится.
+- Найдено попутно:
+  - Нет новых INC; INC-8/INC-9 остаются открытыми.
+- Следующее действие: `S3.1` — вынести чтение/запись/атомарное сохранение чата в единый `services/chat_store.py`, перевести `handlers/chat.py` и `services/agent_context.py`, попутно закрыть mypy `TtlDict` generic.
+
 ---
 
 ## 7. Журнал сессий
@@ -1286,6 +1324,7 @@
 | 21 | 2026-10-28 16:58–17:02 | DeepSeek V4.1 Flash Free | S2.6 | DONE | ~20k | Real last-20 chat history in settings, HTML-escaped and user-scoped; 9 new tests; 3664 full; 0edb963 |
 | 22 | 2026-10-28 17:03–17:07 | DeepSeek V4.1 Flash Free | S2.7 | DONE | ~16k | Settings export via existing exporter + FSInputFile, empty/no-session/write/send errors; 6 new tests; 3669 full; a407277 |
 | 23 | 2026-10-28 17:07–17:11 | DeepSeek V4.1 Flash Free | S2.8 | DONE | ~18k | Reusable directory listing helper, last 10 insights with date/size, HTML-escaped, symlink/access guards; 9 new tests; 3677 full; 07cb528 |
+| 24 | 2026-10-29 12:09–12:12 | DeepSeek V4.1 Flash Free | S2.9 | DONE | ~14k | Research branch reuses S2.8 helper with RESEARCH_DIR, directory-isolation test; 6 new tests; 3682 full (after known flake retry); 3644e3c |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
