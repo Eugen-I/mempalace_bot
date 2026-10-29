@@ -5,6 +5,7 @@ import json
 import pytest
 
 from services import agent_context as ac
+from services import chat_store
 from services.kv_store import KVStore
 
 
@@ -107,3 +108,53 @@ def test_append_always_on_without_chat_session_is_noop(store):
     store.append_always_on(4242, "assistant", "ответ агента")
 
     assert store.get_always_on_context(4242) == []
+
+
+def test_always_on_context_uses_shared_store(store, tmp_path, monkeypatch):
+    path = _chat_file(tmp_path, monkeypatch, [{"role": "user", "content": "вопрос"}])
+    calls = []
+    original = chat_store.load_chat
+
+    def spy(filepath):
+        calls.append(filepath)
+        return original(filepath)
+
+    monkeypatch.setattr(chat_store, "load_chat", spy)
+
+    assert store.get_always_on_context(4242) == [
+        {"role": "user", "content": "вопрос"},
+    ]
+    assert calls == [str(path)]
+
+
+def test_append_always_on_uses_shared_store(store, tmp_path, monkeypatch):
+    path = _chat_file(tmp_path, monkeypatch, [])
+    calls = []
+
+    def fake_append(filepath, role, content, **kwargs):
+        calls.append((filepath, role, content, kwargs))
+        return True
+
+    monkeypatch.setattr(chat_store, "append_message", fake_append)
+
+    store.append_always_on(4242, "assistant", "ответ")
+
+    assert calls == [
+        (str(path), "assistant", "ответ",
+         {"max_messages": 50, "dedupe": True}),
+    ]
+
+
+def test_always_on_context_skips_malformed_messages(store, tmp_path, monkeypatch):
+    _chat_file(
+        tmp_path, monkeypatch,
+        [
+            {"role": "user", "content": "ok"},
+            {"role": "assistant"},
+            "not a dict",
+        ],
+    )
+
+    assert store.get_always_on_context(4242) == [
+        {"role": "user", "content": "ok"},
+    ]

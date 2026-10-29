@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from handlers import chat as ch
+from services import chat_store
 
 
 class FakeUser:
@@ -158,7 +159,7 @@ def test_load_chat_corrupt_backup_failure_is_safe(
     def boom(*a, **kw):
         raise OSError("backup failed")
 
-    monkeypatch.setattr(ch.shutil, "copy2", boom)
+    monkeypatch.setattr(chat_store.shutil, "copy2", boom)
 
     assert ch.load_chat(str(p)) == {"summary": "", "messages": []}
     assert p.read_text(encoding="utf-8") == "{broken"
@@ -171,7 +172,7 @@ def test_load_chat_list_migration_save_failure_returns_data(
     d = _enable(monkeypatch, tmp_path)
     p = d / "ch_list.json"
     p.write_text('[{"role": "user", "content": "hi"}]', encoding="utf-8")
-    monkeypatch.setattr(ch, "save_chat", lambda path, data: False)
+    monkeypatch.setattr(chat_store, "save_chat", lambda path, data: False)
 
     data = ch.load_chat(str(p))
 
@@ -193,7 +194,7 @@ def test_save_chat_error_returns_false(monkeypatch, tmp_path, caplog):
     def boom(*a, **kw):
         raise OSError("disk")
 
-    monkeypatch.setattr(ch.tempfile, "NamedTemporaryFile", boom)
+    monkeypatch.setattr(chat_store.tempfile, "NamedTemporaryFile", boom)
     assert ch.save_chat(str(tmp_path / "x.json"), {"messages": []}) is False
     assert "Не удалось сохранить чат" in caplog.text
 
@@ -214,7 +215,7 @@ def test_save_chat_replace_error_keeps_original(monkeypatch, tmp_path):
     def boom(src, dst):
         raise OSError("replace failed")
 
-    monkeypatch.setattr(ch.os, "replace", boom)
+    monkeypatch.setattr(chat_store.os, "replace", boom)
 
     assert ch.save_chat(str(p), {"summary": "new", "messages": []}) is False
     assert p.read_text(encoding="utf-8") == original

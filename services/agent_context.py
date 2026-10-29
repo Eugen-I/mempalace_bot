@@ -5,12 +5,16 @@ Two backends:
 - Button mode: TTL dict via KVStore (30 min, survives restarts)
 """
 
-import json
+import logging
 import os
 import secrets
+
 from config import CHATS_DIR
-from services.kv_store import get_kv_store
 from handlers.chat import user_sessions
+from services import chat_store
+from services.kv_store import get_kv_store
+
+logger = logging.getLogger("AgentContext")
 
 AGENT_CTX_NAMESPACE = "agent_context"
 BUTTON_SESSION_TTL = 1800  # 30 minutes
@@ -32,42 +36,29 @@ class AgentContextStore:
     def get_always_on_context(self, uid: int) -> list[dict]:
         """Load last N messages from chat file as conversation history."""
         path = self._get_chat_path(uid)
-        if not path or not os.path.exists(path):
+        if not path:
             return []
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            msgs = data.get("messages", [])
-            return [
-                {"role": m["role"], "content": m["content"]}
-                for m in msgs[-MAX_ALWAYS_ON_HISTORY:]
-            ]
-        except Exception:
+        data = chat_store.load_chat(path)
+        messages = data.get("messages", [])
+        if not isinstance(messages, list):
             return []
+        return [
+            {"role": m["role"], "content": m["content"]}
+            for m in messages[-MAX_ALWAYS_ON_HISTORY:]
+            if isinstance(m, dict) and "role" in m and "content" in m
+        ]
 
     def append_always_on(self, uid: int, role: str, content: str) -> None:
         """Append a message to chat file (called after agent responds)."""
         path = self._get_chat_path(uid)
-        if not path:
+        if not path or not os.path.exists(path):
             return
         try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            msgs = data.get("messages", [])
-            # Ретрай того же ответа не должен создавать дубль в истории.
-            if (
-                msgs
-                and isinstance(msgs[-1], dict)
-                and msgs[-1].get("role") == role
-                and msgs[-1].get("content") == content
-            ):
-                return
-            msgs.append({"role": role, "content": content})
-            data["messages"] = msgs[-50:]
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+            chat_store.append_message(
+                path, role, content, max_messages=50, dedupe=True,
+            )
+        except Exception as exc:
+            logger.warning("Не удалось дописать чат %s: %s", path, exc)
 
     # ─── Button mode (TTL dict) ───
     def _session_key(self, session_id: str) -> str:
