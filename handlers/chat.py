@@ -14,7 +14,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import CHATS_DIR, allowed_callback, allowed_only
 from services.ai_cache import cache_ai_response
 from services.ai_engine import get_ai_response_async, get_current_ai
-from services.chat_store import load_chat, save_chat
+from services.chat_store import list_chat_files, load_chat, save_chat
 from services.chat_sync import ChatSyncStatus, sync_active_chat
 from services.prompts import get_summary_prompt
 from services.text_formatter import safe_html_format, split_message
@@ -26,12 +26,30 @@ router = Router()
 user_sessions: dict = {}
 waiting_for_name: dict = {}
 _chat_callback_cache: TtlDict[str, str] = TtlDict(ttl=1800)
+_CHAT_LIST_LIMIT = 10
 
 
 def _short_id(fname: str) -> str:
     sid = secrets.token_hex(16)
     _chat_callback_cache[sid] = fname
     return sid
+
+
+def _chat_display_name(fname: str) -> str:
+    return fname.replace("ch_", "").replace(".json", "").replace("_", " ")[:25]
+
+
+def _chat_list_keyboard(files: list[str]) -> InlineKeyboardBuilder:
+    kb = InlineKeyboardBuilder()
+    for fname in files:
+        sid = _short_id(fname)
+        kb.row(
+            types.InlineKeyboardButton(
+                text=f"💬 {_chat_display_name(fname)}", callback_data=f"sel:{sid}",
+            ),
+            types.InlineKeyboardButton(text="🗑️", callback_data=f"del:{sid}"),
+        )
+    return kb
 
 
 def save_summary_file(chat_name: str, summary: str):
@@ -79,25 +97,11 @@ async def cmd_new_chat(message: types.Message):
 @router.message(F.text == "📂 Список чатов")
 @allowed_only
 async def cmd_list_chats(message: types.Message):
-    files = sorted(
-        [f for f in os.listdir(CHATS_DIR) if f.endswith(".json")],
-        key=lambda x: os.path.getmtime(os.path.join(CHATS_DIR, x)),
-        reverse=True,
-    )[:10]
+    files = list_chat_files(CHATS_DIR, limit=_CHAT_LIST_LIMIT)
     if not files:
         return await message.answer("📁 Чатов нет.")
 
-    kb = InlineKeyboardBuilder()
-    for f in files:
-        sid = _short_id(f)
-        display_name = f.replace("ch_", "").replace(".json", "").replace("_", " ")[:25]
-        kb.row(
-            types.InlineKeyboardButton(
-                text=f"💬 {display_name}", callback_data=f"sel:{sid}",
-            ),
-            types.InlineKeyboardButton(text="🗑️", callback_data=f"del:{sid}"),
-        )
-
+    kb = _chat_list_keyboard(files)
     await message.answer("📅 Выберите чат:", reply_markup=kb.as_markup())
 
 
@@ -175,28 +179,13 @@ async def cb_delete_chat(callback: types.CallbackQuery):
     if user_sessions.get(callback.from_user.id) == fname:
         del user_sessions[callback.from_user.id]
 
-    files = sorted(
-        [f for f in os.listdir(CHATS_DIR) if f.endswith(".json")],
-        key=lambda x: os.path.getmtime(os.path.join(CHATS_DIR, x)),
-        reverse=True,
-    )[:10]
+    files = list_chat_files(CHATS_DIR, limit=_CHAT_LIST_LIMIT)
 
     try:
         if not files:
             await callback.message.edit_text("📁 Чатов больше нет.", reply_markup=None)
         else:
-            kb = InlineKeyboardBuilder()
-            for f in files:
-                sid2 = _short_id(f)
-                display_name = (
-                    f.replace("ch_", "").replace(".json", "").replace("_", " ")[:25]
-                )
-                kb.row(
-                    types.InlineKeyboardButton(
-                        text=f"💬 {display_name}", callback_data=f"sel:{sid2}",
-                    ),
-                    types.InlineKeyboardButton(text="🗑️", callback_data=f"del:{sid2}"),
-                )
+            kb = _chat_list_keyboard(files)
             await callback.message.edit_text(
                 "📅 Выберите чат:", reply_markup=kb.as_markup(),
             )

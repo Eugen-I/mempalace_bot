@@ -1,6 +1,7 @@
 """Unit tests for services.chat_store — shared chat JSON I/O."""
 
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 from services import chat_store
@@ -15,6 +16,41 @@ def test_handlers_chat_reuses_shared_store():
 
     assert chat.load_chat is chat_store.load_chat
     assert chat.save_chat is chat_store.save_chat
+
+
+def test_list_chat_files_missing_dir_returns_empty(tmp_path):
+    assert chat_store.list_chat_files(str(tmp_path / "missing")) == []
+
+
+def test_list_chat_files_sorts_newest_first_and_limits(tmp_path):
+    for name, mtime in (("old.json", 1000), ("new.json", 3000), ("mid.json", 2000)):
+        path = tmp_path / name
+        path.write_text("{}", encoding="utf-8")
+        os.utime(path, (mtime, mtime))
+    (tmp_path / "note.txt").write_text("x", encoding="utf-8")
+
+    assert chat_store.list_chat_files(str(tmp_path)) == [
+        "new.json", "mid.json", "old.json",
+    ]
+    assert chat_store.list_chat_files(str(tmp_path), limit=2) == [
+        "new.json", "mid.json",
+    ]
+    assert chat_store.list_chat_files(str(tmp_path), limit=1) == ["new.json"]
+
+
+def test_list_chat_files_puts_unstatable_last(tmp_path, monkeypatch):
+    (tmp_path / "good.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "bad.json").write_text("{}", encoding="utf-8")
+    real_getmtime = chat_store.os.path.getmtime
+
+    def fake_getmtime(path):
+        if path.endswith("bad.json"):
+            raise OSError("stat failed")
+        return real_getmtime(path)
+
+    monkeypatch.setattr(chat_store.os.path, "getmtime", fake_getmtime)
+
+    assert chat_store.list_chat_files(str(tmp_path)) == ["good.json", "bad.json"]
 
 
 def test_load_chat_missing_returns_independent_empty(tmp_path):

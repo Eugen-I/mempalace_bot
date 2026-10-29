@@ -1,6 +1,7 @@
 """Unit tests for handlers.chat."""
 
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -297,6 +298,23 @@ async def test_cmd_list_chats_with_files(monkeypatch, tmp_path):
     assert any(t == "🗑️" for t in texts)
 
 
+@pytest.mark.asyncio
+async def test_cmd_list_chats_limits_to_ten(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    for i in range(1, 13):
+        path = _write_chat(d, f"ch_{i:02d}.json", [])
+        os.utime(path, (1000 + i, 1000 + i))
+
+    msg = FakeMessage()
+    await ch.cmd_list_chats(msg)
+
+    texts = [b.text for row in msg.answers[0][2].inline_keyboard for b in row]
+    assert "💬 12" in texts
+    assert "💬 03" in texts
+    assert "💬 02" not in texts
+    assert "💬 01" not in texts
+
+
 # ---------- cb_select_chat ----------
 
 
@@ -385,6 +403,9 @@ async def test_cb_delete_chat_with_remaining(monkeypatch, tmp_path):
     cb = FakeCb(data="del:abcd")
     await ch.cb_delete_chat(cb)
     assert "Выберите чат" in cb.message.edits[-1][0]
+    texts = [b.text for row in cb.message.edits[-1][2].inline_keyboard for b in row]
+    assert "💬 2" in texts
+    assert "🗑️" in texts
 
 
 @pytest.mark.asyncio

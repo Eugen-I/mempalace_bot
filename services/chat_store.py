@@ -21,6 +21,30 @@ def empty_chat() -> dict:
     return {"summary": "", "messages": []}
 
 
+def list_chat_files(chats_dir: str, limit: int | None = None) -> list[str]:
+    """Возвращает .json-файлы чатов, новые первыми.
+
+    Общий список для UI-рендера и автоактивации: отсутствующий/недоступный
+    каталог считается пустым, а файлы без доступного mtime уходят в конец.
+    """
+    try:
+        files = [name for name in os.listdir(chats_dir) if name.endswith(".json")]
+    except OSError as exc:
+        logger.warning("Не удалось прочитать каталог чатов %s: %s", chats_dir, exc)
+        return []
+
+    def mtime(name: str) -> float:
+        try:
+            return os.path.getmtime(os.path.join(chats_dir, name))
+        except OSError:
+            return 0.0
+
+    files.sort(key=lambda name: (-mtime(name), name))
+    if limit is not None:
+        files = files[:limit]
+    return files
+
+
 def _backup_corrupt_chat(filepath: str) -> str | None:
     """Копирует битый файл чата рядом с оригиналом, не удаляя его."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")

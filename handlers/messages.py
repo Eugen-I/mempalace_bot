@@ -45,6 +45,7 @@ from services.bot_setup import (
     yt_quality_url as _yt_quality_url,
     yt_waiting_url as _yt_waiting_url,
 )
+from services.chat_store import list_chat_files
 from services.code_mode import (
     ensure_project_dir, is_coding_context, load_coding_prompt, read_project_files,
 )
@@ -443,11 +444,7 @@ async def process_user_message(message: types.Message):
 
     # 5. Проверка/Авто-создание чата
     if uid not in user_sessions:
-        files = sorted(
-            [f for f in os.listdir(CHATS_DIR) if f.endswith(".json")],
-            key=lambda x: os.path.getmtime(os.path.join(CHATS_DIR, x)),
-            reverse=True,
-        )
+        files = list_chat_files(CHATS_DIR, limit=1)
         if files:
             user_sessions[uid] = files[0]
             await message.answer(
