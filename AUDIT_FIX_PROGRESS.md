@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (26/45 шагов `DONE`)
+**Статус работы:** в работе (27/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-29 13:34 CET
+- **Дата последнего обновления:** 2026-10-29 13:41 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S3.2 — код `ae7364f`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S3.2` — завершён
+- **HEAD:** S3.3 — код `fdfa202`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S3.3` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S3.3` — единый рендер списка чатов и автоактивация
-- **Бюджет текущего шага:** 25k
-- **Израсходовано (оценка):** ~14k (код, тесты, QA)
+- **Следующее действие:** `S3.4` — единый сервис summary
+- **Бюджет текущего шага:** 30k
+- **Израсходовано (оценка):** ~13k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations` — первый полный прогон упал на нём, изолированно и на повторном полном прогоне прошёл.
-- **Последний QA:** 3705 passed / 0 failed (без untracked Garmin, повторный прогон); targeted `services/chat_sync.py` — 100%; lint — 7 baseline, mypy — 0, bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
+- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations`.
+- **Последний QA:** 3709 passed / 0 failed (без untracked Garmin); targeted `services/chat_store.py` — 100%, 189 targeted passed; lint — 7 baseline, mypy — 0, bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -113,7 +113,7 @@
 | S2.9 | Настройки: исследования | P1 | 30k | DONE | `3644e3c` | 2026-10-29 12:12 | ~14k |
 | S3.1 | Единый chat store | P2 | 40k | DONE | `bb31e83` | 2026-10-29 12:49 | ~22k |
 | S3.2 | Единая синхронизация дворца | P2 | 25k | DONE | `ae7364f` | 2026-10-29 13:32 | ~14k |
-| S3.3 | Единый список чатов | P2 | 30k | TODO | — | — | — |
+| S3.3 | Единый список чатов | P2 | 30k | DONE | `fdfa202` | 2026-10-29 13:40 | ~13k |
 | S3.4 | Единый summary | P2 | 45k | TODO | — | — | — |
 | S3.5 | Единый wing registry | P2 | 20k | TODO | — | — | — |
 | S3.6 | Единый palace bridge | P2 | 30k | TODO | — | — | — |
@@ -142,9 +142,9 @@
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
-| 3 — P2 дублирование | 11 | 2 | 0 | 9 |
+| 3 — P2 дублирование | 11 | 3 | 0 | 8 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **26** | **0** | **19** |
+| **Итого** | **45** | **27** | **0** | **18** |
 
 > Обновлять после каждого шага.
 
@@ -1375,6 +1375,44 @@
   - INC-11: `services/auto_sync.py` дублирует export+sync, но имеет другую политику (автосинхронизация без ответа пользователю); S3.2 не менял. INC-7/8/9/10 остаются открытыми.
 - Следующее действие: `S3.3` — вынести рендер списка чатов и выбор активного чата, использовать в `handlers/chat.py` и `handlers/messages.py`.
 
+### S3.3 — Единый список чатов и автоактивация
+
+- Дата/время: 2026-10-29 13:35–13:41 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `fdfa202`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 30k / ~13k
+- Файлы: `services/chat_store.py`, `handlers/chat.py`, `handlers/messages.py`, `tests/test_chat_store.py`, `tests/test_chat_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. В `services/chat_store.py` добавлен `list_chat_files(chats_dir, limit=None)`: собирает `.json`, сортирует по mtime (новые первыми), при равном mtime — по имени, умеет ограничивать выборку, отсутствующий/недоступный каталог считает пустым, а файлы без доступного mtime отправляет в конец.
+  2. В `handlers/chat.py` добавлены `_chat_display_name` и `_chat_list_keyboard`; `cmd_list_chats` и `cb_delete_chat` теперь используют один рендер и один лимит `_CHAT_LIST_LIMIT = 10`.
+  3. В `handlers/messages.py` автоактивация использует `list_chat_files(CHATS_DIR, limit=1)`, то есть тот же порядок и ту же обработку каталога, что и список чатов.
+  4. Поведение сохранено: тексты «📁 Чатов нет.», «📁 Чатов больше нет.», «📅 Выберите чат:», лимит 10, callback-данные `sel:`/`del:` и формат отображаемых имён не менялись. Отличие лимита осознанно: список показывает 10, автоактивация берёт только самый новый чат.
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_chat_store.py tests/test_chat_handler.py tests/test_messages_handler.py --tb=short -p no:cacheprovider --no-cov` → **189 passed, 1 warning in 3.30s**.
+  - `python3 -m pytest -q tests/test_chat_store.py tests/test_chat_handler.py --cov=services.chat_store --cov-report=term-missing -p no:cacheprovider` → **84 passed in 5.26s**; `services/chat_store.py` **100%**.
+  - Полный прогон: `python3 -m pytest -q --tb=short --strict-markers --ignore-glob='tests/test_garmin_*.py' -p no:cacheprovider --no-cov` → **3709 passed, 6 warnings in 13.46s**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0 (6 в `scripts/verify_garmin_login.py`, 1 в `services/deps_guard.py`).
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 112 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **74 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, новых в наших файлах 0.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: 0 ошибок
+  - bandit: 74 Low + 2 Medium, новых в наших файлах 0
+  - coverage: `services/chat_store.py` 100% (targeted вместе с `test_chat_handler.py`)
+- AC:
+  - [x] Один helper списка: `list_chat_files` используется и в `handlers/chat.py`, и в `handlers/messages.py`.
+  - [x] Один рендер: `_chat_list_keyboard` используется в `cmd_list_chats` и `cb_delete_chat`; расхождение сортировки/обработки каталога устранено.
+  - [x] Тесты покрывают пустой/отсутствующий список, один и много чатов, лимит, активный чат и callback-перерисовку.
+- Коммит: `fdfa202` (`refactor(step-3.3): unify chat list rendering`)
+- Проблемы/решения:
+  - `list_chat_files` принимает `chats_dir` явно, чтобы не дублировать `config.CHATS_DIR` в сервисе и сохранить существующее monkeypatch-поведение тестов.
+  - Для равных mtime добавлен детерминированный tie-break по имени — список и автоактивация больше не зависят от порядка `os.listdir`.
+- Найдено попутно:
+  - INC-12: `cli/menu.py` и `cli/utils.py` сохраняют собственный `list_chats` с той же mtime-сортировкой; S3.3 перевёл только Telegram-потребителей. INC-7/8/9/10/11 остаются открытыми.
+- Следующее действие: `S3.4` — вынести генерацию summary в единый сервис с режимами, сохранив осознанные различия промптов/форматов.
+
 ---
 
 ## 7. Журнал сессий
@@ -1407,6 +1445,7 @@
 | 24 | 2026-10-29 12:09–12:12 | DeepSeek V4.1 Flash Free | S2.9 | DONE | ~14k | Research branch reuses S2.8 helper with RESEARCH_DIR, directory-isolation test; 6 new tests; 3682 full (after known flake retry); 3644e3c |
 | 25 | 2026-10-29 12:13–12:49 | DeepSeek V4.1 Flash Free | S3.1 | DONE | ~22k | Shared chat store with locked atomic append, corrupt backup/list migration; generic TtlDict; 15 new tests; 3697 full; bb31e83 |
 | 26 | 2026-10-29 12:51–13:34 | DeepSeek V4.1 Flash Free | S3.2 | DONE | ~14k | Shared manual sync scenario for /sync, main button and settings; typed result, error mapping; 8 new tests; 3705 full; ae7364f |
+| 27 | 2026-10-29 13:35–13:41 | DeepSeek V4.1 Flash Free | S3.3 | DONE | ~13k | Shared chat file listing, deterministic mtime sort, keyboard render helper, auto-activation reuse; 4 new tests; 3709 full; fdfa202 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1465,6 +1504,7 @@
 | INC-9 | 2026-10-28 | `services/graceful_degradation.py`, `handlers/messages.py` | Нет фонового health-check/cooldown: после `report_failure("memory")` `should_use_memory()` остаётся `False` до внешнего `report_success`. Сейчас `report_failure("memory")` в production не вызывается. | Health-check/cooldown или S3.1 | TODO |
 | INC-10 | 2026-10-29 | `cli/menu.py`, `cli/utils.py` | Собственные `load_chat`/`save_chat` с прямым JSON-I/O и атомарной записью дублируют `services/chat_store.py`; S3.1 перевёл только потребителей из якорей плана. | Отдельный шаг унификации CLI-хранилища | TODO |
 | INC-11 | 2026-10-29 | `services/auto_sync.py` | Автосинхронизация сама вызывает `export_chat_verbatim` + `sync_to_palace`, дублируя `services/chat_sync.sync_chat_file`; политика другая (тихий лог без UI), S3.2 не менял. | Перевести `auto_sync_chat` на общий `sync_chat_file` | TODO |
+| INC-12 | 2026-10-29 | `cli/menu.py`, `cli/utils.py` | Собственный `list_chats` с mtime-сортировкой дублирует `services/chat_store.list_chat_files`; S3.3 перевёл только Telegram-потребителей. | Перевести CLI на общий `list_chat_files` | TODO |
 
 ---
 
