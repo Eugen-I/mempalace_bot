@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (24/45 шагов `DONE`)
+**Статус работы:** в работе (25/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-29 12:12 CET
+- **Дата последнего обновления:** 2026-10-29 12:50 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S2.9 — код `3644e3c`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S2.9` — завершён (фаза 2 закрыта)
+- **HEAD:** S3.1 — код `bb31e83`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S3.1` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S3.1` — единый chat store (`services/chat_store.py`)
-- **Бюджет текущего шага:** 30k
-- **Израсходовано (оценка):** ~14k (код, тесты, QA)
+- **Следующее действие:** `S3.2` — единое действие синхронизации дворца (`sync_active_chat`/`sync_chat_file`)
+- **Бюджет текущего шага:** 40k
+- **Израсходовано (оценка):** ~22k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations` (в первом полном прогоне упал, отдельно и на повторном полном прогоне прошёл).
-- **Последний QA:** 3682 passed / 0 failed (без untracked Garmin, повторный прогон); targeted `handlers/settings.py` — 98%; lint — 7 baseline, mypy — 1 baseline, bandit — 75 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
+- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations` — в этом полном прогоне не воспроизвёлся.
+- **Последний QA:** 3697 passed / 0 failed (без untracked Garmin); targeted `services/chat_store.py` — 100%, `handlers/chat.py` — 99%, `services/agent_context.py` — 85%; lint — 7 baseline, mypy — 0 (baseline `TtlDict` закрыт), bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -111,7 +111,7 @@
 | S2.7 | Настройки: экспорт | P1 | 35k | DONE | `a407277` | 2026-10-28 17:07 | ~16k |
 | S2.8 | Настройки: инсайты | P1 | 35k | DONE | `07cb528` | 2026-10-28 17:11 | ~18k |
 | S2.9 | Настройки: исследования | P1 | 30k | DONE | `3644e3c` | 2026-10-29 12:12 | ~14k |
-| S3.1 | Единый chat store | P2 | 40k | TODO | — | — | — |
+| S3.1 | Единый chat store | P2 | 40k | DONE | `bb31e83` | 2026-10-29 12:49 | ~22k |
 | S3.2 | Единая синхронизация дворца | P2 | 25k | TODO | — | — | — |
 | S3.3 | Единый список чатов | P2 | 30k | TODO | — | — | — |
 | S3.4 | Единый summary | P2 | 45k | TODO | — | — | — |
@@ -142,9 +142,9 @@
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
-| 3 — P2 дублирование | 11 | 0 | 0 | 11 |
+| 3 — P2 дублирование | 11 | 1 | 0 | 10 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **24** | **0** | **21** |
+| **Итого** | **45** | **25** | **0** | **20** |
 
 > Обновлять после каждого шага.
 
@@ -1295,6 +1295,46 @@
   - Нет новых INC; INC-8/INC-9 остаются открытыми.
 - Следующее действие: `S3.1` — вынести чтение/запись/атомарное сохранение чата в единый `services/chat_store.py`, перевести `handlers/chat.py` и `services/agent_context.py`, попутно закрыть mypy `TtlDict` generic.
 
+### S3.1 — Единый chat store
+
+- Дата/время: 2026-10-29 12:13–12:49 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `bb31e83`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 40k / ~22k
+- Файлы: `services/chat_store.py` (новый), `handlers/chat.py`, `services/agent_context.py`, `services/ttl_dict.py`, `tests/test_chat_store.py` (новый), `tests/test_chat_handler.py`, `tests/test_agent_context.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Создан `services/chat_store.py`: единые `load_chat`/`save_chat`, атомарная запись через временный файл и `os.replace`, резервные копии битого JSON, миграция `list → dict`, общий `RLock`.
+  2. Добавлен `append_message` с сериализованным read-modify-write, дедупликацией последнего сообщения и ограничением истории (50 сообщений); `load_chat` также выполняется под тем же reentrant-lock, поэтому миграция не теряет параллельную запись.
+  3. `handlers/chat.py` больше не содержит JSON-I/O и импортирует `load_chat`/`save_chat` из общего модуля; `services/agent_context.py` переведён на `chat_store.load_chat`/`append_message`, сохранены лимиты 20/50, дедупликация и пропуск malformed-сообщений.
+  4. `TtlDict` сделан generic (`TtlDict[K, V]`), mypy-ошибка `handlers/chat.py:34` устранена.
+  5. Добавлены 15 тестов: миграция list→dict, битый JSON/резервные копии, атомарность и очистка временного файла, конкурентная запись, дедупликация/лимит, использование общего store обоими потребителями.
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_chat_store.py tests/test_chat_handler.py tests/test_agent_context.py tests/test_messages_handler.py tests/test_settings_handler.py --tb=short -p no:cacheprovider --no-cov` → **266 passed, 1 warning in 5.38s**.
+  - `python3 -m pytest -q tests/test_chat_store.py tests/test_chat_handler.py tests/test_agent_context.py --cov=services.chat_store --cov=services.agent_context --cov=handlers.chat --cov-report=term-missing -p no:cacheprovider` → **90 passed**; `services/chat_store.py` **100%**, `handlers/chat.py` **99%** (строка 400), `services/agent_context.py` **85%**.
+  - `python3 -m pytest -q --tb=short --strict-markers --ignore-glob='tests/test_garmin_*.py' -p no:cacheprovider --no-cov` → **3697 passed, 6 warnings in 18.07s**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0 (6 в `scripts/verify_garmin_login.py`, 1 в `services/deps_guard.py`).
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 111 source files** (baseline `TtlDict` закрыт).
+  - `python3 -m bandit -q -r handlers/ services/` → **74 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`; в новых `services/chat_store.py`, `services/agent_context.py`, `services/ttl_dict.py` новых findings 0 (3 Low в `handlers/chat.py` — pre-existing).
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: 0 ошибок (baseline 1 закрыт)
+  - bandit: 74 Low + 2 Medium; новых в наших файлах 0, один pre-existing Low ушёл вместе с `except Exception: pass`
+  - coverage: `services/chat_store.py` 100%, `handlers/chat.py` 99%, `services/agent_context.py` 85% (targeted)
+- AC:
+  - [x] Одна реализация чтения/записи чата; `handlers/chat.py` и `services/agent_context.py` используют `services/chat_store.py`.
+  - [x] Миграция поведения, битый JSON, атомарность и параллельная запись покрыты тестами.
+  - [x] mypy `TtlDict` generic исправлен.
+- Коммит: `bb31e83` (`refactor(step-3.1): extract chat store`)
+- Проблемы/решения:
+  - Для параллельной записи выбран модульный `RLock` вокруг read-modify-write; атомарный `os.replace` защищает от torn-файлов, а lock — от потерянных обновлений в рамках процесса.
+  - `agent_context` по-прежнему импортирует `user_sessions` из `handlers.chat`; это не JSON-I/O и выходит за якоря шага, поэтому не менялось.
+  - CLI (`cli/menu.py`, `cli/utils.py`) сохраняет собственные `load_chat`/`save_chat`; они не входят в якоря S3.1 — зафиксировано в INC-10.
+- Найдено попутно:
+  - INC-10: дублирующий chat JSON-I/O в CLI (не входил в якоря S3.1). INC-7/INC-8/INC-9 остаются открытыми; S3.1 не менял сценарии сохранения пользовательской реплики, summary и health-check.
+- Следующее действие: `S3.2` — вынести `sync_active_chat`/`sync_chat_file` и использовать в `handlers/chat.py`, `main.py`, `handlers/settings.py`.
+
 ---
 
 ## 7. Журнал сессий
@@ -1325,6 +1365,7 @@
 | 22 | 2026-10-28 17:03–17:07 | DeepSeek V4.1 Flash Free | S2.7 | DONE | ~16k | Settings export via existing exporter + FSInputFile, empty/no-session/write/send errors; 6 new tests; 3669 full; a407277 |
 | 23 | 2026-10-28 17:07–17:11 | DeepSeek V4.1 Flash Free | S2.8 | DONE | ~18k | Reusable directory listing helper, last 10 insights with date/size, HTML-escaped, symlink/access guards; 9 new tests; 3677 full; 07cb528 |
 | 24 | 2026-10-29 12:09–12:12 | DeepSeek V4.1 Flash Free | S2.9 | DONE | ~14k | Research branch reuses S2.8 helper with RESEARCH_DIR, directory-isolation test; 6 new tests; 3682 full (after known flake retry); 3644e3c |
+| 25 | 2026-10-29 12:13–12:49 | DeepSeek V4.1 Flash Free | S3.1 | DONE | ~22k | Shared chat store with locked atomic append, corrupt backup/list migration; generic TtlDict; 15 new tests; 3697 full; bb31e83 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1381,6 +1422,7 @@
 | INC-7 | 2026-10-27 | `handlers/messages.py` (always-on ветка) | При успешном ответе сохраняется только assistant-сообщение; реплика пользователя не пишется в chat file, поэтому следующая история не содержит вопроса. | S3.1 (единый chat store) или отдельный шаг | TODO |
 | INC-8 | 2026-10-28 | `handlers/chat.py` (`generate_fresh_summary`, `cmd_context`, callback саммари), `cli/*` | Результат `save_chat` игнорируется в путях сохранения саммари и CLI: сбой логируется внутри функции, но вызывающий/пользователь не уведомляется. | S3.1 — обработать bool или бросить исключение на уровне сценария (S2.6 закрыл только «Историю») | TODO |
 | INC-9 | 2026-10-28 | `services/graceful_degradation.py`, `handlers/messages.py` | Нет фонового health-check/cooldown: после `report_failure("memory")` `should_use_memory()` остаётся `False` до внешнего `report_success`. Сейчас `report_failure("memory")` в production не вызывается. | Health-check/cooldown или S3.1 | TODO |
+| INC-10 | 2026-10-29 | `cli/menu.py`, `cli/utils.py` | Собственные `load_chat`/`save_chat` с прямым JSON-I/O и атомарной записью дублируют `services/chat_store.py`; S3.1 перевёл только потребителей из якорей плана. | Отдельный шаг унификации CLI-хранилища | TODO |
 
 ---
 
