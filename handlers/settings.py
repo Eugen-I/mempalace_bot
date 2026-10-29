@@ -357,8 +357,12 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
         await callback.message.answer(text, parse_mode="HTML")
 
     elif command == "research":
-        await callback.message.answer("📌 Показываю последние записи из research/...")
-        # Здесь можно показать последние файлы из папки
+        from config import RESEARCH_DIR
+
+        text = format_directory_listing(
+            RESEARCH_DIR, "📌 <b>Последние исследования:</b>",
+        )
+        await callback.message.answer(text, parse_mode="HTML")
 
     elif command == "sync":
         await callback.message.answer("🔄 Синхронизирую с MemPalace...")

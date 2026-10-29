@@ -758,11 +758,92 @@ def test_format_size_boundaries():
 
 
 @pytest.mark.asyncio
-async def test_cmd_callback_research(monkeypatch, tmp_path):
+async def test_cmd_callback_research_lists_files(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
+    research = tmp_path / "research"
+    research.mkdir()
+    (research / "res_a.txt").write_text("data", encoding="utf-8")
+    insights = tmp_path / "insights"
+    insights.mkdir()
+    (insights / "ins_a.txt").write_text("data", encoding="utf-8")
+    monkeypatch.setattr("config.RESEARCH_DIR", str(research))
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+
     cb = FakeCb(4242, data="cmd:research")
     await st.cmd_callback_handler(cb)
-    assert "research" in cb.message.answers[0][0]
+    text, parse_mode, _ = cb.message.answers[0]
+    assert parse_mode == "HTML"
+    assert "📌 <b>Последние исследования:</b>" in text
+    assert "res_a.txt" in text
+    assert "ins_a.txt" not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_research_empty_dir(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    research = tmp_path / "research_empty"
+    research.mkdir()
+    monkeypatch.setattr("config.RESEARCH_DIR", str(research))
+    cb = FakeCb(4242, data="cmd:research")
+    await st.cmd_callback_handler(cb)
+    assert "Папка пуста" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_research_missing_dir(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    monkeypatch.setattr("config.RESEARCH_DIR", str(tmp_path / "no_research"))
+    cb = FakeCb(4242, data="cmd:research")
+    await st.cmd_callback_handler(cb)
+    assert "Папка пуста" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_research_escapes_names(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    research = tmp_path / "research_html"
+    research.mkdir()
+    (research / '<b>&"r".txt').write_text("data", encoding="utf-8")
+    monkeypatch.setattr("config.RESEARCH_DIR", str(research))
+    cb = FakeCb(4242, data="cmd:research")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "&lt;b&gt;&amp;&quot;r&quot;.txt" in text
+    assert '<b>&"r".txt' not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_research_access_error(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+
+    def broken_scandir(path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(st.os, "scandir", broken_scandir)
+    cb = FakeCb(4242, data="cmd:research")
+    await st.cmd_callback_handler(cb)
+    assert "Не удалось прочитать папку" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_research_limit_10(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    import os
+
+    research = tmp_path / "research_many"
+    research.mkdir()
+    for i in range(1, 13):
+        path = research / f"paper{i:02d}.txt"
+        path.write_text("x", encoding="utf-8")
+        os.utime(path, (1_700_000_000 + i, 1_700_000_000 + i))
+    monkeypatch.setattr("config.RESEARCH_DIR", str(research))
+    cb = FakeCb(4242, data="cmd:research")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "paper12.txt" in text
+    assert "paper03.txt" in text
+    assert "paper02.txt" not in text
+    assert "paper01.txt" not in text
 
 
 @pytest.mark.asyncio
