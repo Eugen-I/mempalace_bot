@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (27/45 шагов `DONE`)
+**Статус работы:** в работе (28/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-29 13:41 CET
+- **Дата последнего обновления:** 2026-10-30 13:37 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S3.3 — код `fdfa202`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S3.3` — завершён
+- **HEAD:** S3.4 — код `7320724`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S3.4` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S3.4` — единый сервис summary
-- **Бюджет текущего шага:** 30k
-- **Израсходовано (оценка):** ~13k (код, тесты, QA)
-- **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве также есть пользовательские Garmin-правки и новые untracked-тесты (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `tests/test_garmin_*`) — не трогались и не коммитились.
+- **Следующее действие:** `S3.5` — единый реестр wing
+- **Бюджет текущего шага:** 45k
+- **Израсходовано (оценка):** ~20k (ревью, доводка тестов, QA)
+- **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** для шага нет. Внешнее: текущий `make test` не собирает untracked Garmin-тесты из-за отсутствующего `fitparse`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing: `test_day_bounds_midnight`; флак `test_confirm_write_delete_requires_two_confirmations`.
-- **Последний QA:** 3709 passed / 0 failed (без untracked Garmin); targeted `services/chat_store.py` — 100%, 189 targeted passed; lint — 7 baseline, mypy — 0, bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`)
+- **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing флак `test_confirm_write_delete_requires_two_confirmations` (изолированно проходит).
+- **Последний QA:** 3716 passed / 1 known flake (без untracked Garmin); targeted 400 passed; `services/summary_service.py` — 100%; lint — 7 baseline; mypy — 0; bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -114,7 +114,7 @@
 | S3.1 | Единый chat store | P2 | 40k | DONE | `bb31e83` | 2026-10-29 12:49 | ~22k |
 | S3.2 | Единая синхронизация дворца | P2 | 25k | DONE | `ae7364f` | 2026-10-29 13:32 | ~14k |
 | S3.3 | Единый список чатов | P2 | 30k | DONE | `fdfa202` | 2026-10-29 13:40 | ~13k |
-| S3.4 | Единый summary | P2 | 45k | TODO | — | — | — |
+| S3.4 | Единый summary | P2 | 45k | DONE | `7320724` | 2026-10-30 13:37 | ~20k |
 | S3.5 | Единый wing registry | P2 | 20k | TODO | — | — | — |
 | S3.6 | Единый palace bridge | P2 | 30k | TODO | — | — | — |
 | S3.7 | Единый web search cache | P2 | 30k | TODO | — | — | — |
@@ -142,9 +142,9 @@
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
-| 3 — P2 дублирование | 11 | 3 | 0 | 8 |
+| 3 — P2 дублирование | 11 | 4 | 0 | 7 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **27** | **0** | **18** |
+| **Итого** | **45** | **28** | **0** | **17** |
 
 > Обновлять после каждого шага.
 
@@ -1413,6 +1413,47 @@
   - INC-12: `cli/menu.py` и `cli/utils.py` сохраняют собственный `list_chats` с той же mtime-сортировкой; S3.3 перевёл только Telegram-потребителей. INC-7/8/9/10/11 остаются открытыми.
 - Следующее действие: `S3.4` — вынести генерацию summary в единый сервис с режимами, сохранив осознанные различия промптов/форматов.
 
+### S3.4 — Единый сервис summary
+
+- Дата/время: 2026-10-30 13:30–13:37 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `7320724`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 45k / ~20k
+- Файлы: `services/summary_service.py` (новый), `handlers/chat.py`, `handlers/messages.py`, `handlers/palace/navigation.py`, `tests/test_summary_service.py` (новый), `tests/test_chat_handler.py`, `tests/test_messages_handler.py`, `tests/test_palace_navigation.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Создан `services/summary_service.py` с `SummaryMode` (`CHAT`, `CHAT_PERIODIC`, `INSIGHT`, `ROOM`) и единой `generate_summary(...)`. Режимы сохраняют осознанные различия:
+     - `CHAT` — последние 20 сообщений, учёт предыдущего саммари (>10 символов), system-сообщение, лимит 50 слов, `strip()`;
+     - `CHAT_PERIODIC` — последние 15 сообщений, без предыдущего саммари, user-сообщение, лимит 40 слов, без `strip()` (как было);
+     - `INSIGHT` — `Суммаризируй: <text>` без обрезки;
+     - `ROOM` — прежний system+user промпт по записям комнаты без обрезки.
+  2. `handlers/chat.py::generate_fresh_summary` и `update_summary_if_needed` больше не строят промпты и не режут слова локально — вызывают сервис.
+  3. `handlers/messages.py` (ветка `!!`/`???`) использует режим `INSIGHT` вместо прямого sync-wrapper.
+  4. `handlers/palace/navigation.py::_answer_room_ai` использует режим `ROOM` вместо локального промпта.
+  5. Ошибки AI-вызова сервис пробрасывает: обработчики сохраняют прежние пользовательские тексты/ветки (`"Не удалось сгенерировать саммари."`, статусы ошибок комнаты, пропуск обновления).
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_summary_service.py tests/test_chat_handler.py tests/test_messages_handler.py tests/test_palace_navigation.py` → **400 passed, 1 warning in 6.47s**; `services/summary_service.py` — **100%**.
+  - Полный прогон: `python3 -m pytest -q --tb=short --ignore-glob='tests/test_garmin_*.py'` → **3716 passed, 1 failed (known flake), 6 warnings in 20.59s**; изолированный перезапуск `test_confirm_write_delete_requires_two_confirmations` → **1 passed**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 113 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **74 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, новых в наших файлах 0.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: 0 ошибок
+  - bandit: 74 Low + 2 Medium, новых в наших файлах 0
+  - coverage: `services/summary_service.py` 100%
+- AC:
+  - [x] Три места (`handlers/chat.py`, `handlers/messages.py`, `handlers/palace/navigation.py`) используют один сервис; копий промптов/обрезки не осталось.
+  - [x] Golden-тесты фиксируют точные промпты, лимиты 50/40 слов, raw-output для `INSIGHT`/`ROOM`, пустой чат и проброс ошибки модели.
+  - [x] Поведение не ухудшилось: тексты и обработка ошибок на уровне handler'ов сохранены.
+- Коммит: `7320724` (`refactor(step-3.4): unify summary generation`)
+- Проблемы/решения:
+  - Ранее саммари чата шло через `get_ai_response_async` (без таймаута), инсайт — через `asyncio.to_thread(get_ai_response_sync_wrapper)`. Единый сервис использует `call_ai_async` с общим таймаутом — это осознанная унификация, обработка ошибок осталась в вызывающих handler'ах.
+  - `CHAT_PERIODIC` намеренно не делает `strip()`, как и прежний код; тест это фиксирует.
+- Найдено попутно:
+  - INC-13: `handlers/messages.py::get_ai_response_sync_wrapper` после S3.4 используется только тестами — кандидат на удаление/подключение в S4.2.
+- Следующее действие: `S3.5` — единый реестр wing (`services/wing_registry.py`), перевести `handlers/messages.py` и `handlers/search.py`.
+
 ---
 
 ## 7. Журнал сессий
@@ -1446,6 +1487,7 @@
 | 25 | 2026-10-29 12:13–12:49 | DeepSeek V4.1 Flash Free | S3.1 | DONE | ~22k | Shared chat store with locked atomic append, corrupt backup/list migration; generic TtlDict; 15 new tests; 3697 full; bb31e83 |
 | 26 | 2026-10-29 12:51–13:34 | DeepSeek V4.1 Flash Free | S3.2 | DONE | ~14k | Shared manual sync scenario for /sync, main button and settings; typed result, error mapping; 8 new tests; 3705 full; ae7364f |
 | 27 | 2026-10-29 13:35–13:41 | DeepSeek V4.1 Flash Free | S3.3 | DONE | ~13k | Shared chat file listing, deterministic mtime sort, keyboard render helper, auto-activation reuse; 4 new tests; 3709 full; fdfa202 |
+| 28 | 2026-10-30 13:30–13:37 | DeepSeek V4.1 Flash Free | S3.4 | DONE | ~20k | `SummaryMode` service for chat/periodic/insight/room; 3 handlers unified; 8 new tests; 3716 full + 1 known flake; 7320724 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1505,6 +1547,7 @@
 | INC-10 | 2026-10-29 | `cli/menu.py`, `cli/utils.py` | Собственные `load_chat`/`save_chat` с прямым JSON-I/O и атомарной записью дублируют `services/chat_store.py`; S3.1 перевёл только потребителей из якорей плана. | Отдельный шаг унификации CLI-хранилища | TODO |
 | INC-11 | 2026-10-29 | `services/auto_sync.py` | Автосинхронизация сама вызывает `export_chat_verbatim` + `sync_to_palace`, дублируя `services/chat_sync.sync_chat_file`; политика другая (тихий лог без UI), S3.2 не менял. | Перевести `auto_sync_chat` на общий `sync_chat_file` | TODO |
 | INC-12 | 2026-10-29 | `cli/menu.py`, `cli/utils.py` | Собственный `list_chats` с mtime-сортировкой дублирует `services/chat_store.list_chat_files`; S3.3 перевёл только Telegram-потребителей. | Перевести CLI на общий `list_chat_files` | TODO |
+| INC-13 | 2026-10-30 | `handlers/messages.py:1050` | После S3.4 `get_ai_response_sync_wrapper` не используется в production-коде (его вызывает только `tests/test_messages_handler.py::test_get_ai_response_sync_wrapper`). | S4.2 — удалить или подключить осознанно | TODO |
 
 ---
 
