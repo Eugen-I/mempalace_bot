@@ -108,6 +108,158 @@ def _is_ollama_unavailable(exc: Exception) -> bool:
     }
 
 
+def _normalize_engine(engine: str) -> str:
+    """Приводит имя движка к внутреннему виду (ollama → qwen)."""
+    normalized = engine.lower().strip()
+    return "qwen" if normalized == "ollama" else normalized
+
+
+def _find_system_message(messages: list[dict]) -> dict | None:
+    """Возвращает первое system-сообщение или None."""
+    for message in messages:
+        if message["role"] == "system":
+            return message
+    return None
+
+
+def _system_instruction(messages: list[dict], fallback: str) -> str:
+    """Берёт system-инструкцию из истории либо использует fallback."""
+    system_message = _find_system_message(messages)
+    if system_message is None:
+        return fallback
+    return system_message.get("content") or fallback
+
+
+def _content_with_images(text: str, images: list[str]) -> list[dict]:
+    """Собирает OpenAI-контент: текст + data-URL изображения."""
+    content_parts: list[dict] = [{"type": "text", "text": text}]
+    for image_b64 in images:
+        content_parts.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+        })
+    return content_parts
+
+
+def _prepare_chat_messages(
+    messages: list[dict],
+    system_prompt: str,
+    images: list[str],
+    *,
+    use_message_system: bool,
+    images_for_all_users: bool,
+) -> list[dict]:
+    """Нормализует историю для OpenAI-совместимых API.
+
+    ``use_message_system`` — брать system из ``messages`` (sync) или всегда
+    подставлять сгенерированный prompt (stream; исходные system-сообщения
+    остаются в истории для обратной совместимости).
+    ``images_for_all_users`` — вкладывать изображения во все user-сообщения
+    (stream) или только в первое (sync).
+    """
+    system_message = _find_system_message(messages) if use_message_system else None
+    if system_message is not None:
+        prepared = [system_message]
+    else:
+        prepared = [{"role": "system", "content": system_prompt}]
+
+    if images:
+        logger.info(f"[🖼️ MULTIMODAL] Received {len(images)} images.")
+    else:
+        logger.debug("[🖼️ MULTIMODAL] No images attached.")
+
+    images_added = False
+    for message in messages:
+        if use_message_system and message["role"] == "system":
+            continue
+        if (
+            message["role"] == "user"
+            and images
+            and (images_for_all_users or not images_added)
+        ):
+            prepared.append({
+                "role": "user",
+                "content": _content_with_images(message.get("content", ""), images),
+            })
+            images_added = True
+        else:
+            prepared.append(message)
+    return prepared
+
+
+def _build_gemini_contents(
+    messages: list[dict],
+    images: list[str],
+    *,
+    include_images: bool,
+    skip_system: bool,
+) -> list:
+    """Преобразует историю в Gemini Content; system-сообщения опциональны."""
+    contents = []
+    images_added = False
+    for message in messages:
+        if skip_system and message["role"] == "system":
+            continue
+        role = "user" if message["role"] == "user" else "model"
+        parts = [genai_types.Part(text=message.get("content", ""))]
+        if (
+            include_images
+            and message["role"] == "user"
+            and images
+            and not images_added
+        ):
+            for image_b64 in images:
+                parts.append(
+                    genai_types.Part.from_bytes(
+                        data=base64.b64decode(image_b64),
+                        mime_type="image/jpeg",
+                    ),
+                )
+            images_added = True
+        contents.append(genai_types.Content(role=role, parts=parts))
+    return contents
+
+
+def _extract_message_text(message: Any) -> str:
+    """Достаёт текст из message-объекта OpenAI-совместимого ответа."""
+    return getattr(message, "content", None) or ""
+
+
+def _extract_openai_text(response: Any) -> str:
+    """Достаёт текст первого choice; пустой список choices → ``""``."""
+    choices = getattr(response, "choices", None)
+    if not choices:
+        return ""
+    return _extract_message_text(choices[0].message)
+
+
+def _extract_delta_text(chunk: Any) -> str:
+    """Достаёт текстовый delta-чанк стрима; безопасен для пустых choices."""
+    choices = getattr(chunk, "choices", None)
+    if not choices:
+        return ""
+    delta = getattr(choices[0], "delta", None)
+    if delta is None:
+        return ""
+    return getattr(delta, "content", None) or ""
+
+
+def _extract_gemini_text(response: Any) -> str:
+    """Достаёт текст Gemini-ответа; ``None`` превращается в ``""``."""
+    return getattr(response, "text", None) or ""
+
+
+def _strip_thinking_tags(text: str) -> str:
+    """Удаляет теги размышлений DeepSeek и служебные токены."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    return re.sub(
+        r"<｜begin▁of▁sentence｜>.*?<｜end▁of▁sentence｜>",
+        "",
+        text,
+        flags=re.DOTALL,
+    )
+
+
 def _sync_ai_call(
     engine: str,
     model: str,
@@ -124,11 +276,7 @@ def _sync_ai_call(
     data-URL префикса). Для Gemini они передаются как inline image/jpeg,
     а system-сообщение — через ``system_instruction``.
     """
-    # Нормализация названия движка
-    engine = engine.lower().strip()
-    if engine == "ollama":
-        engine = "qwen"  # Для обратной совместимости с Ollama через OpenAI API
-
+    engine = _normalize_engine(engine)
     start_time = time.time()
     logger.info(f"[SYNC_CALL] Starting call. Engine: {engine}, Model: {model}")
 
@@ -144,40 +292,14 @@ def _sync_ai_call(
         system_prompt = "Ты — полезный ассистент."
 
     # 2. Формирование сообщений
-    # Если в messages уже есть system prompt (например, FORMAT_PROMPT) — используем его
-    # Иначе используем умный промпт с контекстом
-    system_from_messages = [m for m in messages if m["role"] == "system"]
-    if system_from_messages:
-        full_messages = [system_from_messages[0]]
-    else:
-        full_messages = [{"role": "system", "content": system_prompt}]
-
     images_base64 = kwargs.get("images", [])
-    images_added = False
-
-    # Отладка изображений
-    if images_base64:
-        logger.info(f"[🖼️ MULTIMODAL] Received {len(images_base64)} images.")
-    else:
-        logger.debug("[🖼️ MULTIMODAL] No images attached.")
-
-    for m in messages:
-        if m["role"] == "system":
-            continue
-        if m["role"] == "user" and images_base64 and not images_added:
-            # Формируем контент с картинками для OpenAI-compatible API
-            content_parts = [{"type": "text", "text": m.get("content", "")}]
-            for img_b64 in images_base64:
-                content_parts.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
-                    },
-                )
-            full_messages.append({"role": "user", "content": content_parts})
-            images_added = True
-        else:
-            full_messages.append(m)
+    full_messages = _prepare_chat_messages(
+        messages,
+        system_prompt,
+        images_base64,
+        use_message_system=True,
+        images_for_all_users=False,
+    )
 
     try:
         if engine == "qwen":  # Ollama через OpenAI совместимый API
@@ -224,21 +346,12 @@ def _sync_ai_call(
                 return "❌ Пустой ответ от Ollama."
 
             choice = choices[0]
-            response_text = choice.message.content or ""
+            response_text = _extract_openai_text(r)
 
             # ✅ АГРЕССИВНАЯ ОЧИСТКА ДЛЯ DEEPSEEK/R1
             if response_text:
-                # 1. Удаляем теги мышления DeepSeek (если они просочились)
-                # Удаляем всё внутри <think>...</think> или аналогичных конструкций
-                response_text = re.sub(
-                    r"<think>.*?</think>", "", response_text, flags=re.DOTALL,
-                )
-                response_text = re.sub(
-                    r"<｜begin▁of▁sentence｜>.*?<｜end▁of▁sentence｜>",
-                    "",
-                    response_text,
-                    flags=re.DOTALL,
-                )
+                # 1. Удаляем теги мышления DeepSeek и служебные токены
+                response_text = _strip_thinking_tags(response_text)
 
                 # 2. Удаляем стандартные ChatML токены (для совместимости)
                 for token in ["<|im_start|>", "<|im_end|>", "<|endoftext|>"]:
@@ -311,35 +424,16 @@ def _sync_ai_call(
 
             client = genai.Client(api_key=api_key)  # type: ignore[assignment]
 
-            system_instruction = system_prompt
-            if system_from_messages:
-                system_instruction = (
-                    system_from_messages[0].get("content") or system_prompt
-                )
+            system_instruction = _system_instruction(messages, system_prompt)
 
             # Преобразование сообщений в формат Gemini.
             # system-сообщения передаются через system_instruction, а не как role=model.
-            hist = []
-            gemini_images_added = False
-            for m in messages:
-                if m["role"] == "system":
-                    continue
-                role = "user" if m["role"] == "user" else "model"
-                parts = [genai_types.Part(text=m.get("content", ""))]
-                if (
-                    m["role"] == "user"
-                    and images_base64
-                    and not gemini_images_added
-                ):
-                    for img_b64 in images_base64:
-                        parts.append(
-                            genai_types.Part.from_bytes(
-                                data=base64.b64decode(img_b64),
-                                mime_type="image/jpeg",
-                            ),
-                        )
-                    gemini_images_added = True
-                hist.append(genai_types.Content(role=role, parts=parts))
+            hist = _build_gemini_contents(
+                messages,
+                images_base64,
+                include_images=True,
+                skip_system=True,
+            )
 
             r = client.models.generate_content(  # type: ignore[attr-defined]
                 model=model,
@@ -350,7 +444,7 @@ def _sync_ai_call(
                     max_output_tokens=2048,
                 ),
             )
-            text = r.text
+            text = _extract_gemini_text(r)
             if not text:
                 return "❌ Пустой ответ от Gemini."
             return text
@@ -497,9 +591,7 @@ async def stream_ai_events_async(
     ``ok=False``; уже отданный текст остаётся в предыдущих событиях.
     Пустой успешный стрим превращается в событие ``error_code="empty_stream"``.
     """
-    engine = engine.lower().strip()
-    if engine == "ollama":
-        engine = "qwen"
+    engine = _normalize_engine(engine)
 
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue[AIStreamEvent | None] = asyncio.Queue()
@@ -514,33 +606,13 @@ async def stream_ai_events_async(
     except ImportError:
         system_prompt = "Ты — полезный ассистент."
 
-    full_messages = [{"role": "system", "content": system_prompt}]
-    images_base64 = kwargs.get("images", [])
-
-    for m in messages:
-        if m["role"] == "user" and images_base64:
-            content_parts = [{"type": "text", "text": m.get("content", "")}]
-            for img_b64 in images_base64:
-                content_parts.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
-                    },
-                )
-            user_content: dict[str, Any] = {"role": "user", "content": content_parts}
-            full_messages.append(user_content)
-        else:
-            full_messages.append(m)
-
-    def _clean_chunk(text: str) -> str:
-        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-        text = re.sub(
-            r"<｜begin▁of▁sentence｜>.*?<｜end▁of▁sentence｜>",
-            "",
-            text,
-            flags=re.DOTALL,
-        )
-        return text
+    full_messages = _prepare_chat_messages(
+        messages,
+        system_prompt,
+        kwargs.get("images", []),
+        use_message_system=False,
+        images_for_all_users=True,
+    )
 
     def _emit_text(text: str) -> None:
         nonlocal emitted_text
@@ -580,9 +652,9 @@ async def stream_ai_events_async(
                     ],
                 )
                 for chunk in stream:
-                    delta = chunk.choices[0].delta if chunk.choices else None
-                    if delta and delta.content:
-                        cleaned = _clean_chunk(delta.content)
+                    delta_text = _extract_delta_text(chunk)
+                    if delta_text:
+                        cleaned = _strip_thinking_tags(delta_text)
                         if cleaned:
                             _emit_text(cleaned)
 
@@ -609,9 +681,9 @@ async def stream_ai_events_async(
                     ],
                 )
                 for chunk in stream:
-                    delta = chunk.choices[0].delta if chunk.choices else None
-                    if delta and delta.content:
-                        _emit_text(delta.content)
+                    delta_text = _extract_delta_text(chunk)
+                    if delta_text:
+                        _emit_text(delta_text)
 
             elif engine == "gemini":
                 if genai is None:
@@ -620,14 +692,12 @@ async def stream_ai_events_async(
                 if not api_key:
                     raise ValueError("GEMINI_API_KEY not set.")
                 client = genai.Client(api_key=api_key)
-                hist = []
-                for m in messages:
-                    role = "user" if m["role"] == "user" else "model"
-                    hist.append(
-                        genai_types.Content(
-                            role=role, parts=[genai_types.Part(text=m["content"])],
-                        ),
-                    )
+                hist = _build_gemini_contents(
+                    messages,
+                    [],
+                    include_images=False,
+                    skip_system=False,
+                )
                 stream = client.models.generate_content_stream(
                     model=model,
                     contents=hist,

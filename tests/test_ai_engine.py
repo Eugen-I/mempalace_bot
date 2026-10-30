@@ -281,6 +281,232 @@ def test_invalidate_ai_cache_clears_cached_config(
     assert _load()["ollama"] == [{"tag": "b"}]
 
 
+# ---------- message/response helpers ----------
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("ollama", "qwen"),
+    (" qwen ", "qwen"),
+    ("OpenAI", "openai"),
+    ("GEMINI", "gemini"),
+])
+def test_normalize_engine(raw, expected):
+    assert ai_engine._normalize_engine(raw) == expected
+
+
+def test_find_system_message_returns_first():
+    first = {"role": "system", "content": "first"}
+    messages = [
+        {"role": "user", "content": "u"},
+        first,
+        {"role": "system", "content": "second"},
+    ]
+    assert ai_engine._find_system_message(messages) is first
+    assert ai_engine._find_system_message([{"role": "user", "content": "u"}]) is None
+
+
+def test_system_instruction_prefers_message_then_fallback():
+    messages = [
+        {"role": "user", "content": "u"},
+        {"role": "system", "content": "CUSTOM"},
+    ]
+    assert ai_engine._system_instruction(messages, "fallback") == "CUSTOM"
+    assert ai_engine._system_instruction(
+        [{"role": "system", "content": ""}], "fallback",
+    ) == "fallback"
+    assert ai_engine._system_instruction(
+        [{"role": "user", "content": "u"}], "fallback",
+    ) == "fallback"
+
+
+def test_content_with_images_builds_data_urls():
+    assert ai_engine._content_with_images("текст", ["aW1n"]) == [
+        {"type": "text", "text": "текст"},
+        {
+            "type": "image_url",
+            "image_url": {"url": "data:image/jpeg;base64,aW1n"},
+        },
+    ]
+
+
+def test_prepare_chat_messages_sync_uses_first_system_and_skips_rest():
+    custom = {"role": "system", "content": "CUSTOM"}
+    messages = [
+        {"role": "user", "content": "u"},
+        custom,
+        {"role": "system", "content": "SECOND"},
+        {"role": "assistant", "content": "a"},
+    ]
+    prepared = ai_engine._prepare_chat_messages(
+        messages, "fallback", [],
+        use_message_system=True, images_for_all_users=False,
+    )
+    assert prepared == [
+        custom,
+        {"role": "user", "content": "u"},
+        {"role": "assistant", "content": "a"},
+    ]
+
+
+def test_prepare_chat_messages_sync_images_only_first_user():
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "look"},
+        {"role": "user", "content": "second"},
+    ]
+    prepared = ai_engine._prepare_chat_messages(
+        messages, "fallback", ["img1", "img2"],
+        use_message_system=True, images_for_all_users=False,
+    )
+    assert prepared[1]["content"] == [
+        {"type": "text", "text": "look"},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,img1"}},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,img2"}},
+    ]
+    assert prepared[2] == {"role": "user", "content": "second"}
+
+
+def test_prepare_chat_messages_stream_keeps_system_and_images_every_user():
+    original_system = {"role": "system", "content": "ORIGINAL"}
+    messages = [
+        original_system,
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "a"},
+        {"role": "user", "content": "two"},
+    ]
+    prepared = ai_engine._prepare_chat_messages(
+        messages, "generated", ["img"],
+        use_message_system=False, images_for_all_users=True,
+    )
+    assert prepared[0] == {"role": "system", "content": "generated"}
+    assert prepared[1] is original_system
+    assert prepared[2]["content"][1]["image_url"]["url"].endswith("img")
+    assert prepared[4]["content"][1]["image_url"]["url"].endswith("img")
+
+
+def test_prepare_chat_messages_empty_history():
+    prepared = ai_engine._prepare_chat_messages(
+        [], "sys", [],
+        use_message_system=True, images_for_all_users=False,
+    )
+    assert prepared == [{"role": "system", "content": "sys"}]
+
+
+def test_prepare_chat_messages_preserves_tool_calls_and_tool_role():
+    assistant = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "now", "arguments": "{}"},
+        }],
+    }
+    tool_result = {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": "result",
+    }
+    prepared = ai_engine._prepare_chat_messages(
+        [assistant, tool_result], "sys", [],
+        use_message_system=True, images_for_all_users=False,
+    )
+    assert prepared[1] is assistant
+    assert prepared[2] is tool_result
+
+
+def test_build_gemini_contents_sync_skips_system_and_adds_images(monkeypatch):
+    monkeypatch.setattr(ai_engine, "genai_types", FakeGenAITypes)
+    messages = [
+        {"role": "system", "content": "CUSTOM"},
+        {"role": "user", "content": "look"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "second"},
+    ]
+    contents = ai_engine._build_gemini_contents(
+        messages, ["YmluYXJ5"],
+        include_images=True, skip_system=True,
+    )
+    assert [c.role for c in contents] == ["user", "model", "user"]
+    assert contents[0].parts[0].text == "look"
+    assert contents[0].parts[1].data == b"binary"
+    assert contents[0].parts[1].mime_type == "image/jpeg"
+    assert len(contents[2].parts) == 1
+
+
+def test_build_gemini_contents_stream_includes_system_without_images(monkeypatch):
+    monkeypatch.setattr(ai_engine, "genai_types", FakeGenAITypes)
+    messages = [
+        {"role": "system", "content": "ORIGINAL"},
+        {"role": "user", "content": "u"},
+    ]
+    contents = ai_engine._build_gemini_contents(
+        messages, ["ignored"],
+        include_images=False, skip_system=False,
+    )
+    assert [c.role for c in contents] == ["model", "user"]
+    assert contents[0].parts[0].text == "ORIGINAL"
+    assert len(contents[1].parts) == 1
+
+
+def test_extract_openai_text_handles_empty_choices_and_content():
+    class NoChoices:
+        choices = []
+
+    assert ai_engine._extract_openai_text(FakeSyncResponse("hi")) == "hi"
+    assert ai_engine._extract_openai_text(FakeSyncResponse(None)) == ""
+    assert ai_engine._extract_openai_text(NoChoices()) == ""
+
+
+def test_extract_delta_text_handles_empty_and_missing_delta():
+    assert ai_engine._extract_delta_text(
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("x"))]),
+    ) == "x"
+    assert ai_engine._extract_delta_text(FakeStreamChunk([])) == ""
+    assert ai_engine._extract_delta_text(
+        FakeStreamChunk([FakeStreamChoice(delta=None)]),
+    ) == ""
+
+
+def test_extract_gemini_text_handles_none_and_missing():
+    assert ai_engine._extract_gemini_text(_FakeResponse("x")) == "x"
+    assert ai_engine._extract_gemini_text(_FakeResponse(None)) == ""
+    assert ai_engine._extract_gemini_text(object()) == ""
+
+
+def test_strip_thinking_tags_removes_deepseek_and_service_tokens():
+    assert ai_engine._strip_thinking_tags("a<think>x</think>b") == "ab"
+    assert ai_engine._strip_thinking_tags(
+        "a<｜begin▁of▁sentence｜>x<｜end▁of▁sentence｜>b",
+    ) == "ab"
+
+
+def test_sync_and_stream_use_shared_message_helper(monkeypatch):
+    calls = []
+    real_prepare = ai_engine._prepare_chat_messages
+
+    def spy(messages, system_prompt, images, **kwargs):
+        calls.append(kwargs)
+        return real_prepare(messages, system_prompt, images, **kwargs)
+
+    monkeypatch.setattr(ai_engine, "_prepare_chat_messages", spy)
+
+    sync_fake = FakeOpenAI(FakeSyncResponse("ok"))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: sync_fake)
+    ai_engine._sync_ai_call("qwen", "m", [{"role": "user", "content": "hi"}])
+
+    stream_fake = FakeOpenAI(FakeStream([
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("ok"))]),
+    ]))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: stream_fake)
+    _collect_stream_events("qwen", "m", [{"role": "user", "content": "hi"}])
+
+    assert calls == [
+        {"use_message_system": True, "images_for_all_users": False},
+        {"use_message_system": False, "images_for_all_users": True},
+    ]
+
+
 # ---------- _sync_ai_call: qwen ----------
 
 
