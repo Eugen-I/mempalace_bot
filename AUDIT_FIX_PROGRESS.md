@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (30/45 шагов `DONE`)
+**Статус работы:** в работе (31/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-30 13:47 CET
+- **Дата последнего обновления:** 2026-10-30 13:51 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S3.6 — код `0926734`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S3.6` — завершён
+- **HEAD:** S3.7 — код `499a589`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S3.7` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S3.7` — единый кэш веб-поиска
+- **Следующее действие:** `S3.8a` — AI engine: helpers
 - **Бюджет текущего шага:** 30k
-- **Израсходовано (оценка):** ~14k (код, тесты, QA)
+- **Израсходовано (оценка):** ~10k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`.
-- **Последний QA:** 3749 passed / 0 failed (без untracked Garmin); targeted `tests/test_palace_bridge.py` — 77 passed; `services/palace_bridge.py` — 99% (единственная непокрытая строка — недостижимый guard, INC-14); lint — 7 baseline; mypy — 0 (114 файлов); bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
+- **Последний QA:** 3749 passed / 0 failed (без untracked Garmin); targeted `tests/test_web_search.py` + `tests/test_web_search_cache.py` — 67 passed; `services/web_search.py` и `services/web_search_cache.py` — по 100%; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`; на один Low меньше после удаления дубля).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -117,7 +117,7 @@
 | S3.4 | Единый summary | P2 | 45k | DONE | `7320724` | 2026-10-30 13:37 | ~20k |
 | S3.5 | Единый wing registry | P2 | 20k | DONE | `805e15e` | 2026-10-30 13:43 | ~14k |
 | S3.6 | Единый palace bridge | P2 | 30k | DONE | `0926734` | 2026-10-30 13:47 | ~14k |
-| S3.7 | Единый web search cache | P2 | 30k | TODO | — | — | — |
+| S3.7 | Единый web search cache | P2 | 30k | DONE | `499a589` | 2026-10-30 13:51 | ~10k |
 | S3.8a | AI engine: helpers | P2 | 35k | TODO | — | — | — |
 | S3.8b | AI engine: общий pipeline | P2 | 45k | TODO | — | — | — |
 | S3.9 | Reminder prompt/JSON | P2 | 25k | TODO | — | — | — |
@@ -142,9 +142,9 @@
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
-| 3 — P2 дублирование | 11 | 6 | 0 | 5 |
+| 3 — P2 дублирование | 11 | 7 | 0 | 4 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **30** | **0** | **15** |
+| **Итого** | **45** | **31** | **0** | **14** |
 
 > Обновлять после каждого шага.
 
@@ -1527,6 +1527,46 @@
   - INC-14: `services/palace_bridge.py::_search_palace_context_impl` — guard `if not safe_query` после `query.strip().replace('"', "'")[:200]` недостижим (replace не удаляет символы); строка не покрывается, кандидат на удаление в S4.2.
 - Следующее действие: `S3.7` — единый кэш веб-поиска (`services/web_search_cache.py`), сохранить `title`, убрать дубли, проверить TTL/ключи.
 
+### S3.7 — Единый кэш веб-поиска
+
+- Дата/время: 2026-10-30 13:48–13:51 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `499a589`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 30k / ~10k
+- Файлы: `services/web_search.py`, `services/web_search_cache.py`, `tests/test_web_search.py`, `tests/test_web_search_cache.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Оставлен один модуль кэша `services/web_search_cache.py`. Из `services/web_search.py` удалены дубли `save_web_search`, `load_web_search`, `cleanup_old_cache`, `WEB_SEARCH_CACHE_DIR`, `CACHE_TTL` и лишние импорты; `deep_search_web` использует `save_web_search` из общего модуля.
+  2. Общая сборка данных `_cache_data()` для `save_web_search` и `save_web_search_with_id`; `title` сохраняется и больше не теряется (раньше дубль в `web_search.py` записывал только `text`/`url`).
+  3. Запись кэша сделана атомарной: `_write_cache()` пишет во временный файл с уникальным именем и делает `os.replace`; читатель видит старый или новый JSON целиком.
+  4. `validate_search_id()` упрощён до полностью заякоренного regex (8–32 символа `[a-zA-Z0-9_-]`), который уже исключает `.`, `/`, `\`; добавлены тесты невалидных ключей.
+  5. Дубли тестов кэша удалены из `tests/test_web_search.py`; fixture патчит `web_search_cache.WEB_SEARCH_CACHE_DIR`, поэтому deep-search тесты проверяют реальный общий кэш.
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_web_search_cache.py tests/test_web_search.py` → **67 passed**.
+  - Покрытие: `services/web_search.py` — **100%**, `services/web_search_cache.py` — **100%**.
+  - Полный прогон: `python3 -m pytest -q --tb=short --ignore-glob='tests/test_garmin_*.py'` → **3749 passed, 6 warnings in 16.64s**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **73 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, новых в наших файлах 0.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: 0 ошибок
+  - bandit: 73 Low + 2 Medium, новых в наших файлах 0
+  - coverage: `web_search.py` 100%, `web_search_cache.py` 100%
+- AC:
+  - [x] Нет двух реализаций: `grep` подтверждает единственные определения `save_web_search`/`load_web_search`/`cleanup_old_cache` в `services/web_search_cache.py`.
+  - [x] `title` не теряется: unit-тест кэша и end-to-end тест `deep_search_web` (Tavily fallback) читают `title` из сохранённого JSON.
+  - [x] TTL/ключи проверены: старые/свежие файлы, битый JSON, невалидные/ path-traversal ключи.
+  - [x] Конкурентная запись: 20 параллельных сохранений с уникальными ID и 20 записей с одним ID оставляют валидный JSON и не оставляют `.tmp`.
+- Коммит: `499a589` (`refactor(step-3.7): unify web search cache`)
+- Проблемы/решения:
+  - После удаления обёрток из `web_search.py` тесты, патчившие `ws.WEB_SEARCH_CACHE_DIR`, переведены на `wsc.WEB_SEARCH_CACHE_DIR`; production-потребителей у `ws.load_web_search`/`ws.cleanup_old_cache` не было.
+  - Тест битого кэша использовал невалидный ID `bad` (3 символа), поэтому до чтения файла не доходил; заменён на валидный `bad12345`, теперь реально проверяет JSON-ошибку.
+  - Пустой блок «ИСТОЧНИКИ» в S3.6 и удаление дублей здесь — осознанные исправления поведения; публичные контракты `search_web`/`deep_search_web` не менялись.
+- Найдено попутно: новых нет; остаётся INC-14 из S3.6.
+- Следующее действие: `S3.8a` — AI engine: helpers, затем `S3.8b` — общий pipeline.
+
 ---
 
 ## 7. Журнал сессий
@@ -1563,6 +1603,7 @@
 | 28 | 2026-10-30 13:30–13:37 | DeepSeek V4.1 Flash Free | S3.4 | DONE | ~20k | `SummaryMode` service for chat/periodic/insight/room; 3 handlers unified; 8 new tests; 3716 full + 1 known flake; 7320724 |
 | 29 | 2026-10-30 13:38–13:43 | DeepSeek V4.1 Flash Free | S3.5 | DONE | ~14k | Single wing registry (5 keys, names, normalize); both handlers migrated; psychology explicit wing fixed; 27 new tests; 3744 full; 805e15e |
 | 30 | 2026-10-30 13:44–13:47 | DeepSeek V4.1 Flash Free | S3.6 | DONE | ~14k | Unified `_search_palace(with_sources)` + shared source/context formatting; KG status uses it; 5 new tests; 3749 full; 0926734 |
+| 31 | 2026-10-30 13:48–13:51 | DeepSeek V4.1 Flash Free | S3.7 | DONE | ~10k | Single web search cache; title preserved; atomic writes; invalid keys + concurrency tests; 67 targeted; 3749 full; 499a589 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
