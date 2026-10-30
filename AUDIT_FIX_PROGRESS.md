@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (34/45 шагов `DONE`)
+**Статус работы:** в работе (35/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-30 14:13 CET
+- **Дата последнего обновления:** 2026-10-30 14:19 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S3.9 — код `8cd06c1`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S3.9` — завершён
+- **HEAD:** S3.10 — код `549173f`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S3.10` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S3.10` — Palace utils и sync-обёртки
+- **Следующее действие:** `S4.1` — Безопасные autofix `ruff`
 - **Бюджет текущего шага:** 25k
-- **Израсходовано (оценка):** ~12k (код, тесты, QA)
+- **Израсходовано (оценка):** ~11k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`.
-- **Последний QA:** 3774 passed / 0 failed (без untracked Garmin); targeted `tests/test_reminder_handler.py` — 51 passed; `handlers/reminder.py` — 98% (4 неизменённые error-строки `cb_remind_target`); lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
+- **Последний QA:** 3768 passed / 0 failed (без untracked Garmin); targeted 6 файлов (palace utils, photos, messages, notes agent, ai_engine, settings) — 458 passed; `services/ai_engine.py` — 100%; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -121,7 +121,7 @@
 | S3.8a | AI engine: helpers | P2 | 35k | DONE | `0849123` | 2026-10-30 13:57 | ~18k |
 | S3.8b | AI engine: общий pipeline | P2 | 45k | DONE | `98ea976` | 2026-10-30 14:09 | ~24k |
 | S3.9 | Reminder prompt/JSON | P2 | 25k | DONE | `8cd06c1` | 2026-10-30 14:13 | ~12k |
-| S3.10 | Palace utils/wrappers | P2 | 25k | TODO | — | — | — |
+| S3.10 | Palace utils/wrappers | P2 | 25k | DONE | `549173f` | 2026-10-30 14:19 | ~11k |
 | S4.1 | Безопасные ruff autofix | P2 | 30k | TODO | — | — | — |
 | S4.2 | Мёртвый код/unused/mypy | P2 | 25k | TODO | — | — | — |
 | S4.3 | Критичные `except Exception` | P2 | 40k | TODO | — | — | — |
@@ -142,9 +142,9 @@
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
-| 3 — P2 дублирование | 11 | 10 | 0 | 1 |
+| 3 — P2 дублирование | 11 | 11 | 0 | 0 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **34** | **0** | **11** |
+| **Итого** | **45** | **35** | **0** | **10** |
 
 > Обновлять после каждого шага.
 
@@ -1690,6 +1690,47 @@
 - Найдено попутно: новых нет; INC-3 и INC-4 остаются открытыми.
 - Следующее действие: `S3.10` — Palace utils и sync-обёртки.
 
+### S3.10 — Palace utils и sync-обёртки
+
+- Дата/время: 2026-10-30 14:14–14:19 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `549173f`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 25k / ~11k
+- Файлы: `handlers/palace/_utils.py`, `handlers/palace/__init__.py`, `handlers/notes_agent.py`, `handlers/photos.py`, `handlers/settings.py`, `handlers/messages.py`, `services/ai_engine.py`, тесты
+- Что сделано:
+  1. Три копии safe-send (`safe_answer`, `safe_answer_returning_message`, `safe_send`) сведены к одному `safe_send()` с флагом `return_message`: по умолчанию bool, при `return_message=True` — отправленное сообщение или `None`.
+  2. `notes_agent` переведён на `safe_send(..., return_message=True)`; удалены `safe_answer`/`safe_answer_returning_message` и их экспорт из `handlers/palace/__init__.py`.
+  3. Добавлена единственная публичная sync-обёртка `services.ai_engine.call_ai_sync()`, делегирующая в `_sync_ai_call`.
+  4. `photos.py` и `settings.py` используют `call_ai_sync` через `asyncio.to_thread`; локальные обёртки `get_ai_response_sync_wrapper` удалены из `photos.py` и неиспользуемая — из `messages.py`.
+  5. Тесты обновлены под единый API: bool/return-message/None/Inaccessible/error для `safe_send`, forwarding `call_ai_sync`, вызовы photos/settings.
+- Тесты и команды:
+  - Targeted: `tests/test_palace_utils.py`, `tests/test_photos_handler.py`, `tests/test_messages_handler.py`, `tests/test_notes_agent_handler.py`, `tests/test_ai_engine.py`, `tests/test_settings_handler.py` → **458 passed**.
+  - Полный прогон: `python3 -m pytest -q --tb=short --ignore-glob='tests/test_garmin_*.py'` → **3768 passed, 6 warnings in 16.88s**.
+  - `services/ai_engine.py` — **100%** coverage.
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **73 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, новых в наших файлах 0.
+  - `git diff --check` → чисто; pre-commit hooks (fix end of files, flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: 0 ошибок
+  - bandit: 73 Low + 2 Medium, новых в наших файлах 0
+  - coverage: `services/ai_engine.py` 100%; ветки `safe_send` покрыты
+- AC:
+  - [x] Нет трёх копий safe-send: остался один `safe_send` с вариантом `return_message`.
+  - [x] Нет двух копий sync-обёртки: остался `services.ai_engine.call_ai_sync`, production-вызовы обновлены.
+  - [x] Отправка/редактирование: `safe_send` и `safe_edit_text` покрыты success/None/Inaccessible/error.
+  - [x] Ошибка Telegram: логируется и возвращает безопасный fallback (`False`/`None`).
+  - [x] Возврат сообщения: `return_message=True` возвращает отправленное сообщение; используется в notes_agent.
+- Коммит: `549173f` (`refactor(step-3.10): unify palace utils and wrappers`)
+- Проблемы/решения:
+  - Удалена неиспользуемая `messages.get_ai_response_sync_wrapper` (её вызывал только тест); это закрывает часть INC-13.
+  - `settings.py` тоже переведён на `call_ai_sync`, чтобы прямой вызов `_sync_ai_call` остался только внутри `services/ai_engine.py`.
+  - В тестах `fake_to_thread` расширен до `fn(*args, **kwargs)`, так как `asyncio.to_thread` теперь получает аргументы напрямую, без lambda.
+- Найдено попутно: новых нет; INC-13 закрыт в части sync-обёртки, INC-3/INC-4 остаются.
+- Следующее действие: `S4.1` — безопасные autofix `ruff`.
+
 ---
 
 ## 7. Журнал сессий
@@ -1730,6 +1771,7 @@
 | 32 | 2026-10-30 13:52–13:57 | DeepSeek V4.1 Flash Free | S3.8a | DONE | ~18k | Shared AI message/image/system/Gemini/text helpers used by sync+stream; 19 new tests; ai_engine 100%; 3768 full; 0849123 |
 | 33 | 2026-10-30 13:58–14:09 | DeepSeek V4.1 Flash Free | S3.8b | DONE | ~24k | Single per-engine sync/stream pipeline; qwen/openai/gemini parity + error tests; ai_engine 100%; 3774 full; 98ea976 |
 | 34 | 2026-10-30 14:10–14:13 | DeepSeek V4.1 Flash Free | S3.9 | DONE | ~12k | Single reminder prompt builder + shared json_parser; removed `_clean_json`; full/time-only, broken/empty JSON tests; 3774 full; 8cd06c1 |
+| 35 | 2026-10-30 14:14–14:19 | DeepSeek V4.1 Flash Free | S3.10 | DONE | ~11k | One safe_send with return_message + one public call_ai_sync; removed local wrappers; 458 targeted, 3768 full; 549173f |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1789,7 +1831,7 @@
 | INC-10 | 2026-10-29 | `cli/menu.py`, `cli/utils.py` | Собственные `load_chat`/`save_chat` с прямым JSON-I/O и атомарной записью дублируют `services/chat_store.py`; S3.1 перевёл только потребителей из якорей плана. | Отдельный шаг унификации CLI-хранилища | TODO |
 | INC-11 | 2026-10-29 | `services/auto_sync.py` | Автосинхронизация сама вызывает `export_chat_verbatim` + `sync_to_palace`, дублируя `services/chat_sync.sync_chat_file`; политика другая (тихий лог без UI), S3.2 не менял. | Перевести `auto_sync_chat` на общий `sync_chat_file` | TODO |
 | INC-12 | 2026-10-29 | `cli/menu.py`, `cli/utils.py` | Собственный `list_chats` с mtime-сортировкой дублирует `services/chat_store.list_chat_files`; S3.3 перевёл только Telegram-потребителей. | Перевести CLI на общий `list_chat_files` | TODO |
-| INC-13 | 2026-10-30 | `handlers/messages.py:1050` | После S3.4 `get_ai_response_sync_wrapper` не используется в production-коде (его вызывает только `tests/test_messages_handler.py::test_get_ai_response_sync_wrapper`). | S4.2 — удалить или подключить осознанно | TODO |
+| INC-13 | 2026-10-30 | `handlers/messages.py:1050` | После S3.4 `get_ai_response_sync_wrapper` не используется в production-коде (его вызывает только `tests/test_messages_handler.py::test_get_ai_response_sync_wrapper`). | S4.2 — удалить или подключить осознанно | RESOLVED (S3.10 — удалена, как и дубли в photos) |
 | INC-14 | 2026-10-30 | `services/palace_bridge.py::_search_palace_context_impl` | Guard `if not safe_query` после `query.strip().replace('"', "'")[:200]` недостижим: replace не удаляет символы, а пустой strip отсечён выше. Строка не покрывается тестами. | S4.2 — удалить мёртвый guard | TODO |
 
 ---
