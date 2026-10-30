@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (32/45 шагов `DONE`)
+**Статус работы:** в работе (33/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-30 13:57 CET
+- **Дата последнего обновления:** 2026-10-30 14:09 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S3.8a — код `0849123`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S3.8a` — завершён
+- **HEAD:** S3.8b — код `98ea976`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S3.8b` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S3.8b` — AI engine: общий pipeline sync/stream
-- **Бюджет текущего шага:** 35k
-- **Израсходовано (оценка):** ~18k (код, тесты, QA)
+- **Следующее действие:** `S3.9` — Reminder: промпт и JSON-парсинг
+- **Бюджет текущего шага:** 45k
+- **Израсходовано (оценка):** ~24k (код, parity-тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`.
-- **Последний QA:** 3768 passed / 0 failed (без untracked Garmin); targeted `tests/test_ai_engine.py` — 106 passed; `services/ai_engine.py` — 100%; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
+- **Последний QA:** 3774 passed / 0 failed (без untracked Garmin); targeted `tests/test_ai_engine.py` — 112 passed; `services/ai_engine.py` — 100%; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -119,7 +119,7 @@
 | S3.6 | Единый palace bridge | P2 | 30k | DONE | `0926734` | 2026-10-30 13:47 | ~14k |
 | S3.7 | Единый web search cache | P2 | 30k | DONE | `499a589` | 2026-10-30 13:51 | ~10k |
 | S3.8a | AI engine: helpers | P2 | 35k | DONE | `0849123` | 2026-10-30 13:57 | ~18k |
-| S3.8b | AI engine: общий pipeline | P2 | 45k | TODO | — | — | — |
+| S3.8b | AI engine: общий pipeline | P2 | 45k | DONE | `98ea976` | 2026-10-30 14:09 | ~24k |
 | S3.9 | Reminder prompt/JSON | P2 | 25k | TODO | — | — | — |
 | S3.10 | Palace utils/wrappers | P2 | 25k | TODO | — | — | — |
 | S4.1 | Безопасные ruff autofix | P2 | 30k | TODO | — | — | — |
@@ -142,9 +142,9 @@
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
-| 3 — P2 дублирование | 11 | 8 | 0 | 3 |
+| 3 — P2 дублирование | 11 | 9 | 0 | 2 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **32** | **0** | **13** |
+| **Итого** | **45** | **33** | **0** | **12** |
 
 > Обновлять после каждого шага.
 
@@ -1608,6 +1608,48 @@
 - Найдено попутно: новых нет; INC-3 (sync executor) и INC-4 (Gemini stream images/system) остаются для S3.8b/отдельного шага.
 - Следующее действие: `S3.8b` — общий pipeline sync/stream, parity-тесты, ошибки и таймауты.
 
+### S3.8b — AI engine: общий pipeline sync/stream
+
+- Дата/время: 2026-10-30 13:58–14:09 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `98ea976`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 45k / ~24k
+- Файлы: `services/ai_engine.py`, `tests/test_ai_engine.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Добавлен единый per-engine pipeline `_iter_ai_chunks(..., stream: bool)`: для qwen/openai/gemini в одном месте создаётся клиент, собираются kwargs/contents и выполняется запрос. Sync-режим отдаёт один полный чанк, stream-режим — инкрементальные чанки провайдера.
+  2. Удалены независимые копии per-engine логики из `_sync_ai_call` и `stream_ai_events_async`; оба адаптера теперь только вызывают pipeline и по-разному оформляют результат (строка с ошибкой vs `AIStreamEvent`, агрессивная очистка qwen только в sync).
+  3. Общие части вынесены в helpers: `_build_system_prompt`, `_openai_client`, `_gemini_client`, `_openai_kwargs`, `_OPENAI_STOP_TOKENS`, `_clean_qwen_sync_response`.
+  4. Различия sync/stream по system и изображениям сохранены и инкапсулированы в pipeline через `stream`: sync — system из истории и изображения только в первом user-сообщении; stream — сгенерированный system и изображения во всех user-сообщениях. Gemini: sync — system_instruction + inline images; stream — прежний контракт без images (INC-4 не расширяли).
+  5. Неизвестный движок в stream-режиме по-прежнему молча завершает поток, в sync — возвращает прежнюю ошибку; sampling в stream не применяется, как и раньше.
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_ai_engine.py` → **112 passed** (добавлено 6 тестов).
+  - Новые parity-тесты: qwen, openai, gemini — одинаковый текст на одинаковых входах; общий pipeline вызывается с `stream=False/True`; ошибка до первого токена даёт строку в sync и `AIStreamEvent` в stream.
+  - Покрытие `services/ai_engine.py` — **100%**.
+  - Полный прогон: `python3 -m pytest -q --tb=short --ignore-glob='tests/test_garmin_*.py'` → **3774 passed, 6 warnings in 17.00s**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **73 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, новых в наших файлах 0.
+  - `git diff --check` → чисто; pre-commit hooks (fix end of files, flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: 0 ошибок
+  - bandit: 73 Low + 2 Medium, новых в наших файлах 0
+  - coverage: `services/ai_engine.py` 100%
+- AC:
+  - [x] Нет двух независимых копий per-engine логики: qwen/openai/gemini обрабатываются только в `_iter_ai_chunks`; sync/stream — адаптеры режима.
+  - [x] Parity на одинаковых входах: qwen/openai/gemini дают одинаковый итоговый текст в sync и stream.
+  - [x] Ошибки: ошибка до первого токена даёт строку в sync и структурированное событие в stream; пустые ответы/choices сохранены.
+  - [x] Таймауты: существующие тесты `call_ai_async` (5 сценариев) проходят без изменений; stream-таймаут не вводился, контракт не менялся.
+  - [x] Поведение sync/stream по system, изображениям, Gemini и qwen-очистке сохранено.
+- Коммит: `98ea976` (`refactor(step-3.8b): share ai engine pipeline`)
+- Проблемы/решения:
+  - Pipeline отдаёт готовые пользовательские строки для пустых sync-ответов qwen/gemini, чтобы сохранить прежние сообщения; stream-режим для этих случаев по-прежнему завершается `empty_stream`.
+  - Агрессивная очистка qwen оставлена только в sync-ветке pipeline (`_clean_qwen_sync_response`), stream чистит только think-теги, как раньше.
+  - INC-3 (`get_ai_response_async` без таймаута) и INC-4 (Gemini stream images/system) не входили в AC этого шага и остаются открытыми.
+- Найдено попутно: новых нет; INC-3 остаётся `PARTIAL`, INC-4 — `TODO`.
+- Следующее действие: `S3.9` — Reminder: вынести построение промпта и JSON-парсинг, использовать общий `json_parser`, убрать `_clean_json`.
+
 ---
 
 ## 7. Журнал сессий
@@ -1646,6 +1688,7 @@
 | 30 | 2026-10-30 13:44–13:47 | DeepSeek V4.1 Flash Free | S3.6 | DONE | ~14k | Unified `_search_palace(with_sources)` + shared source/context formatting; KG status uses it; 5 new tests; 3749 full; 0926734 |
 | 31 | 2026-10-30 13:48–13:51 | DeepSeek V4.1 Flash Free | S3.7 | DONE | ~10k | Single web search cache; title preserved; atomic writes; invalid keys + concurrency tests; 67 targeted; 3749 full; 499a589 |
 | 32 | 2026-10-30 13:52–13:57 | DeepSeek V4.1 Flash Free | S3.8a | DONE | ~18k | Shared AI message/image/system/Gemini/text helpers used by sync+stream; 19 new tests; ai_engine 100%; 3768 full; 0849123 |
+| 33 | 2026-10-30 13:58–14:09 | DeepSeek V4.1 Flash Free | S3.8b | DONE | ~24k | Single per-engine sync/stream pipeline; qwen/openai/gemini parity + error tests; ai_engine 100%; 3774 full; 98ea976 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1695,7 +1738,7 @@
 |---|---|---|---|---|---|
 | INC-1 | 2026-10-25 | `tests/test_semantic_cache.py` | `test_ttl_eviction` флаки при `ttl=0`: `set()` и `get()` могли попасть в один тик. В S1.9 тесты TTL переведены на детерминированные часы; логика TTL не менялась. | S4.x — стабилизировать тест/логику TTL | RESOLVED (S1.9) |
 | INC-2 | 2026-10-25 | `handlers/palace/save.py:281`, `services/brainstorm.py:370`, `handlers/notes_agent.py:268` | Вызывающие оборачивают `safe_html_format(...)` в `<code>`; разрешённые теги внутри такого значения сохраняются как HTML, а не выводятся литерально. Для данных в code нужен `html.escape`. | S4.3 или отдельный шаг HTML-санитизации | TODO |
-| INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов. `call_ai_async` уже внедрён в `navigation`, `action_bar`, `palace/__init__` и `transkript` (S1.4a/b); старый путь остаётся. | S3.8b или отдельный шаг | PARTIAL |
+| INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов. `call_ai_async` уже внедрён в `navigation`, `action_bar`, `palace/__init__` и `transkript` (S1.4a/b); старый путь остаётся. S3.8b не менял контракт старого пути. | S4.2 или отдельный шаг | PARTIAL |
 | INC-4 | 2026-10-25 | `services/ai_engine.py` (`stream_ai_events_async`) | Gemini-ветка стриминга игнорирует `images` и system-сообщение из `messages`, используя только `system_prompt`. Sync-путь исправлен в S1.5. | Отдельный шаг стримингового Gemini-контракта | TODO |
 | INC-5 | 2026-10-25 | `handlers/messages.py` (ветка `search_web`) | При исключении `search_web` исходный ответ с `SEARCH: ...` остаётся в `answer` и может быть сохранён/закэширован как обычный ответ; `test_ai_search_pattern_error` закрепляет это поведение. | Отдельный шаг обработки ошибок web search | TODO |
 | INC-6 | 2026-10-25 | `services/palace_mcp.py` (`start`/`stop`) | Нет lifecycle-lock: конкурентные `start()`/`stop()` могут гонять создание и завершение процесса; два одновременных `start()` теоретически оставят один процесс без ссылки. | Отдельный шаг сериализации lifecycle | TODO |
