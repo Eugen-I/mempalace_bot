@@ -22,6 +22,7 @@ from handlers.chat import user_sessions, waiting_for_name
 from handlers.palace.shared import _user_context
 from services.ai_engine import AIStreamEvent
 from services.reflection import REFLECTION_NS
+from services.wing_registry import WING_DISPLAY_NAMES
 
 
 class FakeUser:
@@ -1482,13 +1483,23 @@ def test_ai_finally_delete_fail(monkeypatch, tmp_path):
 # ---------- wings ----------
 
 
-def test_ai_explicit_wing(monkeypatch, tmp_path):
+@pytest.mark.parametrize(("wing", "display_name"), WING_DISPLAY_NAMES.items())
+def test_ai_explicit_wing(monkeypatch, tmp_path, wing, display_name):
     data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
-    msg = FakeMessage(text="/dreams: расскажи о снах")
+    msg = FakeMessage(text=f"/{wing}: расскажи о снах")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
     assert data["messages"][-2] == {"role": "user", "content": "расскажи о снах"}
-    assert any("Крыло: 🌙 Сны" in e[0] for e in msg.edits)
+    assert any(f"Крыло: {display_name}" in e[0] for e in msg.edits)
+
+
+def test_ai_explicit_wing_normalizes_case(monkeypatch, tmp_path):
+    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    msg = FakeMessage(text="/PROJECTS: вопрос")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert data["messages"][-2] == {"role": "user", "content": "вопрос"}
+    assert any("Крыло: 💻 Проекты" in e[0] for e in msg.edits)
 
 
 def test_ai_explicit_wing_status_edit_fail(monkeypatch, tmp_path):

@@ -62,6 +62,7 @@ from services.summary_service import SummaryMode, generate_summary
 from services.text_formatter import safe_html_format
 from services.tts_processor import get_voice_settings
 from services.wing_classifier import classify_wing
+from services.wing_registry import get_wing_display_name, normalize_wing
 from services.youtube import download_audio
 
 from services.logging_setup import setup_logging
@@ -598,8 +599,8 @@ async def process_user_message(message: types.Message):
         target_wing = ""
         explicit_wing_match = re.match(r"^/(\w+):\s*(.+)", clean_q)
         if explicit_wing_match:
-            possible_wing = explicit_wing_match.group(1).lower()
-            if possible_wing in ["dreams", "projects", "philosophy", "creative"]:
+            possible_wing = normalize_wing(explicit_wing_match.group(1))
+            if possible_wing:
                 target_wing = possible_wing
                 clean_q = explicit_wing_match.group(2)
                 logger.info(f"[WING] Явно указано крыло: {target_wing}")
@@ -616,14 +617,7 @@ async def process_user_message(message: types.Message):
 
         wing_info = ""
         if target_wing:
-            wing_names = {
-                "dreams": "🌙 Сны",
-                "projects": "💻 Проекты",
-                "philosophy": "🏛 Философия",
-                "creative": "🎨 Творчество",
-                "psychology": "🧠 Психология",
-            }
-            wing_display = wing_names.get(target_wing, target_wing)
+            wing_display = get_wing_display_name(target_wing)
             wing_info = f" | 🔍 Крыло: {wing_display}"
             try:
                 await status.edit_text(

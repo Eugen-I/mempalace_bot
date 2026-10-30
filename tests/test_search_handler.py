@@ -1,11 +1,11 @@
 """Unit tests for handlers.search."""
 
 import json
-from types import SimpleNamespace
 
 import pytest
 
 from handlers import search as sh
+from services.wing_registry import WING_DISPLAY_NAMES, WING_KEYS
 
 
 class FakeUser:
@@ -156,7 +156,14 @@ async def test_cmd_wing_search_prompt(monkeypatch):
     msg = FakeMessage(4242)
     await sh.cmd_wing_search_prompt(msg)
     assert msg.answers[0][0] == "🔍 Выберите крыло для поиска:"
-    assert msg.answers[0][2] is not None
+    markup = msg.answers[0][2]
+    assert markup is not None
+    assert [row[0].text for row in markup.inline_keyboard] == list(
+        WING_DISPLAY_NAMES.values(),
+    )
+    assert [row[0].callback_data for row in markup.inline_keyboard] == [
+        f"wing_search:{wing}" for wing in WING_KEYS
+    ]
 
 
 @pytest.mark.asyncio
@@ -185,6 +192,15 @@ async def test_cb_wing_search_select_unknown(monkeypatch):
     await sh.cb_wing_search_select(cb)
     assert pending[4242] == "other"
     assert "other" in cb.message.edits[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cb_wing_search_select_normalizes_case(monkeypatch):
+    pending = _enable(monkeypatch)
+    cb = FakeCb(4242, data="wing_search:PSYCHOLOGY")
+    await sh.cb_wing_search_select(cb)
+    assert pending[4242] == "psychology"
+    assert "🧠 Психология" in cb.message.edits[0][0]
 
 
 @pytest.mark.asyncio
@@ -222,7 +238,8 @@ async def test_cmd_search_basic(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cmd_search_with_wing(monkeypatch):
+@pytest.mark.parametrize("wing", WING_KEYS)
+async def test_cmd_search_with_wing(monkeypatch, wing):
     _enable(monkeypatch)
     captured = {}
 
@@ -234,10 +251,29 @@ async def test_cmd_search_with_wing(monkeypatch):
     monkeypatch.setattr(sh, "search_palace_with_sources", fake_search)
     monkeypatch.setattr(sh, "send_text_only", _async_none)
     monkeypatch.setattr(sh, "split_message", lambda t: [t])
-    msg = FakeMessage(4242, text="/search --wing dreams сон")
+    msg = FakeMessage(4242, text=f"/search --wing {wing} сон")
     await sh.cmd_search(msg)
     assert captured["text"] == "сон"
-    assert captured["wing"] == "dreams"
+    assert captured["wing"] == wing
+
+
+@pytest.mark.asyncio
+async def test_cmd_search_with_wing_normalizes_case(monkeypatch):
+    _enable(monkeypatch)
+    captured = {}
+
+    async def fake_search(text, limit=5, wing=""):
+        captured["text"] = text
+        captured["wing"] = wing
+        return "найдено", []
+
+    monkeypatch.setattr(sh, "search_palace_with_sources", fake_search)
+    monkeypatch.setattr(sh, "send_text_only", _async_none)
+    monkeypatch.setattr(sh, "split_message", lambda t: [t])
+    msg = FakeMessage(4242, text="/search --wing PSYCHOLOGY сон")
+    await sh.cmd_search(msg)
+    assert captured["text"] == "сон"
+    assert captured["wing"] == "psychology"
 
 
 @pytest.mark.asyncio
