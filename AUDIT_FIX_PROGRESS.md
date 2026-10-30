@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (28/45 шагов `DONE`)
+**Статус работы:** в работе (29/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-30 13:37 CET
+- **Дата последнего обновления:** 2026-10-30 13:43 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S3.4 — код `7320724`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S3.4` — завершён
+- **HEAD:** S3.5 — код `805e15e`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S3.5` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S3.5` — единый реестр wing
-- **Бюджет текущего шага:** 45k
-- **Израсходовано (оценка):** ~20k (ревью, доводка тестов, QA)
+- **Следующее действие:** `S3.6` — единый palace bridge
+- **Бюджет текущего шага:** 20k
+- **Израсходовано (оценка):** ~14k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing флак `test_confirm_write_delete_requires_two_confirmations` (изолированно проходит).
-- **Последний QA:** 3716 passed / 1 known flake (без untracked Garmin); targeted 400 passed; `services/summary_service.py` — 100%; lint — 7 baseline; mypy — 0; bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
+- **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing флак `test_confirm_write_delete_requires_two_confirmations` в этом прогоне не проявился.
+- **Последний QA:** 3744 passed / 0 failed (без untracked Garmin); targeted 173 passed; `services/wing_registry.py` — 100%; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -115,7 +115,7 @@
 | S3.2 | Единая синхронизация дворца | P2 | 25k | DONE | `ae7364f` | 2026-10-29 13:32 | ~14k |
 | S3.3 | Единый список чатов | P2 | 30k | DONE | `fdfa202` | 2026-10-29 13:40 | ~13k |
 | S3.4 | Единый summary | P2 | 45k | DONE | `7320724` | 2026-10-30 13:37 | ~20k |
-| S3.5 | Единый wing registry | P2 | 20k | TODO | — | — | — |
+| S3.5 | Единый wing registry | P2 | 20k | DONE | `805e15e` | 2026-10-30 13:43 | ~14k |
 | S3.6 | Единый palace bridge | P2 | 30k | TODO | — | — | — |
 | S3.7 | Единый web search cache | P2 | 30k | TODO | — | — | — |
 | S3.8a | AI engine: helpers | P2 | 35k | TODO | — | — | — |
@@ -142,9 +142,9 @@
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
-| 3 — P2 дублирование | 11 | 4 | 0 | 7 |
+| 3 — P2 дублирование | 11 | 5 | 0 | 6 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **28** | **0** | **17** |
+| **Итого** | **45** | **29** | **0** | **16** |
 
 > Обновлять после каждого шага.
 
@@ -1454,6 +1454,42 @@
   - INC-13: `handlers/messages.py::get_ai_response_sync_wrapper` после S3.4 используется только тестами — кандидат на удаление/подключение в S4.2.
 - Следующее действие: `S3.5` — единый реестр wing (`services/wing_registry.py`), перевести `handlers/messages.py` и `handlers/search.py`.
 
+### S3.5 — Единый реестр wing
+
+- Дата/время: 2026-10-30 13:38–13:43 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `805e15e`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 20k / ~14k
+- Файлы: `services/wing_registry.py` (новый), `handlers/messages.py`, `handlers/search.py`, `tests/test_wing_registry.py` (новый), `tests/test_search_handler.py`, `tests/test_messages_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Создан `services/wing_registry.py`: канонические ключи и русские display names пяти крыльев, `WING_KEYS` с сохранённым порядком, `normalize_wing()` (trim + lower, неизвестное → `""`), `get_wing_display_name()` (неизвестное значение возвращается как есть).
+  2. `handlers/messages.py`: явный `/wing:` больше не сверяется с локальным списком из четырёх элементов — используется `normalize_wing`; отображаемое имя берётся из реестра. Как следствие, явный `/psychology:` теперь распознаётся (раньше работал только через авто-классификатор).
+  3. `handlers/search.py`: клавиатура выбора крыла строится из `WING_KEYS` + display names; callback `wing_search:` нормализует ключ (неизвестный сохраняется как есть); `--wing` нормализуется через реестр, локальный whitelist удалён.
+  4. Поведение сохранено: порядок кнопок, тексты «🔍 Выберите крыло для поиска:», «✏️ Введите текст для поиска в крыле …», fallback неизвестного значения и формат `wing_info` не менялись.
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_wing_registry.py tests/test_search_handler.py tests/test_messages_handler.py` → **173 passed, 1 warning in 5.73s**; `services/wing_registry.py` — **100%**.
+  - Полный прогон: `python3 -m pytest -q --tb=short --ignore-glob='tests/test_garmin_*.py'` → **3744 passed, 6 warnings in 16.14s**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **74 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, новых в наших файлах 0.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: 0 ошибок
+  - bandit: 74 Low + 2 Medium, новых в наших файлах 0
+  - coverage: `services/wing_registry.py` 100%
+- AC:
+  - [x] Нет двух словарей display names и двух whitelist: оба handler'а используют `services/wing_registry.py`.
+  - [x] Тесты покрывают все пять крыльев, неизвестный wing, регистр/пробелы и локализованные display names.
+  - [x] Клавиатура поиска и все явные/`--wing` пути используют один реестр.
+- Коммит: `805e15e` (`refactor(step-3.5): centralize wing registry`)
+- Проблемы/решения:
+  - В `handlers/messages.py` явный whitelist содержал 4 крыла без `psychology`, хотя display names и авто-классификатор знали пятое. Единый реестр устранил расхождение; это осознанное исправление, покрыто параметризованным тестом.
+  - В `tests/test_search_handler.py` удалён неиспользуемый импорт `SimpleNamespace`: `make lint` исключает `tests`, но pre-commit flake8 проверяет staged-файлы и падал бы на F401.
+- Найдено попутно: —
+- Следующее действие: `S3.6` — единый поиск palace bridge (`services/palace_bridge.py`), флаг `with_sources` и общее форматирование источников.
+
 ---
 
 ## 7. Журнал сессий
@@ -1488,6 +1524,7 @@
 | 26 | 2026-10-29 12:51–13:34 | DeepSeek V4.1 Flash Free | S3.2 | DONE | ~14k | Shared manual sync scenario for /sync, main button and settings; typed result, error mapping; 8 new tests; 3705 full; ae7364f |
 | 27 | 2026-10-29 13:35–13:41 | DeepSeek V4.1 Flash Free | S3.3 | DONE | ~13k | Shared chat file listing, deterministic mtime sort, keyboard render helper, auto-activation reuse; 4 new tests; 3709 full; fdfa202 |
 | 28 | 2026-10-30 13:30–13:37 | DeepSeek V4.1 Flash Free | S3.4 | DONE | ~20k | `SummaryMode` service for chat/periodic/insight/room; 3 handlers unified; 8 new tests; 3716 full + 1 known flake; 7320724 |
+| 29 | 2026-10-30 13:38–13:43 | DeepSeek V4.1 Flash Free | S3.5 | DONE | ~14k | Single wing registry (5 keys, names, normalize); both handlers migrated; psychology explicit wing fixed; 27 new tests; 3744 full; 805e15e |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
