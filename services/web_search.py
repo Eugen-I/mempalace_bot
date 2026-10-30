@@ -1,9 +1,5 @@
 import html
-import json
 import logging
-import time
-import uuid
-from pathlib import Path
 import asyncio
 
 import httpx
@@ -12,8 +8,8 @@ from config import (
     BING_SEARCH_API_KEY,
     GOOGLE_CSE_API_KEY,
     GOOGLE_CSE_ID,
-    DATA_DIR,
 )
+from services.web_search_cache import save_web_search
 
 logger = logging.getLogger("WebSearch")
 
@@ -24,46 +20,6 @@ DDG_LITE_URL = "https://lite.duckduckgo.com/lite/"
 GOOGLE_CSE_URL = "https://www.googleapis.com/customsearch/v1"
 BING_SEARCH_URL = "https://api.bing.microsoft.com/v7.0/search"
 YAHOO_SEARCH_URL = "https://search.yahoo.com/search"
-
-
-# --- Кэш результатов поиска ---
-WEB_SEARCH_CACHE_DIR = Path(DATA_DIR) / "web_search_cache"
-WEB_SEARCH_CACHE_DIR.mkdir(exist_ok=True)
-CACHE_TTL = 24 * 60 * 60
-
-
-def save_web_search(query: str, sources: list[dict], ai_summary: str = "") -> str:
-    search_id = uuid.uuid4().hex[:12]
-    cache_file = WEB_SEARCH_CACHE_DIR / f"{search_id}.json"
-    data = {
-        "id": search_id,
-        "query": query,
-        "sources": [{"text": s["text"], "url": s["url"]} for s in sources],
-        "ai_summary": ai_summary,
-        "timestamp": time.time(),
-    }
-    cache_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return search_id
-
-
-def load_web_search(search_id: str) -> dict | None:
-    cache_file = WEB_SEARCH_CACHE_DIR / f"{search_id}.json"
-    if not cache_file.exists():
-        return None
-    try:
-        return json.loads(cache_file.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def cleanup_old_cache():
-    now = time.time()
-    for f in WEB_SEARCH_CACHE_DIR.glob("*.json"):
-        try:
-            if now - f.stat().st_mtime > CACHE_TTL:
-                f.unlink()
-        except Exception:
-            pass
 
 
 # --- Парсинг HTML ---

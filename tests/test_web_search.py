@@ -1,98 +1,23 @@
 """Unit tests for services.web_search.
 
-Covers cache helpers, HTML result parsing, per-engine searches, multi-engine
-aggregation, search_web formatting/fallbacks and deep search.
+Covers HTML result parsing, per-engine searches, multi-engine aggregation,
+search_web formatting/fallbacks and deep search.
 """
-
-import json
 
 import httpx
 import pytest
 
 import services.web_search as ws
+import services.web_search_cache as wsc
 
 SNIPPET_HTML = '<table><tr><td class="table-snippet">{}</td></tr></table>'
 
 
 @pytest.fixture(autouse=True)
 def cache_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(ws, "WEB_SEARCH_CACHE_DIR", tmp_path / "cache")
-    ws.WEB_SEARCH_CACHE_DIR.mkdir(exist_ok=True)
-    yield ws.WEB_SEARCH_CACHE_DIR
-
-
-# ---------- save/load/cleanup cache ----------
-
-
-def test_save_web_search_creates_file(cache_dir):
-    sid = ws.save_web_search("запрос", [{"text": "текст", "url": "http://x"}], "итог")
-    assert sid
-    data = json.loads((cache_dir / f"{sid}.json").read_text(encoding="utf-8"))
-    assert data["query"] == "запрос"
-    assert data["sources"] == [{"text": "текст", "url": "http://x"}]
-    assert data["ai_summary"] == "итог"
-
-
-def test_load_web_search_happy(cache_dir):
-    sid = ws.save_web_search("q", [], "")
-    data = ws.load_web_search(sid)
-    assert data["query"] == "q"
-
-
-def test_load_web_search_missing(cache_dir):
-    assert ws.load_web_search("nope") is None
-
-
-def test_load_web_search_broken(cache_dir):
-    (cache_dir / "bad.json").write_text("{broken", encoding="utf-8")
-    assert ws.load_web_search("bad") is None
-
-
-def test_cleanup_old_cache_removes_old(cache_dir, monkeypatch):
-    import os
-    import time
-
-    old = cache_dir / "old.json"
-    fresh = cache_dir / "fresh.json"
-    old.write_text("{}", encoding="utf-8")
-    fresh.write_text("{}", encoding="utf-8")
-    old_mtime = time.time() - ws.CACHE_TTL - 100
-    os.utime(old, (old_mtime, old_mtime))
-    ws.cleanup_old_cache()
-    assert not old.exists()
-    assert fresh.exists()
-
-
-def test_cleanup_old_cache_keeps_fresh(cache_dir, monkeypatch):
-    import os
-    import time
-
-    old = cache_dir / "old.json"
-    old.write_text("{}", encoding="utf-8")
-    old_mtime = time.time() - ws.CACHE_TTL + 100
-    os.utime(old, (old_mtime, old_mtime))
-    ws.cleanup_old_cache()
-    assert old.exists()
-
-
-def test_cleanup_old_cache_ignores_errors(cache_dir, monkeypatch):
-    # мокаем glob через сам модуль (fs: не предоставляет glob), используем
-    # переопределение класса — вместо этого создаём файл-каталог, чтобы stat упал
-    bad = cache_dir / "bad_dir.json"
-    bad.mkdir()  # каталог с .json-расширением: stat сработает, unlink упадёт → ловится
-    ws.cleanup_old_cache()
-    assert bad.is_dir()
-
-
-def test_cleanup_old_cache_ignores_stat_error(cache_dir, monkeypatch):
-    class BoomPath(type(cache_dir)):
-        def stat(self):
-            raise FileNotFoundError("gone")
-
-    fake = BoomPath(cache_dir / "gone.json")
-    monkeypatch.setattr(ws.Path, "glob", lambda self, pat: [fake])
-    ws.cleanup_old_cache()
-    assert not fake.exists()
+    monkeypatch.setattr(wsc, "WEB_SEARCH_CACHE_DIR", tmp_path / "cache")
+    wsc.WEB_SEARCH_CACHE_DIR.mkdir(exist_ok=True)
+    yield wsc.WEB_SEARCH_CACHE_DIR
 
 
 # ---------- _parse_html_results ----------
@@ -708,6 +633,8 @@ async def test_deep_search_web_tavily_fallback(monkeypatch, cache_dir):
     out = await ws.deep_search_web("запрос")
     assert out["total_sources"] == 1
     assert out["sources"][0]["url"] == "http://t1"
+    cached = wsc.load_web_search(out["search_id"])
+    assert cached["sources"][0]["title"] == "Тайв"
 
 
 @pytest.mark.asyncio

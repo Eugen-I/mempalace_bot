@@ -4,6 +4,7 @@
 """
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -52,6 +53,44 @@ def test_save_with_id_uses_given_id(_cache_dir):
     assert (_cache_dir / "abc12345.json").exists()
 
 
+def test_save_with_id_rejects_invalid(_cache_dir):
+    with pytest.raises(ValueError, match="Invalid search_id"):
+        wsc.save_web_search_with_id("../evil", "q", [])
+
+
+def test_concurrent_saves_are_readable(_cache_dir):
+    def save_one(i: int) -> str:
+        return wsc.save_web_search(
+            f"q{i}",
+            [{"text": f"t{i}", "url": "u", "title": f"T{i}"}],
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        ids = list(pool.map(save_one, range(20)))
+
+    assert len(set(ids)) == 20
+    for i, sid in enumerate(ids):
+        data = wsc.load_web_search(sid)
+        assert data is not None
+        assert data["query"] == f"q{i}"
+        assert data["sources"][0]["title"] == f"T{i}"
+
+
+def test_concurrent_same_id_writes_leave_valid_json(_cache_dir):
+    def write_one(i: int) -> None:
+        wsc.save_web_search_with_id(
+            "same1234", f"q{i}", [{"text": f"t{i}", "url": "u"}],
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(write_one, range(20)))
+
+    data = wsc.load_web_search("same1234")
+    assert data is not None
+    assert data["query"] in {f"q{i}" for i in range(20)}
+    assert not list(_cache_dir.glob("*.tmp"))
+
+
 # ─── load_web_search ───
 
 
@@ -63,12 +102,23 @@ def test_load_web_search_ok(_cache_dir):
 
 
 def test_load_web_search_missing_returns_none(_cache_dir):
-    assert wsc.load_web_search("nope") is None
+    assert wsc.load_web_search("nope12345") is None
 
 
 def test_load_web_search_corrupt_file_returns_none(_cache_dir):
-    (_cache_dir / "bad.json").write_text("{не json", encoding="utf-8")
-    assert wsc.load_web_search("bad") is None
+    (_cache_dir / "bad12345.json").write_text("{не json", encoding="utf-8")
+    assert wsc.load_web_search("bad12345") is None
+
+
+@pytest.mark.parametrize("bad", [
+    "short",
+    "../etc/passwd",
+    "a/b/cdefgh",
+    "abc\\defgh",
+    "abc defgh",
+])
+def test_load_web_search_rejects_invalid_id(_cache_dir, bad):
+    assert wsc.load_web_search(bad) is None
 
 
 # ─── cleanup_old_cache ───
