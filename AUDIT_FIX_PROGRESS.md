@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (33/45 шагов `DONE`)
+**Статус работы:** в работе (34/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-30 14:09 CET
+- **Дата последнего обновления:** 2026-10-30 14:13 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S3.8b — код `98ea976`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S3.8b` — завершён
+- **HEAD:** S3.9 — код `8cd06c1`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S3.9` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S3.9` — Reminder: промпт и JSON-парсинг
-- **Бюджет текущего шага:** 45k
-- **Израсходовано (оценка):** ~24k (код, parity-тесты, QA)
+- **Следующее действие:** `S3.10` — Palace utils и sync-обёртки
+- **Бюджет текущего шага:** 25k
+- **Израсходовано (оценка):** ~12k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`.
-- **Последний QA:** 3774 passed / 0 failed (без untracked Garmin); targeted `tests/test_ai_engine.py` — 112 passed; `services/ai_engine.py` — 100%; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
+- **Последний QA:** 3774 passed / 0 failed (без untracked Garmin); targeted `tests/test_reminder_handler.py` — 51 passed; `handlers/reminder.py` — 98% (4 неизменённые error-строки `cb_remind_target`); lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -120,7 +120,7 @@
 | S3.7 | Единый web search cache | P2 | 30k | DONE | `499a589` | 2026-10-30 13:51 | ~10k |
 | S3.8a | AI engine: helpers | P2 | 35k | DONE | `0849123` | 2026-10-30 13:57 | ~18k |
 | S3.8b | AI engine: общий pipeline | P2 | 45k | DONE | `98ea976` | 2026-10-30 14:09 | ~24k |
-| S3.9 | Reminder prompt/JSON | P2 | 25k | TODO | — | — | — |
+| S3.9 | Reminder prompt/JSON | P2 | 25k | DONE | `8cd06c1` | 2026-10-30 14:13 | ~12k |
 | S3.10 | Palace utils/wrappers | P2 | 25k | TODO | — | — | — |
 | S4.1 | Безопасные ruff autofix | P2 | 30k | TODO | — | — | — |
 | S4.2 | Мёртвый код/unused/mypy | P2 | 25k | TODO | — | — | — |
@@ -142,9 +142,9 @@
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
-| 3 — P2 дублирование | 11 | 9 | 0 | 2 |
+| 3 — P2 дублирование | 11 | 10 | 0 | 1 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **33** | **0** | **12** |
+| **Итого** | **45** | **34** | **0** | **11** |
 
 > Обновлять после каждого шага.
 
@@ -1650,6 +1650,46 @@
 - Найдено попутно: новых нет; INC-3 остаётся `PARTIAL`, INC-4 — `TODO`.
 - Следующее действие: `S3.9` — Reminder: вынести построение промпта и JSON-парсинг, использовать общий `json_parser`, убрать `_clean_json`.
 
+### S3.9 — Reminder: единый промпт и JSON-парсер
+
+- Дата/время: 2026-10-30 14:10–14:13 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `8cd06c1`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 25k / ~12k
+- Файлы: `handlers/reminder.py`, `tests/test_reminder_handler.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Добавлен единый билдер `_build_reminder_prompt(text, *, time_only=False, now=None)`: общий контекст даты/времени и два режима — полный разбор напоминания и разбор только времени. Тексты промптов сохранены, включая JSON-схему и `time_description`.
+  2. Добавлен `_request_reminder_json(text, *, time_only=False)`: централизованно выбирает system-prompt, строит сообщения, вызывает AI и разбирает ответ общим `services.json_parser.safe_parse_llm_json(..., expected_type=dict)`.
+  3. `_parse_reminder` и ветка `ask_time` используют один request/prompt/parser-путь; при `None` от парсера логируется `[REM] failed to parse JSON` и возвращается `{}`.
+  4. Удалены локальный `_clean_json` и импорт `json`; разбор фенсов, шума и битого JSON теперь обеспечивает общий парсер.
+  5. Поведение обоих режимов сохранено: полный разбор добавляет `unix_timestamp`, `ask_time` подтверждает время, ошибки/пустой ответ ведут к прежним сообщениям.
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_reminder_handler.py` → **51 passed**.
+  - Новые тесты: полный и time-only prompt builder; полный режим с fenced JSON, битым JSON и пустым ответом; time-only с fenced JSON и пустым ответом.
+  - Полный прогон: `python3 -m pytest -q --tb=short --ignore-glob='tests/test_garmin_*.py'` → **3774 passed, 6 warnings in 16.64s**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **73 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, новых в наших файлах 0.
+  - `git diff --check` → чисто; pre-commit hooks (fix end of files, flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: 0 ошибок
+  - bandit: 73 Low + 2 Medium, новых в наших файлах 0
+  - coverage: `handlers/reminder.py` 98%; новые ветки покрыты, 4 непокрытые строки — неизменённые error-ветки `cb_remind_target`
+- AC:
+  - [x] Один промпт-билдер: оба режима используют `_build_reminder_prompt` с флагом `time_only`.
+  - [x] Один парсер: оба режима используют `safe_parse_llm_json`; `_clean_json` удалён.
+  - [x] Оба режима: полный разбор и `ask_time` покрыты тестами.
+  - [x] Битый JSON: возвращается `{}`, логируется предупреждение, пользователь видит прежнюю ошибку.
+  - [x] Пустой ответ: возвращается `{}`, срабатывают прежние fallback-сообщения.
+- Коммит: `8cd06c1` (`refactor(step-3.9): unify reminder prompt/json`)
+- Проблемы/решения:
+  - `safe_parse_llm_json(..., expected_type=dict)` теперь отсекает не-dict JSON; старый `_clean_json` мог вернуть список, после чего вызывающий код падал на `.get`. Новое поведение безопаснее и соответствует контракту `_parse_reminder -> dict`.
+  - Лог `failed to parse JSON` сохранён, чтобы существующее поведение диагностики не менялось.
+- Найдено попутно: новых нет; INC-3 и INC-4 остаются открытыми.
+- Следующее действие: `S3.10` — Palace utils и sync-обёртки.
+
 ---
 
 ## 7. Журнал сессий
@@ -1689,6 +1729,7 @@
 | 31 | 2026-10-30 13:48–13:51 | DeepSeek V4.1 Flash Free | S3.7 | DONE | ~10k | Single web search cache; title preserved; atomic writes; invalid keys + concurrency tests; 67 targeted; 3749 full; 499a589 |
 | 32 | 2026-10-30 13:52–13:57 | DeepSeek V4.1 Flash Free | S3.8a | DONE | ~18k | Shared AI message/image/system/Gemini/text helpers used by sync+stream; 19 new tests; ai_engine 100%; 3768 full; 0849123 |
 | 33 | 2026-10-30 13:58–14:09 | DeepSeek V4.1 Flash Free | S3.8b | DONE | ~24k | Single per-engine sync/stream pipeline; qwen/openai/gemini parity + error tests; ai_engine 100%; 3774 full; 98ea976 |
+| 34 | 2026-10-30 14:10–14:13 | DeepSeek V4.1 Flash Free | S3.9 | DONE | ~12k | Single reminder prompt builder + shared json_parser; removed `_clean_json`; full/time-only, broken/empty JSON tests; 3774 full; 8cd06c1 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
