@@ -1551,7 +1551,7 @@ def test_answer_room_ai_timeout_replaces_status(monkeypatch):
     async def timed_out(*a, **k):
         raise nav.AITimeoutError("too slow")
 
-    monkeypatch.setattr(nav, "call_ai_async", timed_out)
+    monkeypatch.setattr("services.summary_service.call_ai_async", timed_out)
     captured = {}
     _capture_finalize(monkeypatch, captured)
     msg = FakeMessage()
@@ -1572,7 +1572,7 @@ def test_answer_room_ai_error_replaces_status(monkeypatch):
     async def failing_ai(*a, **k):
         raise RuntimeError("ai down")
 
-    monkeypatch.setattr(nav, "call_ai_async", failing_ai)
+    monkeypatch.setattr("services.summary_service.call_ai_async", failing_ai)
     captured = {}
     _capture_finalize(monkeypatch, captured)
     msg = FakeMessage()
@@ -1590,15 +1590,14 @@ def test_answer_room_ai_step2_error_replaces_analysis_status(monkeypatch):
     monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
     monkeypatch.setattr(nav, "get_current_ai", lambda: ("ollama", "qwen"))
 
-    calls = []
+    async def fake_summary(*a, **k):
+        return "саммари"
 
-    async def first_then_fail(*a, **k):
-        calls.append(True)
-        if len(calls) == 1:
-            return "саммари"
+    async def failing_ai(*a, **k):
         raise RuntimeError("second call down")
 
-    monkeypatch.setattr(nav, "call_ai_async", first_then_fail)
+    monkeypatch.setattr("services.summary_service.call_ai_async", fake_summary)
+    monkeypatch.setattr(nav, "call_ai_async", failing_ai)
     captured = {}
     _capture_finalize(monkeypatch, captured)
     msg = FakeMessage()

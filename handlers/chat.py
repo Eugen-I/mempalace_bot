@@ -13,10 +13,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import CHATS_DIR, allowed_callback, allowed_only
 from services.ai_cache import cache_ai_response
-from services.ai_engine import get_ai_response_async, get_current_ai
+from services.ai_engine import get_current_ai
 from services.chat_store import list_chat_files, load_chat, save_chat
 from services.chat_sync import ChatSyncStatus, sync_active_chat
-from services.prompts import get_summary_prompt
+from services.summary_service import SummaryMode, generate_summary
 from services.text_formatter import safe_html_format, split_message
 from services.ttl_dict import TtlDict
 
@@ -201,30 +201,14 @@ async def generate_fresh_summary(messages: list, existing_summary: str = "") -> 
         return "Чат пуст."
 
     engine, model = get_current_ai()
-
-    # Берем последние 20 сообщений для контекста
-    dialog_slice = "\n".join([f"{m['role']}: {m['content']}" for m in messages[-20:]])
-
-    # Если есть старое саммари, добавляем его в контекст, чтобы сохранить нить
-    context_prefix = ""
-    if existing_summary and len(existing_summary.strip()) > 10:
-        context_prefix = f"ПРЕДЫДУЩЕЕ САММАРИ:\n{existing_summary}\n\nТЕКУЩИЙ ДИАЛОГ:\n"
-
-    prompt = get_summary_prompt(
-        dialog_slice=dialog_slice, context_prefix=context_prefix,
-    )
-
     try:
-        summary = await get_ai_response_async(
-            engine, model, [{"role": "system", "content": prompt}], context="",
+        return await generate_summary(
+            SummaryMode.CHAT,
+            engine=engine,
+            model=model,
+            messages=messages,
+            existing_summary=existing_summary,
         )
-
-        # Принудительная обрезка, если модель все равно болтлива
-        words = summary.split()
-        if len(words) > 50:
-            summary = " ".join(words[:50]) + "..."
-        return summary.strip()
-
     except Exception as e:
         logger.error(f"Ошибка генерации саммари: {e}")
         return "Не удалось сгенерировать саммари."
@@ -234,22 +218,13 @@ async def update_summary_if_needed(user_id: int, filepath: str, messages: list):
     """Генерирует саммари каждые 5 сообщений и сохраняет его."""
     if len(messages) >= 5 and len(messages) % 5 == 0:
         engine, model = get_current_ai()
-        # Берем последние 10 сообщений для контекста саммари
-        dialog_slice = "\n".join(
-            [f"{m['role']}: {m['content']}" for m in messages[-15:]],
-        )
-
-        prompt = get_summary_prompt(dialog_slice=dialog_slice, context_prefix="")
-
         try:
-            summary = await get_ai_response_async(
-                engine, model, [{"role": "user", "content": prompt}], context="",
+            summary = await generate_summary(
+                SummaryMode.CHAT_PERIODIC,
+                engine=engine,
+                model=model,
+                messages=messages,
             )
-
-            # Принудительная обрезка, если модель все равно болтлива
-            words = summary.split()
-            if len(words) > 40:
-                summary = " ".join(words[:40]) + "..."
 
             data = load_chat(filepath)
             data["summary"] = summary

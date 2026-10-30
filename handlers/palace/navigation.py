@@ -11,6 +11,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import allowed_callback
 from services.ai_engine import AITimeoutError, call_ai_async, get_current_ai
 from services.palace_mcp import get_mcp
+from services.summary_service import SummaryMode, generate_summary
 from services.text_formatter import safe_html_format
 from ._utils import safe_edit_text
 
@@ -945,25 +946,15 @@ async def _answer_room_ai(
     # Step 1: generate per-note summaries + combined overview
     engine, model = get_current_ai()
     await msg.edit_text("🧠 Составляю саммари по каждой записи комнаты...")
-    step1_prompt = (
-        f"Ниже — все записи из комнаты {wing}/{room}.\n"
-        "Сделай две вещи:\n"
-        "1) Для каждой записи напиши краткую саммари (2–3 предложения).\n"
-        "2) После этого составь ОБЩУЮ структурированную саммари по всей комнате — "
-        "сгруппируй темы, выдели главное, свяжи между собой.\n\n"
-        f"Записи комнаты:\n{ctx_text}"
-    )
     try:
-        combined_summary = await call_ai_async(engine, model, [
-            {
-                "role": "system",
-                "content": (
-                    "Ты — аналитик. Составляешь саммари по заметкам. "
-                    "Отвечай на русском языке."
-                ),
-            },
-            {"role": "user", "content": step1_prompt},
-        ])
+        combined_summary = await generate_summary(
+            SummaryMode.ROOM,
+            engine=engine,
+            model=model,
+            text=ctx_text,
+            wing=wing,
+            room=room,
+        )
     except Exception as exc:
         await _report_ai_error(msg, exc)
         return

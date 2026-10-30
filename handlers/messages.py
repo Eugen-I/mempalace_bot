@@ -58,6 +58,7 @@ from services.palace_bridge import search_with_kg_status
 from services.prompts import get_smart_prompt
 from services.semantic_cache import get_cache
 from services.sender import send_response_with_mode
+from services.summary_service import SummaryMode, generate_summary
 from services.text_formatter import safe_html_format
 from services.tts_processor import get_voice_settings
 from services.wing_classifier import classify_wing
@@ -493,12 +494,11 @@ async def process_user_message(message: types.Message):
         content = last_bot_msg["content"] if last_bot_msg else "Нет ответа"
 
         try:
-            summary = await asyncio.to_thread(
-                lambda: get_ai_response_sync_wrapper(
-                    engine,
-                    model,
-                    [{"role": "user", "content": f"Суммаризируй: {content}"}],
-                ),
+            summary = await generate_summary(
+                SummaryMode.INSIGHT,
+                engine=engine,
+                model=model,
+                text=content,
             )
             target = RESEARCH_DIR if "?" in prefix else INSIGHTS_DIR
             fn = f"ext_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"

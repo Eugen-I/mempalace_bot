@@ -454,7 +454,7 @@ async def test_generate_fresh_summary_success(monkeypatch, tmp_path):
         calls["context"] = context
         return "короткое саммари диалога"
 
-    monkeypatch.setattr(ch, "get_ai_response_async", fake_ai)
+    monkeypatch.setattr("services.summary_service.call_ai_async", fake_ai)
     msgs = [{"role": "user", "content": f"m{i}"} for i in range(25)]
     res = await ch.generate_fresh_summary(msgs, "старое саммари")
     assert res == "короткое саммари диалога"
@@ -465,7 +465,7 @@ async def test_generate_fresh_summary_success(monkeypatch, tmp_path):
 async def test_generate_fresh_summary_truncated(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("сл " * 60))
+    monkeypatch.setattr("services.summary_service.call_ai_async", _async_result("сл " * 60))
     res = await ch.generate_fresh_summary([{"role": "user", "content": "x"}])
     assert res.endswith("...")
     assert len(res.split()) == 50
@@ -479,7 +479,7 @@ async def test_generate_fresh_summary_error(monkeypatch, tmp_path):
     async def boom(*a, **kw):
         raise RuntimeError("ai down")
 
-    monkeypatch.setattr(ch, "get_ai_response_async", boom)
+    monkeypatch.setattr("services.summary_service.call_ai_async", boom)
     res = await ch.generate_fresh_summary([{"role": "user", "content": "x"}])
     assert res == "Не удалось сгенерировать саммари."
 
@@ -503,7 +503,7 @@ async def test_update_summary_if_needed_success(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     p = _write_chat(d, "ch_1.json", [])
     monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("свежее саммари"))
+    monkeypatch.setattr("services.summary_service.call_ai_async", _async_result("свежее саммари"))
     msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
     res = await ch.update_summary_if_needed(4242, str(p), msgs)
     assert res == "свежее саммари"
@@ -517,7 +517,7 @@ async def test_update_summary_if_needed_truncated(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     p = _write_chat(d, "ch_1.json", [])
     monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("слово " * 50))
+    monkeypatch.setattr("services.summary_service.call_ai_async", _async_result("слово " * 50))
     msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
     res = await ch.update_summary_if_needed(4242, str(p), msgs)
     assert res.endswith("...")
@@ -533,7 +533,7 @@ async def test_update_summary_if_needed_error(monkeypatch, tmp_path):
     async def boom(*a, **kw):
         raise RuntimeError("ai down")
 
-    monkeypatch.setattr(ch, "get_ai_response_async", boom)
+    monkeypatch.setattr("services.summary_service.call_ai_async", boom)
     msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
     assert await ch.update_summary_if_needed(4242, str(p), msgs) is None
 
@@ -571,7 +571,7 @@ async def test_cmd_context_generates_new(monkeypatch, tmp_path):
     ch.user_sessions[4242] = "ch_1.json"
     p = _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
     monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("новое саммари"))
+    monkeypatch.setattr("services.summary_service.call_ai_async", _async_result("новое саммари"))
     cached = []
     monkeypatch.setattr(
         ch, "cache_ai_response",
@@ -812,7 +812,10 @@ async def test_cb_refresh_summary_success(monkeypatch, tmp_path):
     ch._chat_callback_cache["abcd"] = "ch_1.json"
     p = _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
     monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("обновлённое саммари"))
+    monkeypatch.setattr(
+        "services.summary_service.call_ai_async",
+        _async_result("обновлённое саммари"),
+    )
     cached = []
     monkeypatch.setattr(
         ch, "cache_ai_response",
@@ -833,7 +836,7 @@ async def test_cb_refresh_summary_long_expand(monkeypatch, tmp_path):
     ch._chat_callback_cache["abcd"] = "ch_1.json"
     _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
     monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("д" * 600))
+    monkeypatch.setattr("services.summary_service.call_ai_async", _async_result("д" * 600))
     cb = FakeCb(data="refresh_summary:abcd")
     await ch.cb_refresh_summary(cb)
     texts = [b.text for row in cb.message.edits[0][2].inline_keyboard for b in row]

@@ -1106,7 +1106,11 @@ def _prefix_setup(monkeypatch, tmp_path, msgs=None):
         "summary": "", "summaries": [],
     }
     monkeypatch.setattr(messages, "load_chat", lambda path: data)
-    monkeypatch.setattr(messages, "get_ai_response_sync_wrapper", lambda *a, **k: "суммари")
+
+    async def fake_summary(*args, **kwargs):
+        return "суммари"
+
+    monkeypatch.setattr("services.summary_service.call_ai_async", fake_summary)
     return data
 
 
@@ -1145,10 +1149,10 @@ def test_prefix_no_clean_query(monkeypatch, tmp_path):
 def test_prefix_ai_error(monkeypatch, tmp_path):
     _prefix_setup(monkeypatch, tmp_path)
 
-    def boom(*a, **k):
+    async def boom(*a, **k):
         raise RuntimeError("ai down")
 
-    monkeypatch.setattr(messages, "get_ai_response_sync_wrapper", boom)
+    monkeypatch.setattr("services.summary_service.call_ai_async", boom)
     msg = FakeMessage(text="!! что тут важного")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
