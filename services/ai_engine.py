@@ -10,7 +10,7 @@ import logging
 import os
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -83,6 +83,14 @@ def invalidate_ai_cache():
 
 
 _OLLAMA_UNREACHABLE_MSG = "Не удалось подключиться к Ollama (localhost:11434)"
+
+_OPENAI_STOP_TOKENS = [
+    "<|im_start|>",
+    "<|im_end|>",
+    "<|endoftext|>",
+    "\nuser:",
+    "\nUser:",
+]
 
 # Внешний таймаут async-адаптера. Он чуть больше сетевых таймаутов провайдеров,
 # чтобы дать sync-вызову шанс завершиться самостоятельно.
@@ -260,6 +268,211 @@ def _strip_thinking_tags(text: str) -> str:
     )
 
 
+def _build_system_prompt(context: str, user_query: str, has_images: bool) -> str:
+    """Строит системный prompt или возвращает базовый fallback."""
+    try:
+        from services.prompts import get_smart_prompt
+
+        return get_smart_prompt(
+            context=context, query=user_query, has_images=has_images,
+        )
+    except ImportError:
+        logger.error("Cannot import get_smart_prompt. Falling back to basic prompt.")
+        return "Ты — полезный ассистент."
+
+
+def _openai_client(engine: str, model: str) -> Any:
+    """Создаёт OpenAI-совместимый клиент для qwen/openai."""
+    if engine == "qwen":
+        from services.ollama_process import ensure_ollama_running
+
+        try:
+            ensure_ollama_running(model)
+        except RuntimeError as err:
+            raise RuntimeError(f"{_OLLAMA_UNREACHABLE_MSG}. {err}") from err
+
+        if OpenAI is None:
+            raise ImportError("Библиотека openai не установлена.")
+
+        logger.info(f"[OLLAMA] Sending request to {model}...")
+        return OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+
+    if engine == "openai":
+        if OpenAI is None:
+            raise ImportError("Библиотека openai не установлена.")
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY not set.")
+        return OpenAI(api_key=api_key)
+
+    raise ValueError(f"Неизвестный движок: '{engine}'.")
+
+
+def _gemini_client() -> Any:
+    """Создаёт Gemini-клиент, проверяя зависимость и API-ключ."""
+    if genai is None:
+        raise ImportError("Библиотека google-genai не установлена.")
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not set.")
+    return genai.Client(api_key=api_key)
+
+
+def _openai_kwargs(
+    model: str,
+    messages: list[dict],
+    *,
+    default_temperature: float,
+    sampling: dict | None,
+    stream: bool,
+) -> dict:
+    """Собирает kwargs для chat.completions.create в sync/stream режимах."""
+    sampling = sampling or {}
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "temperature": sampling.get("temperature", default_temperature),
+        "max_tokens": 8192,
+        "timeout": 200.0,
+        "stop": list(_OPENAI_STOP_TOKENS),
+    }
+    kwargs.update({
+        key: value for key, value in sampling.items() if key != "temperature"
+    })
+    if stream:
+        kwargs["stream"] = True
+    return kwargs
+
+
+def _clean_qwen_sync_response(text: str, finish_reason: str | None) -> str:
+    """Агрессивная очистка полного ответа qwen (только sync-режим)."""
+    if not text:
+        return "❌ Пустой ответ от Ollama."
+
+    text = _strip_thinking_tags(text)
+
+    for token in _OPENAI_STOP_TOKENS[:3]:
+        if token in text:
+            text = text.split(token)[0]
+
+    text = re.split(
+        r"\n(?:user|User|вы|Вы|Пользователь|Human|用户|助手):",
+        text,
+        flags=re.IGNORECASE,
+    )[0]
+
+    if re.search(r"[\u4e00-\u9fff]{5,}$", text):
+        text = re.sub(r"[\u4e00-\u9fff]+$", "", text).strip()
+
+    text = text.strip()
+    if not text:
+        if finish_reason == "length":
+            return "❌ Ответ был обрезан из-за лимита токенов."
+        return f"❌ Модель завершила генерацию без текста ({finish_reason})."
+    return text
+
+
+def _iter_ai_chunks(
+    engine: str,
+    model: str,
+    messages: list[dict],
+    system_prompt: str,
+    images: list[str],
+    *,
+    sampling: dict | None = None,
+    stream: bool,
+) -> Iterator[str]:
+    """Единый per-engine pipeline: отдаёт текст sync-ответа или stream-чанки.
+
+    Sync-режим: один вызов провайдера, наружу отдаётся один текстовый чанк.
+    Stream-режим: инкрементальные чанки провайдера. Различия сообщений,
+    system и изображений инкапсулированы здесь и зависят только от ``stream``.
+    """
+    if engine in {"qwen", "openai"}:
+        full_messages = _prepare_chat_messages(
+            messages,
+            system_prompt,
+            images,
+            use_message_system=not stream,
+            images_for_all_users=stream,
+        )
+        client = _openai_client(engine, model)
+        kwargs = _openai_kwargs(
+            model,
+            full_messages,
+            default_temperature=0.6 if engine == "qwen" else 0.7,
+            sampling=None if stream else sampling,
+            stream=stream,
+        )
+        response = client.chat.completions.create(**kwargs)
+
+        if stream:
+            for chunk in response:
+                text = _extract_delta_text(chunk)
+                if text:
+                    yield text
+            return
+
+        if engine == "qwen":
+            choices = getattr(response, "choices", None)
+            if not choices:
+                yield "❌ Пустой ответ от Ollama."
+                return
+            choice = choices[0]
+            yield _clean_qwen_sync_response(
+                _extract_openai_text(response),
+                choice.finish_reason,
+            )
+            return
+
+        yield response.choices[0].message.content or ""
+        return
+
+    if engine == "gemini":
+        client = _gemini_client()
+        contents = _build_gemini_contents(
+            messages,
+            images,
+            include_images=not stream,
+            skip_system=not stream,
+        )
+        config = genai_types.GenerateContentConfig(
+            system_instruction=(
+                system_prompt if stream
+                else _system_instruction(messages, system_prompt)
+            ),
+            temperature=0.7,
+            max_output_tokens=2048,
+        )
+
+        if stream:
+            response = client.models.generate_content_stream(
+                model=model,
+                contents=contents,
+                config=config,
+            )
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+            return
+
+        response = client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config,
+        )
+        text = _extract_gemini_text(response)
+        yield text if text else "❌ Пустой ответ от Gemini."
+        return
+
+    if stream:
+        # Историческое поведение: неизвестный движок в stream-режиме молча
+        # завершает поток (legacy-адаптер не отдаёт чанков).
+        return
+    available = ["qwen", "openai", "gemini"]
+    raise ValueError(f"Неизвестный движок: '{engine}'. Доступные: {available}")
+
+
 def _sync_ai_call(
     engine: str,
     model: str,
@@ -280,178 +493,18 @@ def _sync_ai_call(
     start_time = time.time()
     logger.info(f"[SYNC_CALL] Starting call. Engine: {engine}, Model: {model}")
 
-    # 1. Генерация УМНОГО ПРОМПТА
-    try:
-        from services.prompts import get_smart_prompt
-
-        system_prompt = get_smart_prompt(
-            context=context, query=user_query, has_images=has_images,
-        )
-    except ImportError:
-        logger.error("Cannot import get_smart_prompt. Falling back to basic prompt.")
-        system_prompt = "Ты — полезный ассистент."
-
-    # 2. Формирование сообщений
-    images_base64 = kwargs.get("images", [])
-    full_messages = _prepare_chat_messages(
-        messages,
-        system_prompt,
-        images_base64,
-        use_message_system=True,
-        images_for_all_users=False,
-    )
+    system_prompt = _build_system_prompt(context, user_query, has_images)
 
     try:
-        if engine == "qwen":  # Ollama через OpenAI совместимый API
-            from services.ollama_process import ensure_ollama_running
-
-            try:
-                ensure_ollama_running(model)
-            except RuntimeError as err:
-                raise RuntimeError(
-                    f"{_OLLAMA_UNREACHABLE_MSG}. {err}",
-                ) from err
-
-            if OpenAI is None:
-                raise ImportError("Библиотека openai не установлена.")
-
-            client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
-            logger.info(f"[OLLAMA] Sending request to {model}...")
-
-            sampling = kwargs.get("sampling") or {}
-            call_kwargs = {
-                "model": model,
-                "messages": full_messages,
-                "temperature": sampling.get("temperature", 0.6),
-                "max_tokens": 8192,
-                "timeout": 200.0,
-                "stop": [
-                    "<|im_start|>",
-                    "<|im_end|>",
-                    "<|endoftext|>",
-                    "\nuser:",
-                    "\nUser:",
-                ],
-            }
-            call_kwargs.update({
-                k: v for k, v in sampling.items() if k != "temperature"
-            })
-
-            r = client.chat.completions.create(**call_kwargs)
-
-            elapsed = time.time() - start_time
-
-            choices = getattr(r, "choices", None)
-            if not choices:
-                return "❌ Пустой ответ от Ollama."
-
-            choice = choices[0]
-            response_text = _extract_openai_text(r)
-
-            # ✅ АГРЕССИВНАЯ ОЧИСТКА ДЛЯ DEEPSEEK/R1
-            if response_text:
-                # 1. Удаляем теги мышления DeepSeek и служебные токены
-                response_text = _strip_thinking_tags(response_text)
-
-                # 2. Удаляем стандартные ChatML токены (для совместимости)
-                for token in ["<|im_start|>", "<|im_end|>", "<|endoftext|>"]:
-                    if token in response_text:
-                        response_text = response_text.split(token)[0]
-
-                # 3. Обрезаем имитацию реплики пользователя
-                response_text = re.split(
-                    r"\n(?:user|User|вы|Вы|Пользователь|Human|用户|助手):",
-                    response_text,
-                    flags=re.IGNORECASE,
-                )[0]
-
-                # 4. Удаляем оставшиеся китайские иероглифы, если они идут блоком в конце (артефакт утечки)  # noqa: E501
-                # Это крайняя мера, если модель начала писать на китайском после русского текста
-                if re.search(r"[\u4e00-\u9fff]{5,}$", response_text):
-                    response_text = re.sub(
-                        r"[\u4e00-\u9fff]+$", "", response_text,
-                    ).strip()
-
-                # 5. Финальная зачистка пробелов
-                response_text = response_text.strip()
-
-                if not response_text:
-                    if choice.finish_reason == "length":
-                        return "❌ Ответ был обрезан из-за лимита токенов."
-                    return f"❌ Модель завершила генерацию без текста ({choice.finish_reason})."
-
-                return response_text
-            return "❌ Пустой ответ от Ollama."
-
-        if engine == "openai":
-            if OpenAI is None:
-                raise ImportError("Библиотека openai не установлена.")
-
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OPENAI_API_KEY not set.")
-
-            client = OpenAI(api_key=api_key)
-            sampling = kwargs.get("sampling") or {}
-            call_kwargs = {
-                "model": model,
-                "messages": full_messages,
-                "temperature": sampling.get("temperature", 0.7),
-                "max_tokens": 8192,
-                "timeout": 200.0,
-                "stop": [
-                    "<|im_start|>",
-                    "<|im_end|>",
-                    "<|endoftext|>",
-                    "\nuser:",
-                    "\nUser:",
-                ],
-            }
-            call_kwargs.update({
-                k: v for k, v in sampling.items() if k != "temperature"
-            })
-
-            r = client.chat.completions.create(**call_kwargs)
-            return r.choices[0].message.content or ""
-
-        if engine == "gemini":
-            if genai is None:
-                raise ImportError("Библиотека google-genai не установлена.")
-
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                raise ValueError("GEMINI_API_KEY not set.")
-
-            client = genai.Client(api_key=api_key)  # type: ignore[assignment]
-
-            system_instruction = _system_instruction(messages, system_prompt)
-
-            # Преобразование сообщений в формат Gemini.
-            # system-сообщения передаются через system_instruction, а не как role=model.
-            hist = _build_gemini_contents(
-                messages,
-                images_base64,
-                include_images=True,
-                skip_system=True,
-            )
-
-            r = client.models.generate_content(  # type: ignore[attr-defined]
-                model=model,
-                contents=hist,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.7,
-                    max_output_tokens=2048,
-                ),
-            )
-            text = _extract_gemini_text(r)
-            if not text:
-                return "❌ Пустой ответ от Gemini."
-            return text
-
-        available = ["qwen", "openai", "gemini"]
-        raise ValueError(f"Неизвестный движок: '{engine}'. Доступные: {available}")
-
+        return "".join(_iter_ai_chunks(
+            engine,
+            model,
+            messages,
+            system_prompt,
+            kwargs.get("images", []),
+            sampling=kwargs.get("sampling"),
+            stream=False,
+        ))
     except Exception as e:
         elapsed = time.time() - start_time
         if engine == "qwen" and _is_ollama_unavailable(e):
@@ -597,22 +650,7 @@ async def stream_ai_events_async(
     queue: asyncio.Queue[AIStreamEvent | None] = asyncio.Queue()
     emitted_text = False
 
-    try:
-        from services.prompts import get_smart_prompt
-
-        system_prompt = get_smart_prompt(
-            context=context, query=user_query, has_images=has_images,
-        )
-    except ImportError:
-        system_prompt = "Ты — полезный ассистент."
-
-    full_messages = _prepare_chat_messages(
-        messages,
-        system_prompt,
-        kwargs.get("images", []),
-        use_message_system=False,
-        images_for_all_users=True,
-    )
+    system_prompt = _build_system_prompt(context, user_query, has_images)
 
     def _emit_text(text: str) -> None:
         nonlocal emitted_text
@@ -623,93 +661,18 @@ async def stream_ai_events_async(
 
     def _run_stream():
         try:
-            if engine == "qwen":
-                from services.ollama_process import ensure_ollama_running
-
-                try:
-                    ensure_ollama_running(model)
-                except RuntimeError as err:
-                    raise RuntimeError(
-                        f"{_OLLAMA_UNREACHABLE_MSG}. {err}",
-                    ) from err
-
-                if OpenAI is None:
-                    raise ImportError("Библиотека openai не установлена.")
-                client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
-                stream = client.chat.completions.create(
-                    model=model,
-                    messages=full_messages,
-                    temperature=0.6,
-                    max_tokens=8192,
-                    timeout=200.0,
-                    stream=True,
-                    stop=[
-                        "<|im_start|>",
-                        "<|im_end|>",
-                        "<|endoftext|>",
-                        "\nuser:",
-                        "\nUser:",
-                    ],
-                )
-                for chunk in stream:
-                    delta_text = _extract_delta_text(chunk)
-                    if delta_text:
-                        cleaned = _strip_thinking_tags(delta_text)
-                        if cleaned:
-                            _emit_text(cleaned)
-
-            elif engine == "openai":
-                if OpenAI is None:
-                    raise ImportError("Библиотека openai не установлена.")
-                api_key = os.getenv("OPENAI_API_KEY")
-                if not api_key:
-                    raise ValueError("OPENAI_API_KEY not set.")
-                client = OpenAI(api_key=api_key)
-                stream = client.chat.completions.create(
-                    model=model,
-                    messages=full_messages,
-                    temperature=0.7,
-                    max_tokens=8192,
-                    timeout=200.0,
-                    stream=True,
-                    stop=[
-                        "<|im_start|>",
-                        "<|im_end|>",
-                        "<|endoftext|>",
-                        "\nuser:",
-                        "\nUser:",
-                    ],
-                )
-                for chunk in stream:
-                    delta_text = _extract_delta_text(chunk)
-                    if delta_text:
-                        _emit_text(delta_text)
-
-            elif engine == "gemini":
-                if genai is None:
-                    raise ImportError("Библиотека google-genai не установлена.")
-                api_key = os.getenv("GEMINI_API_KEY")
-                if not api_key:
-                    raise ValueError("GEMINI_API_KEY not set.")
-                client = genai.Client(api_key=api_key)
-                hist = _build_gemini_contents(
-                    messages,
-                    [],
-                    include_images=False,
-                    skip_system=False,
-                )
-                stream = client.models.generate_content_stream(
-                    model=model,
-                    contents=hist,
-                    config=genai_types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        temperature=0.7,
-                        max_output_tokens=2048,
-                    ),
-                )
-                for chunk in stream:
-                    if chunk.text:
-                        _emit_text(chunk.text)
+            for chunk in _iter_ai_chunks(
+                engine,
+                model,
+                messages,
+                system_prompt,
+                kwargs.get("images", []),
+                sampling=None,
+                stream=True,
+            ):
+                text = _strip_thinking_tags(chunk) if engine == "qwen" else chunk
+                if text:
+                    _emit_text(text)
 
         except Exception as e:
             if engine == "qwen" and _is_ollama_unavailable(e):

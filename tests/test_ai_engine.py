@@ -1587,3 +1587,133 @@ def test_stream_gemini_yields_multiple_chunks(monkeypatch):
         monkeypatch, "gemini", "gemini-pro", [{"role": "user", "content": "hi"}],
     )
     assert out == ["раз", "два"]
+
+
+# ---------- sync/stream parity ----------
+
+
+def test_sync_and_stream_use_same_chunk_pipeline(monkeypatch):
+    calls = []
+
+    def fake_pipeline(engine, model, messages, system_prompt, images, *,
+                      sampling=None, stream):
+        calls.append({
+            "engine": engine,
+            "sampling": sampling,
+            "stream": stream,
+            "images": images,
+        })
+        yield "ok"
+
+    monkeypatch.setattr(ai_engine, "_iter_ai_chunks", fake_pipeline)
+
+    assert ai_engine._sync_ai_call(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    ) == "ok"
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert [e.text for e in events] == ["ok"]
+    assert calls == [
+        {"engine": "qwen", "sampling": None, "stream": False, "images": []},
+        {"engine": "qwen", "sampling": None, "stream": True, "images": []},
+    ]
+
+
+def test_sync_stream_parity_qwen(monkeypatch):
+    sync_fake = FakeOpenAI(FakeSyncResponse("Привет мир"))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: sync_fake)
+    sync_text = ai_engine._sync_ai_call(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    stream_fake = FakeOpenAI(FakeStream([
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("Привет "))]),
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("мир"))]),
+    ]))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: stream_fake)
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert sync_text == "".join(e.text for e in events) == "Привет мир"
+
+
+def test_sync_stream_parity_openai(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    sync_fake = FakeOpenAI(FakeSyncResponse("ответ"))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: sync_fake)
+    sync_text = ai_engine._sync_ai_call(
+        "openai", "gpt-4o", [{"role": "user", "content": "hi"}],
+    )
+
+    stream_fake = FakeOpenAI(FakeStream([
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("от"))]),
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("вет"))]),
+    ]))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: stream_fake)
+    events = _collect_stream_events(
+        "openai", "gpt-4o", [{"role": "user", "content": "hi"}],
+    )
+
+    assert sync_text == "".join(e.text for e in events) == "ответ"
+
+
+def test_sync_stream_parity_gemini(monkeypatch):
+    class FakeGenAI:
+        class Client:
+            def __init__(self, api_key=None):
+                self.api_key = api_key
+
+            class _Models:
+                def __init__(self, owner):
+                    self.owner = owner
+
+                def generate_content(self, model, contents, config=None):
+                    return _FakeResponse("gemini answer")
+
+                def generate_content_stream(self, model, contents, config=None):
+                    return iter([
+                        _FakeChunkText("gemini "),
+                        _FakeChunkText("answer"),
+                    ])
+
+            @property
+            def models(self):
+                return self._Models(self)
+
+    monkeypatch.setenv("GEMINI_API_KEY", "rk-test")
+    monkeypatch.setattr(ai_engine, "genai", FakeGenAI)
+    monkeypatch.setattr(ai_engine, "genai_types", FakeGenAITypes)
+
+    sync_text = ai_engine._sync_ai_call(
+        "gemini", "gemini-pro", [{"role": "user", "content": "hi"}],
+    )
+    events = _collect_stream_events(
+        "gemini", "gemini-pro", [{"role": "user", "content": "hi"}],
+    )
+
+    assert sync_text == "".join(e.text for e in events) == "gemini answer"
+
+
+def test_sync_stream_parity_error_before_first_token(monkeypatch):
+    monkeypatch.setattr(ai_engine, "OpenAI", None)
+
+    sync_text = ai_engine._sync_ai_call(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert "Библиотека openai" in sync_text
+    assert len(events) == 1
+    assert events[0].ok is False
+    assert "Библиотека openai" in (events[0].error_message or "")
+
+
+def test_openai_client_unknown_engine_raises():
+    with pytest.raises(ValueError, match="Неизвестный движок"):
+        ai_engine._openai_client("tpu", "m")
