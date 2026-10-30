@@ -970,6 +970,45 @@ def test_get_ai_response_async_executor_failure(monkeypatch):
     assert "executor exploded" in out
 
 
+# ---------- call_ai_sync ----------
+
+
+def test_call_ai_sync_forwards_to_sync_call(monkeypatch):
+    captured = {}
+
+    def fake_sync(engine, model, messages, context="", user_query="", has_images=False, **kwargs):
+        captured.update({
+            "engine": engine,
+            "model": model,
+            "messages": messages,
+            "context": context,
+            "user_query": user_query,
+            "has_images": has_images,
+            "kwargs": kwargs,
+        })
+        return "sync result"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", fake_sync)
+
+    out = ai_engine.call_ai_sync(
+        "qwen",
+        "m",
+        [{"role": "user", "content": "hi"}],
+        context="ctx",
+        user_query="q",
+        has_images=True,
+        extra=1,
+    )
+
+    assert out == "sync result"
+    assert captured["engine"] == "qwen"
+    assert captured["model"] == "m"
+    assert captured["context"] == "ctx"
+    assert captured["user_query"] == "q"
+    assert captured["has_images"] is True
+    assert captured["kwargs"] == {"extra": 1}
+
+
 # ---------- call_ai_async ----------
 
 

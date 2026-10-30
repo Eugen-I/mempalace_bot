@@ -252,7 +252,7 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
         import asyncio
 
         from config import PHOTOS_DIR
-        from services.ai_engine import _sync_ai_call, get_current_ai
+        from services.ai_engine import call_ai_sync, get_current_ai
         from services.multimodal import (
             check_capability,
             encode_image_to_base64,
@@ -273,7 +273,7 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
             msgs = [{"role": "user", "content": "Опиши это фото на русском."}]
             try:
                 answer = await asyncio.to_thread(
-                    lambda: _sync_ai_call(engine, model, msgs, context="", images=[b64]),
+                    call_ai_sync, engine, model, msgs, images=[b64],
                 )
 
                 # ✅ Безопасная отправка: экранируем ответ и разбиваем на части

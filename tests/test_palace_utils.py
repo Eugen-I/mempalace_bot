@@ -101,60 +101,6 @@ async def test_safe_edit_text_error(caplog):
     assert any("safe_edit_text" in r.message for r in caplog.records)
 
 
-# ---------- safe_answer ----------
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_success():
-    msg = FakeMessage()
-    assert await u.safe_answer(msg, "ответ") is True
-    assert msg.answered == [("ответ", {})]
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_none():
-    assert await u.safe_answer(None, "ответ") is False
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_inaccessible():
-    assert await u.safe_answer(_inaccessible(), "ответ") is False
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_error(caplog):
-    msg = FakeMessage(fail_on="answer")
-    assert await u.safe_answer(msg, "ответ") is False
-    assert any("safe_answer" in r.message for r in caplog.records)
-
-
-# ---------- safe_answer_returning_message ----------
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_returning_success():
-    msg = FakeMessage(answer_result="sent")
-    assert await u.safe_answer_returning_message(msg, "ответ") == "sent"
-    assert msg.answered == [("ответ", {})]
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_returning_none():
-    assert await u.safe_answer_returning_message(None, "ответ") is None
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_returning_inaccessible():
-    assert await u.safe_answer_returning_message(_inaccessible(), "ответ") is None
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_returning_error(caplog):
-    msg = FakeMessage(fail_on="answer")
-    assert await u.safe_answer_returning_message(msg, "ответ") is None
-    assert any("safe_answer_returning_message" in r.message for r in caplog.records)
-
-
 # ---------- safe_delete ----------
 
 
@@ -233,4 +179,26 @@ async def test_safe_send_inaccessible():
 async def test_safe_send_error(caplog):
     msg = FakeMessage(fail_on="answer")
     assert await u.safe_send(msg, "текст") is False
+    assert any("safe_send" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_safe_send_return_message_success():
+    msg = FakeMessage(answer_result="sent")
+    assert await u.safe_send(msg, "текст", return_message=True) == "sent"
+    assert msg.answered == [("текст", {})]
+
+
+@pytest.mark.asyncio
+async def test_safe_send_return_message_none_and_inaccessible():
+    assert await u.safe_send(None, "текст", return_message=True) is None
+    assert await u.safe_send(
+        _inaccessible(), "текст", return_message=True,
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_safe_send_return_message_error(caplog):
+    msg = FakeMessage(fail_on="answer")
+    assert await u.safe_send(msg, "текст", return_message=True) is None
     assert any("safe_send" in r.message for r in caplog.records)

@@ -339,29 +339,6 @@ def test_auto_sync_wrapper_exception(monkeypatch):
     assert _sync_in_progress.get(6) is False
 
 
-# ---------- get_ai_response_sync_wrapper ----------
-
-
-def test_get_ai_response_sync_wrapper(monkeypatch):
-    captured = {}
-
-    def fake_sync(engine, model, msgs, context="", user_query="", has_images=False, **kw):
-        captured["engine"] = engine
-        captured["model"] = model
-        captured["msgs"] = msgs
-        captured["kw"] = kw
-        return "sum"
-
-    monkeypatch.setattr(messages, "_sync_ai_call", fake_sync)
-    result = messages.get_ai_response_sync_wrapper(
-        "e", "m", [{"role": "user", "content": "x"}], extra=1,
-    )
-    assert result == "sum"
-    assert captured["engine"] == "e"
-    assert captured["model"] == "m"
-    assert captured["kw"] == {"extra": 1}
-
-
 # ---------- non-text message ----------
 
 

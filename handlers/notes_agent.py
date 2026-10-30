@@ -20,7 +20,7 @@ from aiogram.types import InaccessibleMessage
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import allowed_callback
-from handlers.palace._utils import safe_answer_returning_message, safe_edit_text
+from handlers.palace._utils import safe_edit_text, safe_send
 from services import agent_engine as ae
 from services.agent_tools import CAT_NOTES
 from services.text_formatter import safe_html_format
@@ -691,8 +691,8 @@ async def cb_notes_storm(cb: types.CallbackQuery):
     }
     # Заметка остаётся на месте: штурм уходит в отдельное сообщение,
     # чтобы пользователь не потерял текст открытой заметки.
-    storm_msg = await safe_answer_returning_message(
-        cb.message, "💭 Запускаю сюрреалистичный штурм…",
+    storm_msg = await safe_send(
+        cb.message, "💭 Запускаю сюрреалистичный штурм…", return_message=True,
     )
     if storm_msg is None:
         await safe_edit_text(cb.message, "💭 Запускаю сюрреалистичный штурм…")
@@ -836,8 +836,8 @@ async def cb_notes_save(cb: types.CallbackQuery):
         "rooms": [],
     }
     # Заметка остаётся на месте: выбор крыла/комнаты идёт в новом сообщении.
-    wings_msg = await safe_answer_returning_message(
-        cb.message, "⏳ Загружаю крылья…",
+    wings_msg = await safe_send(
+        cb.message, "⏳ Загружаю крылья…", return_message=True,
     )
     if wings_msg is None:
         await safe_edit_text(cb.message, "⏳ Загружаю крылья…")

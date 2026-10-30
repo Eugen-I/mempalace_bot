@@ -2,7 +2,6 @@
 from . import admin, navigation, kg, save, tunnels, hints, action_bar  # noqa: F401
 from ._utils import (  # noqa: F401
     safe_edit_text,
-    safe_answer,
     safe_delete,
     safe_answer_voice,
     safe_send,

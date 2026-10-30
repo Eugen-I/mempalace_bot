@@ -518,6 +518,21 @@ def _sync_ai_call(
         return error_msg
 
 
+def call_ai_sync(
+    engine: str,
+    model: str,
+    messages: list[dict],
+    context: str = "",
+    user_query: str = "",
+    has_images: bool = False,
+    **kwargs,
+) -> str:
+    """Публичная sync-обёртка для запуска ``_sync_ai_call`` в отдельном потоке."""
+    return _sync_ai_call(
+        engine, model, messages, context, user_query, has_images, **kwargs,
+    )
+
+
 async def call_ai_async(
     engine: str | None,
     model: str | None,

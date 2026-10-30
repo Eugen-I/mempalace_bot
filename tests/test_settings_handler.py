@@ -216,8 +216,8 @@ async def test_cmd_callback_analyze_photo_success(monkeypatch, tmp_path):
     monkeypatch.setattr("services.text_formatter.safe_html_format", lambda t: t)
     monkeypatch.setattr("services.text_formatter.split_message", lambda t: [t])
 
-    async def fake_to_thread(fn):
-        return fn()
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
 
     import asyncio
 

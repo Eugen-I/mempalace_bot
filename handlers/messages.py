@@ -30,7 +30,6 @@ from handlers.search import search_result_cache as _search_result_cache
 from services.ai_cache import cache_ai_response
 from services.ai_engine import (
     AIStreamEvent,
-    _sync_ai_call,
     get_current_ai,
     stream_ai_events_async,
 )
@@ -1039,17 +1038,3 @@ async def process_user_message(message: types.Message):
             await bot.delete_message(message.chat.id, status.message_id)
         except Exception:
             pass
-
-
-def get_ai_response_sync_wrapper(
-    engine: str,
-    model: str,
-    messages: list,
-    context: str = "",
-    user_query: str = "",
-    has_images: bool = False,
-    **kwargs,
-) -> str:
-    return _sync_ai_call(
-        engine, model, messages, context, user_query, has_images, **kwargs,
-    )
