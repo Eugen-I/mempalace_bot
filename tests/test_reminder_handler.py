@@ -112,42 +112,74 @@ def test_is_past_boundary():
     assert rem._is_past(101.0, now_ts=100.0) is False
 
 
-# ---------- _clean_json ----------
+# ---------- _build_reminder_prompt ----------
 
 
-def test_clean_json_plain():
-    assert rem._clean_json('{"a": 1}') == {"a": 1}
+def test_build_reminder_prompt_full():
+    now = datetime(2026, 10, 30, 14, 5).astimezone()
+    prompt = rem._build_reminder_prompt("завтра в 16:30 позвонить", now=now)
+
+    assert "Ты — парсер напоминаний." in prompt
+    assert "Сегодня: 2026-10-30 (пт)" in prompt
+    assert "Сейчас: 14:05" in prompt
+    assert "Извлеки из сообщения" in prompt
+    assert "reminder_text" in prompt
+    assert "Сообщение: завтра в 16:30 позвонить" in prompt
 
 
-def test_clean_json_with_fences():
-    raw = '```json\n{"a": 1}\n```'
-    assert rem._clean_json(raw) == {"a": 1}
+def test_build_reminder_prompt_time_only():
+    now = datetime(2026, 10, 30, 14, 5).astimezone()
+    prompt = rem._build_reminder_prompt("в 16:30", time_only=True, now=now)
 
-
-def test_clean_json_noise_around():
-    raw = 'Вот ответ: {"a": 1} конец'
-    assert rem._clean_json(raw) == {"a": 1}
-
-
-def test_clean_json_invalid():
-    assert rem._clean_json("нет json") == {}
-
-
-def test_clean_json_invalid_brackets():
-    assert rem._clean_json('{"broken":') == {}
-
-
-def test_clean_json_bracket_fallback_fails_too():
-    """Найден { но и он не парсится → {} (203-204)."""
-    assert rem._clean_json('текст {невалидный json} ещё') == {}
-
-
-def test_clean_json_non_string_returns_empty(caplog):
-    assert rem._clean_json(None) == {}
-    assert "expected str" in caplog.text
+    assert "Сегодня: 2026-10-30 (пт)" in prompt
+    assert "Сейчас: 14:05" in prompt
+    assert "Определи время из сообщения" in prompt
+    assert "reminder_text" not in prompt
+    assert "Сообщение: в 16:30" in prompt
 
 
 # ---------- _parse_reminder ----------
+
+
+@pytest.mark.asyncio
+async def test_parse_reminder_fenced_json(monkeypatch):
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("o", "m"))
+    monkeypatch.setattr(
+        "services.ai_engine.get_ai_response_async",
+        _make_async(
+            '```json\n{"reminder_text": "позвонить", "hour": 16, '
+            '"minute": 30, "day_offset": 1, "time_description": "завтра"}\n```',
+        ),
+    )
+
+    parsed = await rem._parse_reminder("завтра в 16:30 позвонить")
+
+    assert parsed["reminder_text"] == "позвонить"
+    assert "unix_timestamp" in parsed
+
+
+@pytest.mark.asyncio
+async def test_parse_reminder_invalid_json_returns_empty(monkeypatch, caplog):
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("o", "m"))
+    monkeypatch.setattr(
+        "services.ai_engine.get_ai_response_async",
+        _make_async("не json"),
+    )
+
+    assert await rem._parse_reminder("завтра") == {}
+    assert "failed to parse JSON" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_parse_reminder_empty_response_returns_empty(monkeypatch, caplog):
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("o", "m"))
+    monkeypatch.setattr(
+        "services.ai_engine.get_ai_response_async",
+        _make_async(""),
+    )
+
+    assert await rem._parse_reminder("завтра") == {}
+    assert "failed to parse JSON (length=0)" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -548,6 +580,44 @@ async def test_handle_reminder_text_ask_time_success(clean_pending, monkeypatch)
     assert res is True
     assert clean_pending[4242]["step"] == "confirm"
     assert "Напомнить" in reply[0][0]
+
+
+@pytest.mark.asyncio
+async def test_handle_reminder_text_ask_time_fenced_json(clean_pending, monkeypatch):
+    clean_pending[4242] = {"text": "позвонить", "step": "ask_time"}
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("o", "m"))
+    hour, minute, day_offset = _future_hm()
+    payload = _json({
+        "hour": hour, "minute": minute, "day_offset": day_offset,
+        "time_description": "в будущем",
+    })
+    monkeypatch.setattr(
+        "services.ai_engine.get_ai_response_async",
+        _make_async(f"```json\n{payload}\n```"),
+    )
+    reply = []
+    res = await rem.handle_reminder_text(4242, "в 10:00", _reply(reply))
+    assert res is True
+    assert clean_pending[4242]["step"] == "confirm"
+    assert "Напомнить" in reply[0][0]
+
+
+@pytest.mark.asyncio
+async def test_handle_reminder_text_ask_time_empty_response(
+    clean_pending, monkeypatch, caplog,
+):
+    clean_pending[4242] = {"text": "позвонить", "step": "ask_time"}
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("o", "m"))
+    monkeypatch.setattr(
+        "services.ai_engine.get_ai_response_async",
+        _make_async(""),
+    )
+    reply = []
+    res = await rem.handle_reminder_text(4242, "в 10:00", _reply(reply))
+    assert res is True
+    assert 4242 not in clean_pending
+    assert "Не удалось определить время" in reply[0][0]
+    assert "failed to parse JSON (length=0)" in caplog.text
 
 
 @pytest.mark.asyncio

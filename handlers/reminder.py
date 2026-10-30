@@ -1,4 +1,3 @@
-import json
 import logging
 import time
 import uuid
@@ -9,6 +8,7 @@ from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import allowed_callback, allowed_only
+from services.json_parser import safe_parse_llm_json
 from services.ttl_dict import TtlDict
 from services.kv_store import get_kv_store
 from services.text_formatter import safe_html_format
@@ -62,39 +62,78 @@ def _parse_time_description(hour: int, minute: int, day_offset: int) -> float:
     return target.timestamp()
 
 
-async def _parse_reminder(text: str) -> dict:
+def _build_reminder_prompt(
+    text: str,
+    *,
+    time_only: bool = False,
+    now: datetime | None = None,
+) -> str:
+    """Строит prompt для полного разбора напоминания или только времени."""
+    current = now or _now_local()
+    weekday_ru = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"][current.weekday()]
+    context = (
+        f"Сегодня: {current.strftime('%Y-%m-%d')} ({weekday_ru})\n"
+        f"Сейчас: {current.strftime('%H:%M')}"
+    )
+
+    if time_only:
+        return (
+            f"{context}\n\n"
+            "Определи время из сообщения. Верни JSON:\n"
+            '{"hour": 16, "minute": 0, "day_offset": 0, '
+            '"time_description": "..."}\n'
+            "hour=0-23, minute=0-59, day_offset: "
+            "0=сегодня, 1=завтра, 2=послезавтра\n"
+            f"Сообщение: {text}"
+        )
+
+    return (
+        f"Ты — парсер напоминаний.\n{context}\n\n"
+        "Извлеки из сообщения пользователя текст напоминания и желаемое время.\n"
+        "Правила:\n"
+        "- hour — часы (0-23), minute — минуты (0-59)\n"
+        "- day_offset — 0 = сегодня, 1 = завтра, 2 = послезавтра и т.д.\n"
+        "- Если время не указано — hour=null, minute=null, day_offset=0\n"
+        "- Если текст не указан — reminder_text = null\n"
+        "- time_description — человекочитаемое описание времени "
+        "(для подтверждения)\n\n"
+        f"Сообщение: {text}\n\n"
+        "Верни ТОЛЬКО JSON: "
+        '{"reminder_text": "...", "hour": null, "minute": null, '
+        '"day_offset": 0, "time_description": "..."}'
+    )
+
+
+async def _request_reminder_json(text: str, *, time_only: bool = False) -> dict:
+    """Запрашивает JSON у AI и разбирает его общим json_parser."""
     from services.ai_engine import get_ai_response_async, get_current_ai
 
-    now = _now_local()
-    weekday_ru = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"][now.weekday()]
-    prompt = (
-        f"Ты — парсер напоминаний.\n"
-        f"Сегодня: {now.strftime('%Y-%m-%d')} ({weekday_ru})\n"
-        f"Сейчас: {now.strftime('%H:%M')}\n\n"
-        f"Извлеки из сообщения пользователя текст напоминания и желаемое время.\n"
-        f"Правила:\n"
-        f"- hour — часы (0-23), minute — минуты (0-59)\n"
-        f"- day_offset — 0 = сегодня, 1 = завтра, 2 = послезавтра и т.д.\n"
-        f"- Если время не указано — hour=null, minute=null, day_offset=0\n"
-        f"- Если текст не указан — reminder_text = null\n"
-        f"- time_description — человекочитаемое описание времени (для подтверждения)\n\n"
-        f"Сообщение: {text}\n\n"
-        f'Верни ТОЛЬКО JSON: {{"reminder_text": "...", "hour": null, "minute": null, "day_offset": 0, "time_description": "..."}}'  # noqa: E501
+    prompt = _build_reminder_prompt(text, time_only=time_only)
+    system_prompt = (
+        "Ты — JSON-парсер времени. Отвечай только JSON."
+        if time_only
+        else "Ты — JSON-парсер напоминаний. Отвечай только JSON."
     )
     engine, model = get_current_ai()
     resp = await get_ai_response_async(
         engine,
         model,
         [
-            {
-                "role": "system",
-                "content": "Ты — JSON-парсер напоминаний. Отвечай только JSON.",
-            },
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
     )
-    parsed = _clean_json(resp)
-    if parsed and parsed.get("hour") is not None and parsed.get("minute") is not None:
+    parsed = safe_parse_llm_json(resp, expected_type=dict)
+    if parsed is None:
+        length = len(resp) if isinstance(resp, str) else 0
+        logger.warning("[REM] failed to parse JSON (length=%d)", length)
+        return {}
+    return parsed
+
+
+async def _parse_reminder(text: str) -> dict:
+    parsed = await _request_reminder_json(text)
+    if parsed.get("hour") is not None and parsed.get("minute") is not None:
         unix_ts = _parse_time_description(
             hour=int(parsed["hour"]),
             minute=int(parsed["minute"]),
@@ -276,32 +315,6 @@ async def cb_remind_cancel(cb: types.CallbackQuery):
     await cb.message.edit_text("❌ Напоминание отменено.")
 
 
-def _clean_json(raw: str) -> dict:
-    if not isinstance(raw, str):
-        logger.warning(
-            "[REM] JSON parser expected str, got %s", type(raw).__name__,
-        )
-        return {}
-    cleaned = raw.strip()
-    for p in ("```json", "```"):
-        cleaned = cleaned.removeprefix(p)
-    for s in ("```",):
-        cleaned = cleaned.removesuffix(s)
-    cleaned = cleaned.strip()
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        start = cleaned.find("{")
-        end = cleaned.rfind("}") + 1
-        if start >= 0 and end > start:
-            try:
-                return json.loads(cleaned[start:end])
-            except json.JSONDecodeError:
-                pass
-    logger.warning("[REM] failed to parse JSON (length=%d)", len(cleaned))
-    return {}
-
-
 async def handle_reminder_text(uid: int, text: str, reply_func) -> bool:
     """Handle follow-up text input for reminder wizard steps. Returns True if handled."""
     data = _remind_pending.get(uid)
@@ -330,33 +343,9 @@ async def handle_reminder_text(uid: int, text: str, reply_func) -> bool:
         return True
 
     if step == "ask_time":
-        from services.ai_engine import get_ai_response_async, get_current_ai
-
-        now = _now_local()
-        weekday_ru = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"][now.weekday()]
-        prompt = (
-            f"Сегодня: {now.strftime('%Y-%m-%d')} ({weekday_ru})\n"
-            f"Сейчас: {now.strftime('%H:%M')}\n\n"
-            f"Определи время из сообщения. Верни JSON:\n"
-            f'{{"hour": 16, "minute": 0, "day_offset": 0, "time_description": "..."}}\n'
-            f"hour=0-23, minute=0-59, day_offset: 0=сегодня, 1=завтра, 2=послезавтра\n"
-            f"Сообщение: {text}"
-        )
         try:
-            engine, model = get_current_ai()
-            resp = await get_ai_response_async(
-                engine,
-                model,
-                [
-                    {
-                        "role": "system",
-                        "content": "Ты — JSON-парсер времени. Отвечай только JSON.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-            )
-            parsed = _clean_json(resp)
-            if parsed and parsed.get("hour") is not None and parsed.get("minute") is not None:
+            parsed = await _request_reminder_json(text, time_only=True)
+            if parsed.get("hour") is not None and parsed.get("minute") is not None:
                 ts = _parse_time_description(
                     hour=int(parsed["hour"]),
                     minute=int(parsed["minute"]),
