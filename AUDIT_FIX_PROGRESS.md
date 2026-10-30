@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (29/45 шагов `DONE`)
+**Статус работы:** в работе (30/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-30 13:43 CET
+- **Дата последнего обновления:** 2026-10-30 13:47 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S3.5 — код `805e15e`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S3.5` — завершён
+- **HEAD:** S3.6 — код `0926734`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S3.6` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S3.6` — единый palace bridge
-- **Бюджет текущего шага:** 20k
+- **Следующее действие:** `S3.7` — единый кэш веб-поиска
+- **Бюджет текущего шага:** 30k
 - **Израсходовано (оценка):** ~14k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`. Pre-existing флак `test_confirm_write_delete_requires_two_confirmations` в этом прогоне не проявился.
-- **Последний QA:** 3744 passed / 0 failed (без untracked Garmin); targeted 173 passed; `services/wing_registry.py` — 100%; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
+- **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`.
+- **Последний QA:** 3749 passed / 0 failed (без untracked Garmin); targeted `tests/test_palace_bridge.py` — 77 passed; `services/palace_bridge.py` — 99% (единственная непокрытая строка — недостижимый guard, INC-14); lint — 7 baseline; mypy — 0 (114 файлов); bandit — 74 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -116,7 +116,7 @@
 | S3.3 | Единый список чатов | P2 | 30k | DONE | `fdfa202` | 2026-10-29 13:40 | ~13k |
 | S3.4 | Единый summary | P2 | 45k | DONE | `7320724` | 2026-10-30 13:37 | ~20k |
 | S3.5 | Единый wing registry | P2 | 20k | DONE | `805e15e` | 2026-10-30 13:43 | ~14k |
-| S3.6 | Единый palace bridge | P2 | 30k | TODO | — | — | — |
+| S3.6 | Единый palace bridge | P2 | 30k | DONE | `0926734` | 2026-10-30 13:47 | ~14k |
 | S3.7 | Единый web search cache | P2 | 30k | TODO | — | — | — |
 | S3.8a | AI engine: helpers | P2 | 35k | TODO | — | — | — |
 | S3.8b | AI engine: общий pipeline | P2 | 45k | TODO | — | — | — |
@@ -142,9 +142,9 @@
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
-| 3 — P2 дублирование | 11 | 5 | 0 | 6 |
+| 3 — P2 дублирование | 11 | 6 | 0 | 5 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **29** | **0** | **16** |
+| **Итого** | **45** | **30** | **0** | **15** |
 
 > Обновлять после каждого шага.
 
@@ -1490,6 +1490,43 @@
 - Найдено попутно: —
 - Следующее действие: `S3.6` — единый поиск palace bridge (`services/palace_bridge.py`), флаг `with_sources` и общее форматирование источников.
 
+### S3.6 — Единый поиск palace bridge
+
+- Дата/время: 2026-10-30 13:44–13:47 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `0926734`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 30k / ~14k
+- Файлы: `services/palace_bridge.py`, `tests/test_palace_bridge.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Добавлена одна реализация поиска `_search_palace(..., with_sources=False)` с circuit breaker и overload-сигнатурами: `with_sources=False` → готовый контекст для ИИ, `True` → `(text, sources)` для UI. Обе публичные обёртки `search_palace_context` и `search_palace_with_sources` стали тонкими и используют её.
+  2. Вынесено общее форматирование: `_format_sources_block(sources)` (сноски `[id] wing/room (score: 0.xxx)`, пустой список → `""`) и `_format_context(text, sources)` (обёртка «ЛИЧНЫЕ ЗАПИСИ …»).
+  3. `search_with_kg_status` использует тот же `_format_sources_block` вместо локальной копии; при отсутствии источников пустой блок «ИСТОЧНИКИ» больше не добавляется — поведение совпадает с `search_palace_context`.
+  4. Публичные API, тексты и семантика `available` не менялись.
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_palace_bridge.py` → **77 passed in 5.01s**; `services/palace_bridge.py` — **99%**.
+  - Полный прогон: `python3 -m pytest -q --tb=short --ignore-glob='tests/test_garmin_*.py'` → **3749 passed, 6 warnings in 16.69s**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **74 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, новых в наших файлах 0.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: 0 ошибок
+  - bandit: 74 Low + 2 Medium, новых в наших файлах 0
+  - coverage: `services/palace_bridge.py` 99% (непокрытый guard — INC-14)
+- AC:
+  - [x] Одна реализация поиска: обе публичные обёртки вызывают `_search_palace` с флагом `with_sources`.
+  - [x] Одно форматирование источников: `_format_sources_block` используется и в контексте, и в `search_with_kg_status`.
+  - [x] Тесты покрывают с источниками/без, пустой результат, ошибку/OPEN circuit breaker, golden-формат сносок и общий путь обеих обёрток.
+- Коммит: `0926734` (`refactor(step-3.6): unify palace search helpers`)
+- Проблемы/решения:
+  - `search_with_kg_status` раньше всегда добавлял блок «ИСТОЧНИКИ», даже когда список пуст. После унификации пустой блок убран; тест `test_search_with_kg_plain_text` обновлён на `"ИСТОЧНИКИ" not in out` — это осознанное исправление шума, а не ослабление проверки.
+  - Для сохранения точного старого формата контекста (две пустые строки перед «ИСТОЧНИКИ») `_format_context` добавляет `\n\n` перед блоком; golden-тест фиксирует результат.
+- Найдено попутно:
+  - INC-14: `services/palace_bridge.py::_search_palace_context_impl` — guard `if not safe_query` после `query.strip().replace('"', "'")[:200]` недостижим (replace не удаляет символы); строка не покрывается, кандидат на удаление в S4.2.
+- Следующее действие: `S3.7` — единый кэш веб-поиска (`services/web_search_cache.py`), сохранить `title`, убрать дубли, проверить TTL/ключи.
+
 ---
 
 ## 7. Журнал сессий
@@ -1525,6 +1562,7 @@
 | 27 | 2026-10-29 13:35–13:41 | DeepSeek V4.1 Flash Free | S3.3 | DONE | ~13k | Shared chat file listing, deterministic mtime sort, keyboard render helper, auto-activation reuse; 4 new tests; 3709 full; fdfa202 |
 | 28 | 2026-10-30 13:30–13:37 | DeepSeek V4.1 Flash Free | S3.4 | DONE | ~20k | `SummaryMode` service for chat/periodic/insight/room; 3 handlers unified; 8 new tests; 3716 full + 1 known flake; 7320724 |
 | 29 | 2026-10-30 13:38–13:43 | DeepSeek V4.1 Flash Free | S3.5 | DONE | ~14k | Single wing registry (5 keys, names, normalize); both handlers migrated; psychology explicit wing fixed; 27 new tests; 3744 full; 805e15e |
+| 30 | 2026-10-30 13:44–13:47 | DeepSeek V4.1 Flash Free | S3.6 | DONE | ~14k | Unified `_search_palace(with_sources)` + shared source/context formatting; KG status uses it; 5 new tests; 3749 full; 0926734 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1585,6 +1623,7 @@
 | INC-11 | 2026-10-29 | `services/auto_sync.py` | Автосинхронизация сама вызывает `export_chat_verbatim` + `sync_to_palace`, дублируя `services/chat_sync.sync_chat_file`; политика другая (тихий лог без UI), S3.2 не менял. | Перевести `auto_sync_chat` на общий `sync_chat_file` | TODO |
 | INC-12 | 2026-10-29 | `cli/menu.py`, `cli/utils.py` | Собственный `list_chats` с mtime-сортировкой дублирует `services/chat_store.list_chat_files`; S3.3 перевёл только Telegram-потребителей. | Перевести CLI на общий `list_chat_files` | TODO |
 | INC-13 | 2026-10-30 | `handlers/messages.py:1050` | После S3.4 `get_ai_response_sync_wrapper` не используется в production-коде (его вызывает только `tests/test_messages_handler.py::test_get_ai_response_sync_wrapper`). | S4.2 — удалить или подключить осознанно | TODO |
+| INC-14 | 2026-10-30 | `services/palace_bridge.py::_search_palace_context_impl` | Guard `if not safe_query` после `query.strip().replace('"', "'")[:200]` недостижим: replace не удаляет символы, а пустой strip отсечён выше. Строка не покрывается тестами. | S4.2 — удалить мёртвый guard | TODO |
 
 ---
 
