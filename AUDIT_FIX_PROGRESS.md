@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (31/45 шагов `DONE`)
+**Статус работы:** в работе (32/45 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-30 13:51 CET
+- **Дата последнего обновления:** 2026-10-30 13:57 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S3.7 — код `499a589`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S3.7` — завершён
+- **HEAD:** S3.8a — код `0849123`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S3.8a` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S3.8a` — AI engine: helpers
-- **Бюджет текущего шага:** 30k
-- **Израсходовано (оценка):** ~10k (код, тесты, QA)
+- **Следующее действие:** `S3.8b` — AI engine: общий pipeline sync/stream
+- **Бюджет текущего шага:** 35k
+- **Израсходовано (оценка):** ~18k (код, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`.
-- **Последний QA:** 3749 passed / 0 failed (без untracked Garmin); targeted `tests/test_web_search.py` + `tests/test_web_search_cache.py` — 67 passed; `services/web_search.py` и `services/web_search_cache.py` — по 100%; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`; на один Low меньше после удаления дубля).
+- **Последний QA:** 3768 passed / 0 failed (без untracked Garmin); targeted `tests/test_ai_engine.py` — 106 passed; `services/ai_engine.py` — 100%; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -118,7 +118,7 @@
 | S3.5 | Единый wing registry | P2 | 20k | DONE | `805e15e` | 2026-10-30 13:43 | ~14k |
 | S3.6 | Единый palace bridge | P2 | 30k | DONE | `0926734` | 2026-10-30 13:47 | ~14k |
 | S3.7 | Единый web search cache | P2 | 30k | DONE | `499a589` | 2026-10-30 13:51 | ~10k |
-| S3.8a | AI engine: helpers | P2 | 35k | TODO | — | — | — |
+| S3.8a | AI engine: helpers | P2 | 35k | DONE | `0849123` | 2026-10-30 13:57 | ~18k |
 | S3.8b | AI engine: общий pipeline | P2 | 45k | TODO | — | — | — |
 | S3.9 | Reminder prompt/JSON | P2 | 25k | TODO | — | — | — |
 | S3.10 | Palace utils/wrappers | P2 | 25k | TODO | — | — | — |
@@ -142,9 +142,9 @@
 | 0 — подготовка | 2 | 2 | 0 | 0 |
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
-| 3 — P2 дублирование | 11 | 7 | 0 | 4 |
+| 3 — P2 дублирование | 11 | 8 | 0 | 3 |
 | 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **31** | **0** | **14** |
+| **Итого** | **45** | **32** | **0** | **13** |
 
 > Обновлять после каждого шага.
 
@@ -1567,6 +1567,47 @@
 - Найдено попутно: новых нет; остаётся INC-14 из S3.6.
 - Следующее действие: `S3.8a` — AI engine: helpers, затем `S3.8b` — общий pipeline.
 
+### S3.8a — AI engine: общие helpers сообщений/инструментов
+
+- Дата/время: 2026-10-30 13:52–13:57 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `0849123`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 35k / ~18k
+- Файлы: `services/ai_engine.py`, `tests/test_ai_engine.py`, `AUDIT_FIX_PROGRESS.md`
+- Что сделано:
+  1. Вынесена нормализация движка `_normalize_engine()` (`ollama` → `qwen`) и system-сообщений: `_find_system_message()`, `_system_instruction()`.
+  2. Вынесена подготовка истории `_prepare_chat_messages()`: роли, system, изображения. Sync и stream используют одну функцию с флагами, сохраняющими текущие различия: sync берёт system из истории и вставляет картинки только в первое user-сообщение; stream подставляет сгенерированный system и вставляет картинки во все user-сообщения.
+  3. Вынесена подготовка Gemini-контента `_build_gemini_contents()`; sync пропускает system и добавляет изображения, stream сохраняет прежнее поведение (system как model, без изображений — INC-4 остаётся для S3.8b/отдельного шага).
+  4. Вынесено извлечение текста: `_extract_message_text`, `_extract_openai_text`, `_extract_delta_text`, `_extract_gemini_text`; очистка DeepSeek-тегов — `_strip_thinking_tags()`.
+  5. Оба пути (`_sync_ai_call`, `stream_ai_events_async`) используют общие helpers; дублирование подготовки сообщений/истории Gemini удалено.
+- Тесты и команды:
+  - `python3 -m pytest -q tests/test_ai_engine.py` → **106 passed**.
+  - Покрытие `services/ai_engine.py` — **100%**.
+  - Полный прогон: `python3 -m pytest -q --tb=short --ignore-glob='tests/test_garmin_*.py'` → **3768 passed, 6 warnings in 16.81s**.
+  - `python3 -m flake8 .` → **7 baseline-замечаний**, новых 0.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **73 Low, 2 Medium, 0 High**; оба Medium — в пользовательском `services/garmin/repository.py`, новых в наших файлах 0.
+  - `git diff --check` → чисто; pre-commit hooks (flake8, no-secrets) прошли.
+- QA:
+  - lint: baseline 7, новых 0
+  - mypy: 0 ошибок
+  - bandit: 73 Low + 2 Medium, новых в наших файлах 0
+  - coverage: `services/ai_engine.py` 100%
+- AC:
+  - [x] Helpers используются обоими путями: sync и stream вызывают `_prepare_chat_messages`; Gemini-история — `_build_gemini_contents`; текстовые ответы/чанки — общие extract-функции.
+  - [x] Поведение не изменилось: существующие 87 тестов ai_engine прошли без правок; добавлены 19 тестов на разные роли, system, изображения, tool-calls и пустые ответы.
+  - [x] Разные роли: user/assistant/system/tool сохраняются.
+  - [x] Tool calls: ai_engine не содержит собственного tool-call API, но нормализация сохраняет `assistant.tool_calls` и сообщения `role="tool"`; это покрыто тестом.
+  - [x] Изображения: sync — только первое user-сообщение, stream — все user-сообщения; Gemini sync — inline, stream — прежнее поведение.
+  - [x] Пустые сообщения/ответы: пустая история, пустой content, пустой choices, отсутствующий delta, `None` Gemini.
+- Коммит: `0849123` (`refactor(step-3.8a): extract ai message helpers`)
+- Проблемы/решения:
+  - В плане упомянута подготовка tools, но `services/ai_engine.py` не имеет tool-call API (tools обрабатывает `services/agent_engine.py`). Объём не расширяли: helpers нормализуют сообщения и сохраняют tool-поля, тест фиксирует это.
+  - Различия sync/stream по system и изображениям осознанно сохранены через флаги, чтобы S3.8a не менял поведение; их сведение — задача S3.8b (parity-тесты).
+- Найдено попутно: новых нет; INC-3 (sync executor) и INC-4 (Gemini stream images/system) остаются для S3.8b/отдельного шага.
+- Следующее действие: `S3.8b` — общий pipeline sync/stream, parity-тесты, ошибки и таймауты.
+
 ---
 
 ## 7. Журнал сессий
@@ -1604,6 +1645,7 @@
 | 29 | 2026-10-30 13:38–13:43 | DeepSeek V4.1 Flash Free | S3.5 | DONE | ~14k | Single wing registry (5 keys, names, normalize); both handlers migrated; psychology explicit wing fixed; 27 new tests; 3744 full; 805e15e |
 | 30 | 2026-10-30 13:44–13:47 | DeepSeek V4.1 Flash Free | S3.6 | DONE | ~14k | Unified `_search_palace(with_sources)` + shared source/context formatting; KG status uses it; 5 new tests; 3749 full; 0926734 |
 | 31 | 2026-10-30 13:48–13:51 | DeepSeek V4.1 Flash Free | S3.7 | DONE | ~10k | Single web search cache; title preserved; atomic writes; invalid keys + concurrency tests; 67 targeted; 3749 full; 499a589 |
+| 32 | 2026-10-30 13:52–13:57 | DeepSeek V4.1 Flash Free | S3.8a | DONE | ~18k | Shared AI message/image/system/Gemini/text helpers used by sync+stream; 19 new tests; ai_engine 100%; 3768 full; 0849123 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
