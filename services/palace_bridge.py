@@ -11,6 +11,7 @@ import os
 import shutil
 import sys
 from datetime import datetime
+from typing import Literal, overload
 
 from config import DATA_DIR
 from services.circuit_breaker import (
@@ -33,59 +34,86 @@ def _get_palace_env() -> dict:
     return env
 
 
-async def search_palace_context(
+def _format_sources_block(sources: list[dict]) -> str:
+    """Форматирует сноски с источниками; пустой список — пустая строка."""
+    if not sources:
+        return ""
+
+    lines = ["--- ИСТОЧНИКИ ---"]
+    for s in sources:
+        loc = f"{s['wing']}/{s['room']}" if s["wing"] or s["room"] else s["file"]
+        lines.append(f"[{s['id']}] {loc} (score: {s['score']:.3f})")
+    lines.append("--- КОНЕЦ ИСТОЧНИКОВ ---")
+    return "\n".join(lines) + "\n"
+
+
+def _format_context(text: str, sources: list[dict]) -> str:
+    """Оборачивает текст поиска в блок личных записей со сносками."""
+    sources_block = _format_sources_block(sources)
+    if sources_block:
+        text = f"{text}\n\n{sources_block}"
+    return (
+        "\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n"
+        f"{text}\n--- КОНЕЦ ЛИЧНЫХ ЗАПИСЕЙ ---\n"
+    )
+
+
+@overload
+async def _search_palace(
     query: str, limit: int = 5, wing: str = "", room: str = "",
-) -> str:
-    """Поиск по базе MemPalace. Возвращает блок для контекста ИИ."""
+    *, with_sources: Literal[False] = False,
+) -> str: ...
+
+
+@overload
+async def _search_palace(
+    query: str, limit: int = 5, wing: str = "", room: str = "",
+    *, with_sources: Literal[True],
+) -> tuple[str, list]: ...
+
+
+async def _search_palace(
+    query: str, limit: int = 5, wing: str = "", room: str = "",
+    *, with_sources: bool = False,
+) -> str | tuple[str, list]:
+    """Единая реализация поиска по MemPalace с circuit breaker.
+
+    ``with_sources=False`` возвращает готовый контекст для ИИ со сносками,
+    ``True`` — сырой текст и список источников для UI.
+    """
     cb = get_palace_circuit_breaker()
     try:
         result = await cb.call(_search_palace_context_impl, query, limit, wing, room)
     except CircuitBreakerOpenError as e:
         logger.warning(f"[PALACE] Circuit breaker OPEN: {e}")
-        return ""
+        return ("", []) if with_sources else ""
     except Exception as e:
         logger.error(f"Error searching MemPalace: {e}", exc_info=True)
-        return ""
+        return ("", []) if with_sources else ""
 
     text = result.get("text", "")
     sources = result.get("sources", [])
 
     if not text:
-        return ""
+        return ("", []) if with_sources else ""
 
-    # Добавляем сноски с источниками
-    if sources:
-        source_lines = ["\n--- ИСТОЧНИКИ ---"]
-        for s in sources:
-            loc = f"{s['wing']}/{s['room']}" if s["wing"] or s["room"] else s["file"]
-            source_lines.append(f"[{s['id']}] {loc} (score: {s['score']:.3f})")
-        source_lines.append("--- КОНЕЦ ИСТОЧНИКОВ ---\n")
-        text += "\n" + "\n".join(source_lines)
+    if with_sources:
+        return text, sources
+    return _format_context(text, sources)
 
-    return f"\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n{text}\n--- КОНЕЦ ЛИЧНЫХ ЗАПИСЕЙ ---\n"  # noqa: E501
+
+async def search_palace_context(
+    query: str, limit: int = 5, wing: str = "", room: str = "",
+) -> str:
+    """Поиск по базе MemPalace. Возвращает блок для контекста ИИ."""
+    return await _search_palace(query, limit, wing, room)
 
 
 async def search_palace_with_sources(
     query: str, limit: int = 5, wing: str = "", room: str = "",
 ) -> tuple[str, list]:
     """Поиск по базе MemPalace. Возвращает (text, sources) для пользовательского показа."""
-    cb = get_palace_circuit_breaker()
-    try:
-        result = await cb.call(_search_palace_context_impl, query, limit, wing, room)
-    except CircuitBreakerOpenError as e:
-        logger.warning(f"[PALACE] Circuit breaker OPEN: {e}")
-        return "", []
-    except Exception as e:
-        logger.error(f"Error searching MemPalace: {e}", exc_info=True)
-        return "", []
-
-    text = result.get("text", "")
-    sources = result.get("sources", [])
-
-    if not text:
-        return "", []
-
-    return text, sources
+    return await _search_palace(query, limit, wing, room, with_sources=True)
 
 
 async def _search_palace_context_impl(
@@ -358,15 +386,13 @@ async def search_with_kg_status(
     if not text:
         return "", available
 
-    source_lines = ["\n--- ИСТОЧНИКИ ---"]
-    for s in sources:
-        loc = f"{s['wing']}/{s['room']}" if s["wing"] or s["room"] else s["file"]
-        source_lines.append(f"[{s['id']}] {loc} (score: {s['score']:.3f})")
-    source_lines.append("--- КОНЕЦ ИСТОЧНИКОВ ---\n")
     text_block = (
-        f"\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n{text}\n"
-        + "\n".join(source_lines)
+        "\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n"
+        f"{text}"
     )
+    sources_block = _format_sources_block(sources)
+    if sources_block:
+        text_block += f"\n\n{sources_block}"
 
     kg_block = ""
     try:

@@ -146,6 +146,58 @@ async def test_search_palace_with_sources_circuit_breaker_open(monkeypatch, pala
     assert await pb.search_palace_with_sources("x") == ("", [])
 
 
+@pytest.mark.asyncio
+async def test_search_palace_with_sources_text_without_sources(monkeypatch, palace_cb):
+    async def fake_impl(q, limit=5, wing="", room=""):
+        return {"text": "только текст", "sources": []}
+
+    monkeypatch.setattr(pb, "_search_palace_context_impl", fake_impl)
+    assert await pb.search_palace_with_sources("q") == ("только текст", [])
+
+
+@pytest.mark.asyncio
+async def test_public_search_wrappers_share_impl(monkeypatch, palace_cb):
+    calls = []
+
+    async def fake_impl(q, limit=5, wing="", room=""):
+        calls.append((q, limit, wing, room))
+        return {"text": "текст", "sources": []}
+
+    monkeypatch.setattr(pb, "_search_palace_context_impl", fake_impl)
+    await pb.search_palace_context("q1", limit=3, wing="w1", room="r1")
+    await pb.search_palace_with_sources("q2", limit=4, wing="w2", room="r2")
+
+    assert calls == [
+        ("q1", 3, "w1", "r1"),
+        ("q2", 4, "w2", "r2"),
+    ]
+
+
+def test_format_sources_block_golden():
+    block = pb._format_sources_block([
+        {"id": 1, "wing": "w", "room": "r", "file": "", "score": 0.42},
+        {"id": 2, "wing": "", "room": "", "file": "note.md", "score": 0.1},
+    ])
+    assert block == (
+        "--- ИСТОЧНИКИ ---\n"
+        "[1] w/r (score: 0.420)\n"
+        "[2] note.md (score: 0.100)\n"
+        "--- КОНЕЦ ИСТОЧНИКОВ ---\n"
+    )
+
+
+def test_format_sources_block_empty():
+    assert pb._format_sources_block([]) == ""
+
+
+def test_format_context_without_sources():
+    assert pb._format_context("текст", []) == (
+        "\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n"
+        "текст\n"
+        "--- КОНЕЦ ЛИЧНЫХ ЗАПИСЕЙ ---\n"
+    )
+
+
 # ---------- _search_palace_context_impl ----------
 
 
@@ -667,7 +719,7 @@ async def test_search_with_kg_plain_text(monkeypatch, palace_cb):
     monkeypatch.setattr(pb, "_search_connected_rooms", fake_rooms)
     out = await pb.search_with_kg("тема")
     assert "запись" in out
-    assert "ИСТОЧНИКИ" in out
+    assert "ИСТОЧНИКИ" not in out
     assert "КГ" not in out
 
 
@@ -695,6 +747,7 @@ async def test_search_with_kg_with_facts(monkeypatch, palace_cb):
     monkeypatch.setattr(pb, "_search_palace_context_impl", fake_impl)
     monkeypatch.setattr(pb, "_search_connected_rooms", _async_empty_rooms)
     out = await pb.search_with_kg("Макс")
+    assert "[1] w/r (score: 0.500)" in out
     assert "СВЯЗИ ИЗ ГРАФА ЗНАНИЙ" in out
     assert "Макс написал: книгу" in out
     assert "→ идея" in out
