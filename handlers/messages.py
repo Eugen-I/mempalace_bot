@@ -1,6 +1,7 @@
 """handlers/messages.py — Main message handler extracted from main.py"""
 import asyncio
 import hashlib
+import json
 import os
 import re
 import secrets
@@ -10,23 +11,28 @@ from datetime import datetime
 from aiogram import types
 
 from config import (
-    ADMIN_ID, CHATS_DIR, DATA_DIR,
-    INSIGHTS_DIR, NOTES_DIR, PHOTOS_DIR, RESEARCH_DIR,
+    ADMIN_ID,
     AUTO_ATTACH_PHOTOS,
+    CHATS_DIR,
+    DATA_DIR,
+    INSIGHTS_DIR,
+    NOTES_DIR,
+    PHOTOS_DIR,
+    RESEARCH_DIR,
 )
+from handlers.brainstorm import _reflection_waiting, _storm_waiting
 from handlers.chat import load_chat, save_chat, user_sessions, waiting_for_name
 from handlers.palace import process_mcp_text_input, suggest_tunnel_hint
 from handlers.palace.shared import _user_context
-from services.palace_mcp import get_mcp as _get_mcp
-import json
 from handlers.personal_note import (
-    _waiting_for_note, process_note_input, _quote_waiting, _save_quote_to_palace,
+    _quote_waiting,
+    _save_quote_to_palace,
+    _waiting_for_note,
+    process_note_input,
 )
-from handlers.brainstorm import _storm_waiting
-from handlers.brainstorm import _reflection_waiting
-from handlers.transkript import _tr_ai_waiting, handle_tr_ai_question
 from handlers.reminder import handle_reminder_text
 from handlers.search import search_result_cache as _search_result_cache
+from handlers.transkript import _tr_ai_waiting, handle_tr_ai_question
 from services.ai_cache import cache_ai_response
 from services.ai_engine import (
     AIStreamEvent,
@@ -34,26 +40,34 @@ from services.ai_engine import (
     stream_ai_events_async,
 )
 from services.auto_sync import auto_sync_chat
-from services.bot_setup import (
-    bot,
-    pending_wing_search as _pending_wing_search,
-    pending_web_search as _pending_web_search,
-    sync_counter as _sync_counter,
-    sync_in_progress as _sync_in_progress,
-    yt_audio_cache as _yt_audio_cache,
-    yt_quality_url as _yt_quality_url,
-    yt_waiting_url as _yt_waiting_url,
-)
+from services.bot_setup import bot
+from services.bot_setup import pending_web_search as _pending_web_search
+from services.bot_setup import pending_wing_search as _pending_wing_search
+from services.bot_setup import sync_counter as _sync_counter
+from services.bot_setup import sync_in_progress as _sync_in_progress
+from services.bot_setup import yt_audio_cache as _yt_audio_cache
+from services.bot_setup import yt_quality_url as _yt_quality_url
+from services.bot_setup import yt_waiting_url as _yt_waiting_url
 from services.chat_store import list_chat_files
 from services.code_mode import (
-    ensure_project_dir, is_coding_context, load_coding_prompt, read_project_files,
+    ensure_project_dir,
+    is_coding_context,
+    load_coding_prompt,
+    read_project_files,
 )
+from services.error_formatter import format_user_error
 from services.event_bus import Event, get_bus
-from services.graceful_degradation import get_degradation_manager, report_failure, report_success
+from services.graceful_degradation import (
+    get_degradation_manager,
+    report_failure,
+    report_success,
+)
+from services.logging_setup import setup_logging
 from services.memory import extract_and_store_facts, get_memory_context
 from services.multimodal import check_capability, encode_image_to_base64, list_photos
 from services.note_linker import schedule_linking
 from services.palace_bridge import search_with_kg_status
+from services.palace_mcp import get_mcp as _get_mcp
 from services.prompts import get_smart_prompt
 from services.semantic_cache import get_cache
 from services.sender import send_response_with_mode
@@ -63,9 +77,6 @@ from services.tts_processor import get_voice_settings
 from services.wing_classifier import classify_wing
 from services.wing_registry import get_wing_display_name, normalize_wing
 from services.youtube import download_audio
-
-from services.logging_setup import setup_logging
-from services.error_formatter import format_user_error
 
 logger = setup_logging(DATA_DIR)
 
@@ -315,9 +326,9 @@ async def process_user_message(message: types.Message):
 # 0e. Ожидание текста для поиска в интернете
     if uid in _pending_web_search:
         _pending_web_search.pop(uid, None)
-        from services.web_search import deep_search_web
         from services.sender import send_text_only
         from services.text_formatter import split_message
+        from services.web_search import deep_search_web
         st = await message.answer("🌐 Глубокий поиск в интернете...")
         try:
             result = await deep_search_web(text)
@@ -525,8 +536,8 @@ async def process_user_message(message: types.Message):
         query = clean_q[4:].strip()
         if not query:
             return await message.answer("Использование: /web <запрос>")
-        from services.web_search import search_web
         from services.sender import send_text_only
+        from services.web_search import search_web
         st = await message.answer("🔍 Ищу в интернете...")
         try:
             results = await search_web(query)
@@ -567,7 +578,11 @@ async def process_user_message(message: types.Message):
             )
 
     if agent_on:
-        from handlers.agent import AGENT_SYSTEM_PROMPT, _build_scope_prompt, _run_agent_reply
+        from handlers.agent import (
+            AGENT_SYSTEM_PROMPT,
+            _build_scope_prompt,
+            _run_agent_reply,
+        )
         from services.agent_context import get_agent_context_store
 
         status = await message.answer("🤖 Запускаю агента…")

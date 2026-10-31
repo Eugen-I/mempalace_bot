@@ -9,7 +9,6 @@ import pytest
 
 from services.text_formatter import safe_html_format, split_message
 
-
 # ---------- safe_html_format ----------
 
 

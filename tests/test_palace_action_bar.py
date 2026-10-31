@@ -987,8 +987,7 @@ def test_cb_no_data_guard(monkeypatch, handler):
 
 class TestActionBarMUTANTTexts:
     def test_build_action_bar_agent_button_exact_text(self):
-        from handlers.palace.action_bar import build_action_bar
-        from handlers.palace.action_bar import Answer
+        from handlers.palace.action_bar import Answer, build_action_bar
 
         answer = Answer(
             sid="s1", text="text", pages=["text"], title="", ctx={},

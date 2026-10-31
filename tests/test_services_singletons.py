@@ -117,8 +117,8 @@ class TestSingletonFunctions:
         monkeypatch.setattr(KVStore, "_instance", None)
 
     def test_palace_back_cb_dispatches(self, monkeypatch):
-        import handlers.palace.action_bar as ab
         import handlers.palace as palace_mod
+        import handlers.palace.action_bar as ab
         from tests.test_action_bar import FakeCallback
 
         received = []

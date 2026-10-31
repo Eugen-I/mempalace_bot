@@ -151,8 +151,8 @@ def step_script_unknown_tool(context):
 
 @given('a tool "mp_boom" is registered that raises an exception')
 def step_register_raising_tool(context):
-    from services import agent_tools as at
     import services.agent_engine  # noqa: F401 — сначала регистрируются реальные mp-инструменты
+    from services import agent_tools as at
 
     at.unregister_tool("mp_boom")
 
@@ -309,8 +309,8 @@ def step_script_notes_with_ids(context, query, note_id, text):
 
 @given('a tool "mp_kg_stats" is registered that returns "{output}"')
 def step_register_stats_tool(context, output):
-    from services import agent_tools as at
     import services.agent_engine  # noqa: F401 — сначала регистрируются реальные mp-инструменты
+    from services import agent_tools as at
 
     at.unregister_tool("mp_kg_stats")
 

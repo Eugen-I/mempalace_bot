@@ -11,7 +11,6 @@ import pytest
 
 from services import agent_tools as at
 
-
 # ─── Фикстура: чистый реестр без тестовых инструментов ───
 
 

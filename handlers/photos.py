@@ -4,9 +4,9 @@
 
 import asyncio
 import hashlib
+import logging
 import os
 import tempfile
-import logging
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
@@ -14,8 +14,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from cachetools import TTLCache
 
 from config import NOTES_DIR, PHOTOS_DIR, allowed_callback, allowed_only
-
 from services.ai_engine import call_ai_sync, get_current_ai
+from services.error_formatter import format_user_error
 from services.multimodal import (
     check_capability,
     delete_photo,
@@ -26,7 +26,6 @@ from services.multimodal import (
 from services.palace_bridge import search_palace_context
 from services.prompts import get_smart_prompt
 from services.text_formatter import safe_html_format, split_message
-from services.error_formatter import format_user_error
 
 router = Router()
 logger = logging.getLogger("PhotosHandler")

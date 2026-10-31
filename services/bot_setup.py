@@ -5,7 +5,6 @@ from cachetools import TTLCache
 
 from config import ALLOWED_IDS, API_TOKEN
 
-
 # Кэши для временных состояний
 photo_delete_cache: TTLCache[str, str] = TTLCache(maxsize=500, ttl=300)
 pending_wing_search: TTLCache[int, str] = TTLCache(maxsize=100, ttl=60)

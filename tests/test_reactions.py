@@ -1,7 +1,6 @@
 """Unit tests for handlers.reactions (save AI replies via emoji reactions)."""
 
 import pytest
-
 from aiogram.types import ReactionTypeEmoji
 
 from handlers.reactions import handle_ai_reaction, router

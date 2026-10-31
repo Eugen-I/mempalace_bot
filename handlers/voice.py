@@ -15,7 +15,6 @@ from aiogram.enums import ContentType
 
 from config import TEMP_DIR, allowed_only
 from services.text_formatter import safe_html_format
-
 from services.whisper_service import get_whisper
 
 router = Router()

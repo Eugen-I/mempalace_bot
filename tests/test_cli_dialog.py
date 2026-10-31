@@ -273,8 +273,9 @@ def test_loop_ai_query(loop_env):
 
 
 def test_key_bindings_c_c_and_c_r(monkeypatch):
-    from cli.dialog import bindings
     from prompt_toolkit.keys import Keys
+
+    from cli.dialog import bindings
 
     c_c = bindings.get_bindings_for_keys((Keys.ControlC,))
     c_r = bindings.get_bindings_for_keys((Keys.ControlR,))

@@ -26,47 +26,49 @@ sys.path.insert(0, BOT_DIR)
 sys.path.insert(0, BASE_DIR)
 
 import asyncio
-from config import CHATS_DIR
-from cli import list_chats, save_chat, chat_loop, create_new_chat
-from cli.utils import C, format_for_terminal
-from services.ai_engine import get_current_ai
+
 from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.formatted_text import HTML
+
+from cli import chat_loop, create_new_chat, list_chats, save_chat
+from cli.utils import C, format_for_terminal
+from config import CHATS_DIR
+from services.ai_engine import get_current_ai
 
 
 async def main():
     """Main CLI entry point"""
     # History file
     hist_file = os.path.join(os.path.expanduser("~"), ".mempalace_cli_history")
-    
+
     # Key bindings
     bindings = KeyBindings()
-    
+
     @bindings.add('c-c')
     def _(event):
         event.app.exit(result=KeyboardInterrupt)
-    
+
     @bindings.add('c-d')
     def _(event):
         event.app.exit(result=KeyboardInterrupt)
-    
+
     # Prompt session with history
     session = PromptSession(
         history=FileHistory(hist_file),
         key_bindings=bindings,
     )
-    
+
     while True:
         chats = list_chats()
-        
+
         engine, model = get_current_ai()
         print(f"\n{C.CYAN}=========================================================={C.END}")
         print(f"{C.CYAN}    🦾 MemPalace CLI — Меню чатов{C.END}")
         print(f"{C.GREEN}    🤖 Модель: {model} ({engine}){C.END}")
         print(f"{C.CYAN}=========================================================={C.END}")
-        
+
         if not chats:
             print(f"{C.YELLOW}📁 Чатов нет. Создайте новый.{C.END}")
         else:
@@ -74,14 +76,14 @@ async def main():
             for i, chat in enumerate(chats, 1):
                 display = chat.replace("ch_", "").replace(".json", "").replace("_", " ")
                 print(f"  {C.YELLOW}{i}.{C.END} {display}")
-        
+
         print(f"\n{C.CYAN}Команды:{C.END}")
         print(f"  {C.GREEN}N / new{C.END}     — Новый чат")
         print(f"  {C.GREEN}<номер>{C.END}      — Открыть чат")
         print(f"  {C.GREEN}D <номер>{C.END}    — Удалить чат")
         print(f"  {C.GREEN}Q / q{C.END}        — Выход")
         print(f"{C.CYAN}=========================================================={C.END}")
-        
+
         try:
             choice = await session.prompt_async(
                 HTML(f'<ansiyellow>Выбор: </ansiyellow>'),
@@ -90,10 +92,10 @@ async def main():
         except (EOFError, KeyboardInterrupt):
             print(f"\n{C.RED}👋 Выход.{C.END}")
             break
-        
+
         if choice in ['q', 'quit', 'й', 'exit', 'выход']:
             break
-        
+
         if choice in ['n', 'new', 'н', 'новый']:
             chat_path = create_new_chat()
         elif choice.startswith('d '):
@@ -118,14 +120,14 @@ async def main():
         else:
             print("❌ Неверный ввод")
             continue
-        
+
         # Run chat loop
         result = await chat_loop(chat_path, session)
         if result == "quit":
             break
         elif result in ("deleted", "new", "chats"):
             continue
-    
+
     print(f"{C.GREEN}👋 До свидания!{C.END}")
 
 

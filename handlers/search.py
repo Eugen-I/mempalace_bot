@@ -1,18 +1,17 @@
 import json
-import re
 import logging
+import re
 
-from aiogram import Router, types
+from aiogram import F, Router, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram import F
 
-from config import allowed_only, allowed_callback
+from config import allowed_callback, allowed_only
 from services.bot_setup import pending_wing_search as _pending_wing_search
+from services.error_formatter import format_user_error
 from services.palace_bridge import search_palace_with_sources
 from services.palace_mcp import get_mcp
 from services.sender import send_text_only
 from services.text_formatter import split_message
-from services.error_formatter import format_user_error
 from services.wing_registry import (
     WING_KEYS,
     get_wing_display_name,

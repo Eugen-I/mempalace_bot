@@ -7,13 +7,13 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from faster_whisper import WhisperModel
 
 from config import allowed_callback, allowed_only
-from services.menu import go_main_menu
-from services.ttl_dict import TtlDict
+from handlers.palace.shared import _pending_mcp_input
 from services.ai_engine import get_ai_response_async, get_current_ai
+from services.error_formatter import format_user_error
+from services.menu import go_main_menu
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
-from handlers.palace.shared import _pending_mcp_input
-from services.error_formatter import format_user_error
+from services.ttl_dict import TtlDict
 
 logger = logging.getLogger("PersonalNote")
 router = Router()

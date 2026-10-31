@@ -9,15 +9,18 @@ from services import interpreter
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
+from .hints import _get_full_text_from_chroma
 from .shared import (
-    router,
-    _pending_mcp_input, _kg_page_data, _kg_search_data, _kg_add_state,
-    KG_PAGE_SIZE, KG_PREDICATES,
+    KG_PAGE_SIZE,
+    KG_PREDICATES,
+    _kg_add_state,
+    _kg_page_data,
+    _kg_search_data,
+    _pending_mcp_input,
     _read_state,
     _send_kg_page,
+    router,
 )
-from .hints import _get_full_text_from_chroma
-
 
 # ─── KNOWLEDGE GRAPH ───
 

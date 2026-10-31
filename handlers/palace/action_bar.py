@@ -27,9 +27,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import NOTES_DIR, allowed_callback
 from services.ai_engine import call_ai_async, get_current_ai
+from services.error_formatter import format_user_error
 from services.text_formatter import safe_html_format, split_message
 from services.ttl_dict import TtlDict
-from services.error_formatter import format_user_error
 
 logger = logging.getLogger("ActionBar")
 

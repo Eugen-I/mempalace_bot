@@ -7,13 +7,11 @@ from aiogram import F, Router, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import DATA_DIR, allowed_callback, allowed_only
-from services.bot_setup import (
-    yt_audio_cache as _yt_audio_cache,
-    yt_quality_url as _yt_quality_url,
-    yt_waiting_url as _yt_waiting_url,
-)
-from services.youtube import download_video, transcribe_audio
+from services.bot_setup import yt_audio_cache as _yt_audio_cache
+from services.bot_setup import yt_quality_url as _yt_quality_url
+from services.bot_setup import yt_waiting_url as _yt_waiting_url
 from services.error_formatter import format_user_error
+from services.youtube import download_video, transcribe_audio
 
 logger = logging.getLogger("YouTubeUI")
 router = Router()

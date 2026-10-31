@@ -7,7 +7,6 @@
 
 from services import camera_setup as cs
 
-
 # ─── happy path: полный dict из примера пользователя ───
 
 def test_format_full_dict_russian_labels():

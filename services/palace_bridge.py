@@ -189,8 +189,8 @@ async def _search_via_api(
 ) -> dict:
     """Search via mempalace.searcher (structured results with scores)."""
     try:
-        from mempalace.searcher import search_memories
         from mempalace.config import MempalaceConfig
+        from mempalace.searcher import search_memories
     except ImportError:
         return {"text": "", "sources": []}
 

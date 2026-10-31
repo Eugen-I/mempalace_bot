@@ -9,12 +9,15 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import (
-    DATA_DIR, allowed_callback, allowed_only, validate_config,
+    DATA_DIR,
+    allowed_callback,
+    allowed_only,
+    validate_config,
 )
 from handlers.chat import user_sessions
 from services.chat_sync import ChatSyncStatus, sync_active_chat
-from services.palace_mcp import get_mcp
 from services.logging_setup import setup_logging
+from services.palace_mcp import get_mcp
 
 try:
     validate_config()
@@ -29,10 +32,25 @@ logger = setup_logging(DATA_DIR)
 init_bot(logger)
 
 from handlers import (  # noqa: E402
-    agent, brainstorm, chat, digest, notes, notes_agent, palace, pdf,
-    personal_note, reminder, settings, search,
+    agent,
+    brainstorm,
+    chat,
+    digest,
+    notes,
+    notes_agent,
+    palace,
+    pdf,
+    personal_note,
+    photos,
+    reactions,
+    reminder,
+    search,
+    settings,
+    transkript,
+    voice,
+    web_search_btn,
+    youtube_ui,
 )
-from handlers import photos, reactions, transkript, voice, web_search_btn, youtube_ui  # noqa: E402
 from handlers.messages import process_user_message  # noqa: E402
 
 

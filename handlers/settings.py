@@ -15,9 +15,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import CONFIG_AI_FILE, MODELS_CONFIG_PATH, allowed_callback, allowed_only
 from services.agent_settings import get_agent_enabled, toggle_agent_enabled
 from services.ai_engine import get_current_ai, invalidate_ai_cache
+from services.error_formatter import format_user_error
 from services.semantic_cache import get_cache
 from services.tts_processor import get_voice_settings, set_voice_setting
-from services.error_formatter import format_user_error
 
 router = Router()
 logger = logging.getLogger("SettingsHandler")

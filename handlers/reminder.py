@@ -9,9 +9,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import allowed_callback, allowed_only
 from services.json_parser import safe_parse_llm_json
-from services.ttl_dict import TtlDict
 from services.kv_store import get_kv_store
 from services.text_formatter import safe_html_format
+from services.ttl_dict import TtlDict
 
 logger = logging.getLogger("Reminder")
 router = Router()

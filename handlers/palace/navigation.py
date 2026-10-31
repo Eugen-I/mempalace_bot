@@ -13,15 +13,17 @@ from services.ai_engine import AITimeoutError, call_ai_async, get_current_ai
 from services.palace_mcp import get_mcp
 from services.summary_service import SummaryMode, generate_summary
 from services.text_formatter import safe_html_format
-from ._utils import safe_edit_text
-
 from services.ttl_dict import TtlDict
 
+from ._utils import safe_edit_text
 from .shared import (
-    router,
-    _pending_mcp_input, _read_state,
-    _room_session, _wing_cache, _user_context,
     _create_tunnel_state,
+    _pending_mcp_input,
+    _read_state,
+    _room_session,
+    _user_context,
+    _wing_cache,
+    router,
 )
 
 PAGE_SIZE = 5

@@ -124,9 +124,9 @@ def _click(status, prefix, handler, uid=TEST_UID):
 
 @given('the notes agent is ready for writes')
 def step_notes_agent_ready(context):
+    from handlers import notes_agent as na
     from services import agent_engine as ae
     from services import agent_notes_write_tools as anwt
-    from handlers import notes_agent as na
 
     class FakeCompletions:
         def create(self, **kwargs):

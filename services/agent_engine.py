@@ -18,10 +18,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+# Регистрация инструментов дворца, заметок и write-инструментов (side-effect imports).
+from services import (  # noqa: F401
+    agent_mcp_tools,
+    agent_notes_tools,
+    agent_notes_write_tools,
+)
 from services import agent_tools as atools
-from services import agent_mcp_tools  # noqa: F401 — регистрация инструментов дворца
-from services import agent_notes_tools  # noqa: F401 — регистрация инструментов заметок
-from services import agent_notes_write_tools  # noqa: F401 — write-инструменты заметок
 from services.ai_engine import (
     _OLLAMA_UNREACHABLE_MSG,
     _is_ollama_unavailable,

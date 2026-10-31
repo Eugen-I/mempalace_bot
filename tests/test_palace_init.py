@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+
 from services.agent_context import AgentContextStore
 
 # Module-level imports that execute code

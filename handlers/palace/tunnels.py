@@ -9,9 +9,11 @@ from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
 from .shared import (
-    router,
-    _pending_mcp_input, _tunnel_state, _create_tunnel_state,
+    _create_tunnel_state,
+    _pending_mcp_input,
     _room_cache,
+    _tunnel_state,
+    router,
 )
 
 # ─── TUNNELS (non‑conflicting handlers only) ───

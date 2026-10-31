@@ -7,9 +7,9 @@ from cachetools import TTLCache
 
 from config import TRANSKRIPT_DIR, allowed_callback, allowed_only
 from services.ai_engine import AITimeoutError, call_ai_async, get_current_ai
+from services.error_formatter import format_user_error
 from services.text_formatter import safe_html_format, split_message
 from services.ttl_dict import TtlDict
-from services.error_formatter import format_user_error
 
 router = Router()
 PAGE_SIZE = 5

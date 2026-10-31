@@ -12,7 +12,6 @@ import pytest
 from services import agent_engine as ae
 from services import agent_tools as at
 
-
 # ─── Фейковый OpenAI-клиент ───
 
 

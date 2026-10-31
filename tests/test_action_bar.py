@@ -804,8 +804,9 @@ def test_build_ai_context_mcp_empty(monkeypatch):
 
 
 def test_finalize_answer_extra_rows_rendered_and_kept_on_page_flip():
-    import handlers.palace.action_bar as ab
     from aiogram import types
+
+    import handlers.palace.action_bar as ab
 
     msg = FakeMessage()
     extra = [
@@ -1407,8 +1408,9 @@ def test_finalize_answer_sid_length_8():
 
 
 def test_finalize_answer_preserves_ctx_and_extra_rows():
-    import handlers.palace.action_bar as ab
     from aiogram import types
+
+    import handlers.palace.action_bar as ab
 
     msg = FakeMessage()
 

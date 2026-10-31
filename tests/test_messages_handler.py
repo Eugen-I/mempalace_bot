@@ -9,18 +9,16 @@ import pytest
 
 import config
 import handlers.messages as messages
-from services.bot_setup import (
-    pending_web_search as _pending_web_search,
-    pending_wing_search as _pending_wing_search,
-    sync_counter as _sync_counter,
-    sync_in_progress as _sync_in_progress,
-    yt_audio_cache as _yt_audio_cache,
-    yt_quality_url as _yt_quality_url,
-    yt_waiting_url as _yt_waiting_url,
-)
 from handlers.chat import user_sessions, waiting_for_name
 from handlers.palace.shared import _user_context
 from services.ai_engine import AIStreamEvent
+from services.bot_setup import pending_web_search as _pending_web_search
+from services.bot_setup import pending_wing_search as _pending_wing_search
+from services.bot_setup import sync_counter as _sync_counter
+from services.bot_setup import sync_in_progress as _sync_in_progress
+from services.bot_setup import yt_audio_cache as _yt_audio_cache
+from services.bot_setup import yt_quality_url as _yt_quality_url
+from services.bot_setup import yt_waiting_url as _yt_waiting_url
 from services.reflection import REFLECTION_NS
 from services.wing_registry import WING_DISPLAY_NAMES
 

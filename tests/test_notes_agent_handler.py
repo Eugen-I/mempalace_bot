@@ -491,8 +491,8 @@ def _fake_coro(value):
 
 
 async def test_run_surreal_storm_happy(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -533,8 +533,8 @@ async def test_run_surreal_storm_empty_topic(monkeypatch):
 
 
 async def test_run_surreal_storm_ai_error(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -554,8 +554,8 @@ async def test_run_surreal_storm_ai_error(monkeypatch):
 
 async def test_run_surreal_storm_retries_malformed_json(monkeypatch):
     """Первый ответ модели без массива ideas → ретрай → карточки показаны."""
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -588,8 +588,8 @@ async def test_run_surreal_storm_retries_malformed_json(monkeypatch):
 
 async def test_run_surreal_storm_retry_fails_shows_error(monkeypatch):
     """Сырой ответ без ideas, ретрай тоже без ideas → ошибка пользователю."""
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -612,8 +612,8 @@ async def test_run_surreal_storm_retry_fails_shows_error(monkeypatch):
 
 
 async def test_run_surreal_storm_rejects_ideas_without_camera_setup(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -633,8 +633,8 @@ async def test_run_surreal_storm_rejects_ideas_without_camera_setup(monkeypatch)
 
 
 async def test_run_surreal_storm_edit_failure_tolerated(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -662,8 +662,8 @@ async def test_run_surreal_storm_edit_failure_tolerated(monkeypatch):
 
 
 async def test_run_notes_agent_routes_to_surreal_storm(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -1061,8 +1061,8 @@ async def test_cb_notes_view_split_long_body(monkeypatch):
 
 
 async def test_run_notes_agent_discusses_opened_note(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -1412,8 +1412,8 @@ async def test_cb_notes_discuss_bad_index():
 
 
 async def test_cb_notes_storm_happy(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     na._notes_list_store[4242] = {
         "items": [{"id": "AAA", "name": "Ночные сны", "folder": ""}], "text": "",
@@ -1442,8 +1442,8 @@ async def test_cb_notes_storm_happy(monkeypatch):
 
 
 async def test_cb_notes_storm_injects_note_text_as_context(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     na._notes_list_store[4242] = {
         "items": [{"id": "AAA", "name": "Фудзи", "folder": ""}], "text": "",

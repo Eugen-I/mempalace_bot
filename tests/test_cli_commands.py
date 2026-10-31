@@ -9,7 +9,6 @@ import cli.commands as commands
 from cli.utils import C
 
 
-
 def _async_val(value):
     async def _inner(*a, **k):
         return value

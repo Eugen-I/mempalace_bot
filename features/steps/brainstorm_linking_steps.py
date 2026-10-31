@@ -9,6 +9,7 @@ import asyncio
 from behave import given, then, when
 
 import config
+
 config.ALLOWED_IDS = {424242}
 
 from handlers import brainstorm as bh  # noqa: E402

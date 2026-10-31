@@ -8,8 +8,8 @@ import json
 
 from behave import given, then, when
 
-from services import brainstorm as bs
 from services import ai_engine
+from services import brainstorm as bs
 
 
 def _run(coro):

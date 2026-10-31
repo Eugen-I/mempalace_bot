@@ -1,38 +1,70 @@
 """CLI Commands - all command handler functions extracted from chat_loop"""
+import asyncio
+import json
 import os
 import re
-import json
-import asyncio
 from datetime import datetime
+
 from rich.console import Console
 from rich.syntax import Syntax
 
-from config import (
-    NOTES_DIR, INSIGHTS_DIR, RESEARCH_DIR, PHOTOS_DIR,
-    MODELS_CONFIG_PATH, CONFIG_AI_FILE,
+from cli.utils import (
+    C,
+    export_chat_to_md,
+    format_for_terminal,
+    generate_summary_if_needed,
+    get_cli_voice,
+    save_chat,
+    set_cli_voice,
+    speak_text,
 )
+from cli_extras import (
+    cli_kgadd,
+    cli_pdfs,
+    cli_remind,
+    cli_transkript,
+    cli_tunnels,
+    cli_yt,
+)
+from config import (
+    CONFIG_AI_FILE,
+    INSIGHTS_DIR,
+    MODELS_CONFIG_PATH,
+    NOTES_DIR,
+    PHOTOS_DIR,
+    RESEARCH_DIR,
+)
+from services.ai_engine import (
+    get_ai_response_async,
+    get_current_ai,
+    invalidate_ai_cache,
+)
+from services.file_index import (
+    build_embeddings,
+    delete_file,
+    file_stats,
+    index_directory,
+    search_files,
+)
+from services.kg_enricher import enrich_all_notes
+from services.memory import extract_and_store_facts, get_memory_context
+from services.multimodal import check_capability, encode_image_to_base64, list_photos
+from services.note_linker import link_note_async
 from services.palace_bridge import (
-    search_palace_context, sync_to_palace, palace_status, palace_mcp,
-    palace_wake_up, palace_repair, palace_compact, palace_compress,
-    search_with_kg, export_chat_verbatim
+    export_chat_verbatim,
+    palace_compact,
+    palace_compress,
+    palace_mcp,
+    palace_repair,
+    palace_status,
+    palace_wake_up,
+    search_palace_context,
+    search_with_kg,
+    sync_to_palace,
 )
 from services.palace_mcp import get_mcp
-from services.ai_engine import get_ai_response_async, get_current_ai, invalidate_ai_cache
-from services.memory import extract_and_store_facts, get_memory_context
-from services.wing_classifier import classify_wing
-from services.note_linker import link_note_async
-from services.multimodal import list_photos, encode_image_to_base64, check_capability
 from services.prompts import get_smart_prompt
-from services.kg_enricher import enrich_all_notes
-from services.file_index import (
-    index_directory, search_files, file_stats, delete_file,
-    build_embeddings,
-)
-from cli.utils import (
-    C, format_for_terminal, speak_text, save_chat, get_cli_voice,
-    set_cli_voice, generate_summary_if_needed, export_chat_to_md,
-)
-from cli_extras import cli_yt, cli_pdfs, cli_remind, cli_tunnels, cli_kgadd, cli_transkript
+from services.wing_classifier import classify_wing
 
 
 async def cmd_photos():
@@ -635,7 +667,10 @@ async def process_ai_query(clean_q, messages, data, chat_path, engine, model):
     latest_summary = data.get("summaries", [])[-1] if data.get("summaries") else ""
 
     from services.code_mode import (
-        is_coding_context, ensure_project_dir, load_coding_prompt, read_project_files,
+        ensure_project_dir,
+        is_coding_context,
+        load_coding_prompt,
+        read_project_files,
     )
     is_code = is_coding_context(clean_q, messages)
     if is_code and not data.get("is_coding_mode"):

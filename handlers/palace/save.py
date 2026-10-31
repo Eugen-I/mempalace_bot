@@ -10,10 +10,12 @@ from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
 from .shared import (
+    _pending_mcp_input,
+    _room_cache,
+    _save_state,
+    _wing_cache,
     router,
-    _pending_mcp_input, _save_state, _wing_cache, _room_cache,
 )
-
 
 # ─── SAVE / QUOTE ───
 

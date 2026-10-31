@@ -1,6 +1,6 @@
+import asyncio
 import html
 import logging
-import asyncio
 
 import httpx
 

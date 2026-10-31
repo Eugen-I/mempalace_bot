@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from tests.test_action_bar import FakeCallback, FakeMessage, _markup_data, TEST_UID
+from tests.test_action_bar import TEST_UID, FakeCallback, FakeMessage, _markup_data
 
 TMP_DIR = os.path.join(os.path.dirname(__file__), "_tmp_transkript")
 TMP_FILE = os.path.join(TMP_DIR, "test_tr.txt")
