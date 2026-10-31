@@ -64,14 +64,8 @@ class AgentContextStore:
     def _session_key(self, session_id: str) -> str:
         return f"session:{session_id}"
 
-    def create_button_session(self, answer_sid: str) -> str:
+    def create_button_session(self) -> str:
         session_id = secrets.token_hex(8)
-        self._kv.set(
-            f"answer_sid:{answer_sid}",
-            session_id,
-            namespace=AGENT_CTX_NAMESPACE,
-            ttl=BUTTON_SESSION_TTL,
-        )
         self._kv.set(
             self._session_key(session_id),
             [],
@@ -79,11 +73,6 @@ class AgentContextStore:
             ttl=BUTTON_SESSION_TTL,
         )
         return session_id
-
-    def get_button_session_id(self, answer_sid: str) -> str | None:
-        return self._kv.get(
-            f"answer_sid:{answer_sid}", namespace=AGENT_CTX_NAMESPACE
-        )
 
     def get_button_context(self, session_id: str) -> list[dict]:
         history = self._kv.get(

@@ -137,7 +137,6 @@ def test_cb_get_drawer_unknown_falls_back_to_search(monkeypatch):
 def _open_drawer_state(monkeypatch):
     import asyncio
 
-    import handlers.palace.action_bar as ab
     from handlers.palace import navigation
 
     class FakeMCP:
@@ -158,7 +157,7 @@ def _open_drawer_state(monkeypatch):
 
 
 def test_cb_read_drawer_has_delete_button(monkeypatch):
-    navigation, msg = _open_drawer_state(monkeypatch)
+    _navigation, msg = _open_drawer_state(monkeypatch)
     data = _markup_data(msg)
     assert any(d.startswith("p_drdel:") for d in data)
 

@@ -113,7 +113,7 @@ def test_build_settings_kb_agent_enabled(monkeypatch, tmp_path):
 def test_build_settings_kb_current_model_from_file(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     (tmp_path / "ai.txt").write_text("qwen", encoding="utf-8")
-    markup, curr = st.build_settings_kb(4242)
+    _markup, curr = st.build_settings_kb(4242)
     assert curr == "qwen"
 
 

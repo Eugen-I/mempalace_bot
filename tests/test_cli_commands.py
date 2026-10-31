@@ -6,7 +6,6 @@ import json
 import pytest
 
 import cli.commands as commands
-from cli.utils import C
 
 
 def _async_val(value):
@@ -248,7 +247,6 @@ def test_cmd_search_empty_query(monkeypatch, capsys):
 
 
 def test_cmd_search_global(monkeypatch, capsys):
-    seen = {}
     monkeypatch.setattr(
         commands, "search_palace_context",
         _async_val("res:сон:"),

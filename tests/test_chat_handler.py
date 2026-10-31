@@ -484,60 +484,6 @@ async def test_generate_fresh_summary_error(monkeypatch, tmp_path):
     assert res == "Не удалось сгенерировать саммари."
 
 
-# ---------- update_summary_if_needed ----------
-
-
-@pytest.mark.asyncio
-async def test_update_summary_if_needed_skip_under_5(monkeypatch, tmp_path):
-    d = _enable(monkeypatch, tmp_path)
-    p = _write_chat(d, "ch_1.json", [{"role": "user", "content": "x"}])
-    assert await ch.update_summary_if_needed(
-        4242, str(p), [{"role": "user", "content": "x"}],
-    ) is None
-    data = json.loads(p.read_text(encoding="utf-8"))
-    assert data["summary"] == ""
-
-
-@pytest.mark.asyncio
-async def test_update_summary_if_needed_success(monkeypatch, tmp_path):
-    d = _enable(monkeypatch, tmp_path)
-    p = _write_chat(d, "ch_1.json", [])
-    monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr("services.summary_service.call_ai_async", _async_result("свежее саммари"))
-    msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
-    res = await ch.update_summary_if_needed(4242, str(p), msgs)
-    assert res == "свежее саммари"
-    data = json.loads(p.read_text(encoding="utf-8"))
-    assert data["summary"] == "свежее саммари"
-    assert (d / "ch_1_summary.txt").read_text(encoding="utf-8") == "свежее саммари"
-
-
-@pytest.mark.asyncio
-async def test_update_summary_if_needed_truncated(monkeypatch, tmp_path):
-    d = _enable(monkeypatch, tmp_path)
-    p = _write_chat(d, "ch_1.json", [])
-    monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr("services.summary_service.call_ai_async", _async_result("слово " * 50))
-    msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
-    res = await ch.update_summary_if_needed(4242, str(p), msgs)
-    assert res.endswith("...")
-    assert len(res.split()) == 40
-
-
-@pytest.mark.asyncio
-async def test_update_summary_if_needed_error(monkeypatch, tmp_path):
-    d = _enable(monkeypatch, tmp_path)
-    p = _write_chat(d, "ch_1.json", [])
-    monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-
-    async def boom(*a, **kw):
-        raise RuntimeError("ai down")
-
-    monkeypatch.setattr("services.summary_service.call_ai_async", boom)
-    msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
-    assert await ch.update_summary_if_needed(4242, str(p), msgs) is None
-
-
 # ---------- cmd_context ----------
 
 
@@ -843,7 +789,7 @@ async def test_cb_refresh_summary_long_expand(monkeypatch, tmp_path):
     assert "📖 Развернуть полностью" in texts
 
 
-# ---------- cmd_sync_palace / get_ai_context / cmd_history / cmd_export ----------
+# ---------- cmd_sync_palace / cmd_history / cmd_export ----------
 
 
 @pytest.mark.asyncio
@@ -894,24 +840,6 @@ async def test_cmd_sync_palace_error_is_shown(monkeypatch, tmp_path):
     await ch.cmd_sync_palace(msg)
     assert msg.answers[0][0] == "🔄 Синхронизирую с MemPalace (verbatim)..."
     assert msg.edits[-1][0] == "❌ Ошибка синхронизации: palace down"
-
-
-@pytest.mark.asyncio
-async def test_get_ai_context_no_session(monkeypatch, tmp_path):
-    _enable(monkeypatch, tmp_path)
-    assert await ch.get_ai_context(4242) == ("", [])
-
-
-@pytest.mark.asyncio
-async def test_get_ai_context_with_chat(monkeypatch, tmp_path):
-    d = _enable(monkeypatch, tmp_path)
-    ch.user_sessions[4242] = "ch_1.json"
-    msgs = [{"role": "user", "content": f"m{i}"} for i in range(8)]
-    _write_chat(d, "ch_1.json", msgs, summary="саммари")
-    summary, recent = await ch.get_ai_context(4242)
-    assert summary == "саммари"
-    assert len(recent) == 6
-    assert recent[0]["content"] == "m2"
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,6 @@
 import importlib.util
 from pathlib import Path
 
-import pytest
-
 
 def load_import_notes_module():
     module_path = Path('/Users/evg.pit/Documents/mempalace/import_notes.py')

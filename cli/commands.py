@@ -570,7 +570,7 @@ async def cmd_settings(messages, data, chat_path):
             with open(CONFIG_AI_FILE, "w") as f:
                 f.write(all_m[ch - 1][1])
             invalidate_ai_cache()
-            engine, model = get_current_ai()
+            _engine, model = get_current_ai()
             print(f"{C.GREEN}Модель: {model}{C.END}")
     except ValueError:
         print(f"{C.RED}Неверный ввод.{C.END}")
@@ -768,46 +768,6 @@ async def process_ai_query(clean_q, messages, data, chat_path, engine, model):
         save_chat(chat_path, data)
 
         return answer
-
-        # 🌐 SEARCH pattern: если ИИ запросил поиск, выполняем и переспрашиваем
-        search_match = re.search(
-            r"(?:SEARCH|ПОИСК|SEARCH_WEB):\s*(.+)", answer, re.IGNORECASE,
-        )
-        if search_match:
-            search_query = search_match.group(1).strip()
-            print(f"{C.YELLOW}🌐 ИИ запросил поиск: {search_query}{C.END}")
-            from services.web_search import search_web
-            web_results = await search_web(search_query)
-            print(f"{C.CYAN}{web_results}{C.END}")
-            context_msgs.append({"role": "assistant", "content": answer})
-            context_msgs.append({
-                "role": "user",
-                "content": (
-                    f"Вот результаты поиска по запросу «{search_query}»:\n\n"
-                    f"{web_results}\n\n"
-                    "Ответь на мой исходный вопрос с учётом этой информации."
-                ),
-            })
-            answer2 = await get_ai_response_async(engine, model, context_msgs, context="")
-            console2 = Console()
-            if "```" in answer2:
-                parts2 = answer2.split("```")
-                for i, part2 in enumerate(parts2):
-                    if i % 2 == 0:
-                        if part2.strip():
-                            print(f"{C.GREEN}AI: {format_for_terminal(part2)}{C.END}")
-                    else:
-                        lines2 = part2.split('\n')
-                        lang2 = lines2[0].strip() if lines2 else ""
-                        code2 = '\n'.join(lines2[1:]) if len(lines2) > 1 else part2
-                        syntax2 = Syntax(
-                            code2, lang2 or "python", theme="monokai", line_numbers=True,
-                        )
-                        console2.print(syntax2)
-            else:
-                print(f"{C.GREEN}AI: {format_for_terminal(answer2)}{C.END}")
-            messages.append({"role": "assistant", "content": answer2})
-            answer = answer2
 
     except Exception as e:
         print(f"{C.RED}Ошибка ИИ: {e}{C.END}")

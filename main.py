@@ -251,7 +251,7 @@ async def main():
 if __name__ == "__main__":
     import signal
 
-    def _on_term(signum, frame):
+    def _on_term(_signum, _frame):
         raise SystemExit("SIGTERM received")
 
     signal.signal(signal.SIGTERM, _on_term)

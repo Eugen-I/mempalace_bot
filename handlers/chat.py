@@ -214,28 +214,6 @@ async def generate_fresh_summary(messages: list, existing_summary: str = "") -> 
         return "Не удалось сгенерировать саммари."
 
 
-async def update_summary_if_needed(user_id: int, filepath: str, messages: list):
-    """Генерирует саммари каждые 5 сообщений и сохраняет его."""
-    if len(messages) >= 5 and len(messages) % 5 == 0:
-        engine, model = get_current_ai()
-        try:
-            summary = await generate_summary(
-                SummaryMode.CHAT_PERIODIC,
-                engine=engine,
-                model=model,
-                messages=messages,
-            )
-
-            data = load_chat(filepath)
-            data["summary"] = summary
-            save_chat(filepath, data)
-            save_summary_file(os.path.basename(filepath), summary)
-            return summary
-        except Exception as e:
-            logger.error(f"Ошибка генерации саммари: {e}")
-    return None
-
-
 @router.message(F.text.in_(["~", "#ctx"]))
 @allowed_only
 async def cmd_context(message: types.Message):
@@ -427,26 +405,6 @@ async def cmd_sync_palace(message: types.Message):
 
     status = await message.answer("🔄 Синхронизирую с MemPalace (verbatim)...")
     await status.edit_text(result.message)
-
-
-async def get_ai_context(user_id: int) -> tuple:
-    """Возвращает (summary, recent_messages) для текущего активного чата пользователя.
-    Используется в main.py для формирования контекста ИИ.
-    """
-    fname = user_sessions.get(user_id)
-    if not fname:
-        return "", []
-
-    fpath = os.path.join(CHATS_DIR, fname)
-    data = load_chat(fpath)
-    msgs = data.get("messages", [])
-
-    # Берем последние 6 сообщений для контекста
-    recent = msgs[-6:] if len(msgs) > 6 else msgs
-
-    summary = data.get("summary", "")
-
-    return summary, recent
 
 
 # 📜 Команда /history - показать историю текущего чата

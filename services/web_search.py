@@ -80,7 +80,7 @@ async def _bing_search(client: httpx.AsyncClient, query: str, max_results: int) 
     try:
         headers = {"Ocp-Apim-Subscription-Key": BING_SEARCH_API_KEY}
         resp = await client.get(
-            "https://api.bing.microsoft.com/v7.0/search",
+            BING_SEARCH_URL,
             params={"q": query, "count": max_results, "mkt": "ru-RU", "safeSearch": "Off"},
             headers=headers,
             timeout=15.0,
@@ -115,13 +115,13 @@ async def _yahoo_search(client: httpx.AsyncClient, query: str, max_results: int)
 async def _ddg_search(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict]:
     try:
         resp = await client.get(
-            "https://api.duckduckgo.com/",
+            DDG_API_URL,
             params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
         )
         if resp.status_code == 202:
             await asyncio.sleep(0.5)
             resp = await client.get(
-                "https://api.duckduckgo.com/",
+                DDG_API_URL,
                 params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
                 timeout=15.0,
             )
@@ -173,7 +173,7 @@ async def search_web(query: str, max_results: int = 5) -> str:
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
-                "https://api.duckduckgo.com/",
+                DDG_API_URL,
                 params={
                     "q": query,
                     "format": "json",
@@ -185,7 +185,7 @@ async def search_web(query: str, max_results: int = 5) -> str:
             if resp.status_code == 202:
                 await asyncio.sleep(0.5)
                 resp = await client.get(
-                    "https://api.duckduckgo.com/",
+                    DDG_API_URL,
                     params={
                         "q": query,
                         "format": "json",
@@ -247,7 +247,7 @@ async def search_web(query: str, max_results: int = 5) -> str:
         logger.info(f"[WebSearch] Instant Answer пустой, пробуем Lite для: {query}")
         async with httpx.AsyncClient(timeout=15.0) as client:
             html_resp = await client.post(
-                "https://lite.duckduckgo.com/lite/",
+                DDG_LITE_URL,
                 data={"q": query},
                 headers={"User-Agent": "Mozilla/5.0"},
             )
@@ -264,7 +264,7 @@ async def search_web(query: str, max_results: int = 5) -> str:
         logger.info(f"[WebSearch] Lite пустой, пробуем полный HTML для: {query}")
         async with httpx.AsyncClient(timeout=15.0) as client:
             html_resp = await client.post(
-                "https://html.duckduckgo.com/html/",
+                DDG_HTML_URL,
                 data={"q": query},
                 headers={"User-Agent": "Mozilla/5.0"},
             )

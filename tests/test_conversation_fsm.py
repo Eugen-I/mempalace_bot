@@ -1,6 +1,5 @@
 """Unit tests for services.conversation_fsm (per-user FSM with TTL)."""
 
-import time
 
 import pytest
 

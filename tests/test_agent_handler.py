@@ -343,7 +343,7 @@ async def test_cb_ab_agent_engine_error_does_not_crash(monkeypatch):
         def __init__(self):
             self.appended = []
 
-        def create_button_session(self, answer_sid):
+        def create_button_session(self):
             return "button-sid"
 
         def bind_button_session_to_uid(self, uid, session_id):

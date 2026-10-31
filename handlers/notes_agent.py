@@ -666,7 +666,7 @@ async def cb_notes_storm(cb: types.CallbackQuery):
     guard = await _note_action_guard(cb)
     if guard is None:
         return
-    idx, note = guard
+    _idx, note = guard
     from services import apple_notes
 
     try:
@@ -808,7 +808,7 @@ async def cb_notes_save(cb: types.CallbackQuery):
     guard = await _note_action_guard(cb)
     if guard is None:
         return
-    idx, note = guard
+    _idx, note = guard
     from services import apple_notes
 
     try:

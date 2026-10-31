@@ -145,7 +145,7 @@ async def main():
                 cwd=DATA_DIR,
                 env=_get_palace_env(),
             )
-            stdout, stderr = await proc.communicate()
+            _stdout, stderr = await proc.communicate()
             if proc.returncode != 0:
                 logger.error(f"  ❌ Ошибка майнинга {wing}: {stderr.decode().strip()}")
             else:

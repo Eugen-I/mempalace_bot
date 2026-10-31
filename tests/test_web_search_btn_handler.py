@@ -1,6 +1,5 @@
 """Unit tests for handlers.web_search_btn."""
 
-import html as html_mod
 import os
 from types import SimpleNamespace
 

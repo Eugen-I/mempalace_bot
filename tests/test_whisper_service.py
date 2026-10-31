@@ -2,7 +2,6 @@
 
 Покрытие: кэш модели, prewarm, границы размеров модели.
 """
-import sys
 import types
 
 import pytest

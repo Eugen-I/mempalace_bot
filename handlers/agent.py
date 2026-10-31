@@ -157,7 +157,7 @@ async def cb_ab_agent(cb: types.CallbackQuery):
 
     # Create button-mode session
     ctx_store = get_agent_context_store()
-    session_id = ctx_store.create_button_session(answer.sid)
+    session_id = ctx_store.create_button_session()
     ctx_store.bind_button_session_to_uid(cb.from_user.id, session_id)
 
     # Store session_id in answer.ctx for follow-up routing

@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 from handlers import youtube_ui as yt
-from services import bot_setup
 from services import youtube as youtube_svc
 
 
@@ -140,9 +139,7 @@ async def test_cmd_yt_video_not_allowed(monkeypatch, tmp_path):
 async def test_handle_uploaded_audio_small_file(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     msg = FakeMessage(4242, audio=FakeFile())
-    local = str(d / "x.mp3")
     monkeypatch.setattr(yt.secrets, "token_hex", lambda n: "abcd")
-    real_write = (d / "upload_abcd.mp3").write_bytes
 
     async def fake_get_file(file_id):
         return SimpleNamespace(file_path="some/path.mp3")
@@ -254,7 +251,7 @@ async def test_handle_uploaded_audio_compress_then_split(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_handle_uploaded_audio_exception(monkeypatch, tmp_path):
-    d = _enable(monkeypatch, tmp_path)
+    _enable(monkeypatch, tmp_path)
     monkeypatch.setattr(yt.secrets, "token_hex", lambda n: "err")
 
     async def fake_get_file(file_id):
@@ -514,8 +511,6 @@ async def test_handle_uploaded_audio_remove_fails_ignored(monkeypatch, tmp_path)
     monkeypatch.setattr(youtube_svc, "split_media", fake_split)
 
     import os as _os
-
-    real_remove = _os.remove
 
     def flaky_remove(path):
         raise OSError("locked")

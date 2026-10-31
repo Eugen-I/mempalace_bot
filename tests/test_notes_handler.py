@@ -206,7 +206,6 @@ async def test_cb_read_long_note_split_into_parts(monkeypatch, tmp_path):
     os.utime(f, (1700000000, 1700000000))
     cb = FakeCb(4242, data="read|#!|1")
 
-    orig_split = notes.split_message
     parts = ["часть_А", "часть_Б", "часть_В"]
     monkeypatch.setattr(notes, "split_message", lambda t: parts)
 

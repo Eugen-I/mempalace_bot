@@ -690,13 +690,13 @@ def test_cb_kg_read_search(monkeypatch):
     _enable(monkeypatch)
     shown = []
 
-    async def fake_search(uid, edit_func, entity, original_msg):
-        shown.append((uid, entity, original_msg))
+    async def fake_search(uid, edit_func, entity):
+        shown.append((uid, entity))
 
     monkeypatch.setattr(k, "_kg_search_and_show", fake_search)
     cb = FakeCb(data="p_kgrs:Юнг")
     asyncio.run(k.cb_kg_read_search(cb))
-    assert shown[0] == (4242, "Юнг", cb.message)
+    assert shown[0] == (4242, "Юнг")
 
 
 # ---------- _kg_search_and_show ----------
@@ -725,7 +725,7 @@ def test_kg_search_and_show_success(monkeypatch):
     async def edit_func(text, **kw):
         edits.append(text)
 
-    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг", None))
+    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг"))
     assert mcp.calls[0] == ("mempalace_search", {"query": "Юнг", "limit": 10})
     assert k._kg_search_data[4242] == {
         "entity": "Юнг", "results": [
@@ -747,7 +747,7 @@ def test_kg_search_and_show_legacy_list(monkeypatch):
         called.append(uid)
 
     monkeypatch.setattr(k, "_send_kg_search_page", fake_send)
-    asyncio.run(k._kg_search_and_show(4242, lambda *a, **kw: None, "Юнг", None))
+    asyncio.run(k._kg_search_and_show(4242, lambda *a, **kw: None, "Юнг"))
     assert k._kg_search_data[4242] == {
         "entity": "Юнг", "results": [
             {"content": "текст", "source": "src.md"}, "простая запись",
@@ -766,7 +766,7 @@ def test_kg_search_and_show_dict_no_results(monkeypatch):
     async def edit_func(text, **kw):
         edits.append(text)
 
-    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг", None))
+    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг"))
     assert edits == ["❌ По запросу «Юнг» ничего не найдено."]
 
 
@@ -779,7 +779,7 @@ def test_kg_search_and_show_dict_missing_results_key(monkeypatch):
     async def edit_func(text, **kw):
         edits.append(text)
 
-    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг", None))
+    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг"))
     assert edits == ["❌ По запросу «Юнг» ничего не найдено."]
 
 
@@ -792,7 +792,7 @@ def test_kg_search_and_show_not_json(monkeypatch):
     async def edit_func(text, **kw):
         edits.append(text)
 
-    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг", None))
+    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг"))
     assert edits == ["❌ По запросу «Юнг» ничего не найдено."]
 
 
@@ -805,7 +805,7 @@ def test_kg_search_and_show_no_results(monkeypatch):
     async def edit_func(text, **kw):
         edits.append(text)
 
-    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг", None))
+    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг"))
     assert edits == ["❌ По запросу «Юнг» ничего не найдено."]
 
 
@@ -818,7 +818,7 @@ def test_kg_search_and_show_error(monkeypatch):
     async def edit_func(text, **kw):
         edits.append(text)
 
-    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг", None))
+    asyncio.run(k._kg_search_and_show(4242, edit_func, "Юнг"))
     assert edits == ["❌ По запросу «Юнг» ничего не найдено."]
 
 

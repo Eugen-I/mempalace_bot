@@ -32,8 +32,8 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 
-from cli import chat_loop, create_new_chat, list_chats, save_chat
-from cli.utils import C, format_for_terminal
+from cli import chat_loop, create_new_chat, list_chats
+from cli.utils import C
 from config import CHATS_DIR
 from services.ai_engine import get_current_ai
 

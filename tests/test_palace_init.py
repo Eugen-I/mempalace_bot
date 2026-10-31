@@ -281,7 +281,7 @@ def test_process_mcp_text_input_button_followup_before_assistant_reply(
     kv = KVStore(db_path=str(tmp_path / "agent_context.sqlite"))
     monkeypatch.setattr(ac, "get_kv_store", lambda: kv)
     store = ac.AgentContextStore()
-    session_id = store.create_button_session("answer-1")
+    session_id = store.create_button_session()
     store.bind_button_session_to_uid(4242, session_id)
     monkeypatch.setattr(
         "services.agent_context.get_agent_context_store", lambda: store,

@@ -177,7 +177,6 @@ async def test_send_voice_generation_error_logged(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_send_voice_audio_fail_removes_file(monkeypatch):
-    msg = FakeMessage()
     monkeypatch.setattr(sender, "prepare_tts_text", lambda text: "текст")
     monkeypatch.setattr(
         sender, "split_tts_text", lambda text, max_chars=1800: ["текст"],

@@ -168,7 +168,6 @@ def _clean_singletons():
     from services.event_bus import reset_bus
     from services.graceful_degradation import (
         get_degradation_manager,
-        report_failure,
         report_success,
     )
     from services.semantic_cache import reset_cache
@@ -177,6 +176,6 @@ def _clean_singletons():
     get_palace_circuit_breaker().reset()
     reset_bus()
     reset_cache()
-    mgr = get_degradation_manager()
+    get_degradation_manager()
     for comp in ("palace_mcp", "palace_search", "memory"):
         report_success(comp)

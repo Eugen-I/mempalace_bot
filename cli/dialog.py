@@ -65,7 +65,7 @@ class CLICompleter(Completer):
             'list', 'create', 'delete', 'analyze', 'between',
         ]
 
-    def get_completions(self, document, complete_event):
+    def get_completions(self, document, _complete_event):
         text = document.text_before_cursor
 
         if text.startswith('/tunnels '):

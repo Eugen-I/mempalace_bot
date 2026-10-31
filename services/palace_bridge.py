@@ -124,8 +124,6 @@ async def _search_palace_context_impl(
         return {"text": "", "sources": []}
 
     safe_query = query.strip().replace('"', "'")[:200]
-    if not safe_query:
-        return {"text": "", "sources": []}
 
     # Try direct API first (structured results with scores)
     result = await _search_via_api(safe_query, limit, wing, room)
@@ -625,7 +623,7 @@ async def _sync_to_palace_impl(target_path: str | None = None) -> str:
             cwd=DATA_DIR,
             env=_get_palace_env(),
         )
-        stdout, stderr = await proc.communicate()
+        _stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
             err = stderr.decode().strip()
             return (

@@ -18,7 +18,7 @@ def store(monkeypatch, tmp_path):
 
 
 def test_empty_button_session_is_active(store):
-    session_id = store.create_button_session("answer-1")
+    session_id = store.create_button_session()
     store.bind_button_session_to_uid(4242, session_id)
 
     assert store.get_button_context(session_id) == []
@@ -30,7 +30,7 @@ def test_unbound_uid_has_no_active_session(store):
 
 
 def test_ended_session_is_inactive(store):
-    session_id = store.create_button_session("answer-1")
+    session_id = store.create_button_session()
     store.bind_button_session_to_uid(4242, session_id)
 
     store.end_button_session(session_id)
@@ -39,7 +39,7 @@ def test_ended_session_is_inactive(store):
 
 
 def test_none_session_value_is_inactive(store):
-    session_id = store.create_button_session("answer-1")
+    session_id = store.create_button_session()
     store.bind_button_session_to_uid(4242, session_id)
     store._kv.set(
         store._session_key(session_id),
@@ -51,7 +51,7 @@ def test_none_session_value_is_inactive(store):
 
 
 def test_followup_before_first_assistant_reply(store):
-    session_id = store.create_button_session("answer-1")
+    session_id = store.create_button_session()
     store.bind_button_session_to_uid(4242, session_id)
 
     store.append_button_context(session_id, "user", "продолжай")

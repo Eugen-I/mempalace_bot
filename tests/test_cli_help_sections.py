@@ -3,7 +3,6 @@
 import pytest
 
 import cli.help_sections as hs
-from cli.utils import C
 
 
 @pytest.fixture(autouse=True)
