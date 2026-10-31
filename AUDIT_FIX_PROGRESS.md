@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (35/45 шагов `DONE`)
+**Статус работы:** в работе (36/46 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-30 14:19 CET
+- **Дата последнего обновления:** 2026-10-31 11:04 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S3.10 — код `549173f`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S3.10` — завершён
+- **HEAD:** S4.1a — код `300c6df`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S4.1a` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S4.1` — Безопасные autofix `ruff`
-- **Бюджет текущего шага:** 25k
-- **Израсходовано (оценка):** ~11k (код, тесты, QA)
+- **Следующее действие:** `S4.1b` — сортировка импортов (`I001`)
+- **Бюджет текущего шага:** 15k
+- **Израсходовано (оценка):** ~7k (diff, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`.
-- **Последний QA:** 3768 passed / 0 failed (без untracked Garmin); targeted 6 файлов (palace utils, photos, messages, notes agent, ai_engine, settings) — 458 passed; `services/ai_engine.py` — 100%; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
+- **Последний QA:** 3768 passed / 0 failed (без untracked Garmin); первый полный прогон дал известный flake `test_confirm_write_delete_requires_two_confirmations` (в изоляции passed, повторный полный прогон — 3768 passed); RUF100: 15 → 0; `ruff --select ALL`: 41396 → 41381; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -122,7 +122,8 @@
 | S3.8b | AI engine: общий pipeline | P2 | 45k | DONE | `98ea976` | 2026-10-30 14:09 | ~24k |
 | S3.9 | Reminder prompt/JSON | P2 | 25k | DONE | `8cd06c1` | 2026-10-30 14:13 | ~12k |
 | S3.10 | Palace utils/wrappers | P2 | 25k | DONE | `549173f` | 2026-10-30 14:19 | ~11k |
-| S4.1 | Безопасные ruff autofix | P2 | 30k | TODO | — | — | — |
+| S4.1a | Ruff: unused noqa (`RUF100`) | P2 | 15k | DONE | `300c6df` | 2026-10-31 11:04 | ~7k |
+| S4.1b | Ruff: сортировка импортов (`I001`) | P2 | 15k | TODO | — | — | — |
 | S4.2 | Мёртвый код/unused/mypy | P2 | 25k | TODO | — | — | — |
 | S4.3 | Критичные `except Exception` | P2 | 40k | TODO | — | — | — |
 | S4.4 | Зависимости и flake8-конфиг | P2 | 20k | TODO | — | — | — |
@@ -143,8 +144,8 @@
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
 | 3 — P2 дублирование | 11 | 11 | 0 | 0 |
-| 4 — чистота/тесты | 10 | 0 | 0 | 10 |
-| **Итого** | **45** | **35** | **0** | **10** |
+| 4 — чистота/тесты | 11 | 1 | 0 | 10 |
+| **Итого** | **46** | **36** | **0** | **10** |
 
 > Обновлять после каждого шага.
 
@@ -1731,6 +1732,37 @@
 - Найдено попутно: новых нет; INC-13 закрыт в части sync-обёртки, INC-3/INC-4 остаются.
 - Следующее действие: `S4.1` — безопасные autofix `ruff`.
 
+### S4.1a — Ruff: удаление неиспользуемых `noqa` (`RUF100`)
+
+- Дата/время: 2026-10-31 10:58–11:04 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `300c6df`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 15k / ~7k
+- Файлы: `handlers/agent.py`, `handlers/brainstorm.py`, `handlers/messages.py`, `handlers/notes_agent.py`, `handlers/palace/__init__.py`, `handlers/palace/navigation.py`, `handlers/reminder.py`, `main.py`, `services/agent_engine.py`, `services/menu.py`, `tests/test_agent_tools.py`
+- Baseline до:
+  - `ruff check --select ALL --statistics $(git ls-files '*.py')` → **41396**, из них `RUF100` — **15**, `I001` — **99**, `RUF059` — **155**.
+  - `ruff check --select I001,RUF100,RUF059 ...` → **360**, из них fixable — **205**.
+- Что сделано:
+  1. Запущен `ruff check --select ALL --fix --fixable RUF100 $(git ls-files '*.py')`; исправлено **15** неиспользуемых `# noqa`.
+  2. Полный набор `ALL` выбран специально, чтобы `RUF100` не счёл «лишними» `noqa` для правил, которые не включены в текущий запуск. `--fixable RUF100` ограничил правки только этой категорией.
+  3. Удалены только комментарии `# noqa`; код и поведение не менялись. Освободившиеся пояснения к исключениям потеряны вместе с комментариями — это ожидаемый autofix.
+- После:
+  - `RUF100` — **0**; `I001` — **99**; `RUF059` — **155**; всего `ALL` — **41381**.
+  - `git diff` содержит только удаление 15 `# noqa` в 11 файлах.
+- Тесты и команды:
+  - Полный прогон: `python3 -m pytest -q --tb=short --ignore-glob='tests/test_garmin_*.py'` → первый запуск: **1 failed, 3767 passed** (известный flake `test_confirm_write_delete_requires_two_confirmations`); в изоляции — **1 passed**; повторный полный прогон — **3768 passed, 6 warnings in 20.88s**.
+  - `git diff --check` → чисто; pre-commit hooks (fix end of files, flake8, no-secrets) прошли.
+- AC:
+  - [x] Количество замечаний снижено: `RUF100` 15 → 0.
+  - [x] Поведение не изменилось: изменены только комментарии; полный набор тестов зелёный.
+- Коммит: `300c6df` (`chore(step-4.1a): remove unused noqa`)
+- Проблемы/решения:
+  - Запуск `RUF100` без полного набора правил дал бы ложные 106 «неиспользуемых» `noqa`; использован `--select ALL --fixable RUF100`.
+  - `RUF059` (155) не входит в безопасный autofix: ruff помечает его fix как unsafe; перенесён на S4.1b/S4.2 для отдельного решения.
+- Найдено попутно: новых нет.
+- Следующее действие: `S4.1b` — сортировка импортов (`I001`).
+
 ---
 
 ## 7. Журнал сессий
@@ -1772,6 +1804,7 @@
 | 33 | 2026-10-30 13:58–14:09 | DeepSeek V4.1 Flash Free | S3.8b | DONE | ~24k | Single per-engine sync/stream pipeline; qwen/openai/gemini parity + error tests; ai_engine 100%; 3774 full; 98ea976 |
 | 34 | 2026-10-30 14:10–14:13 | DeepSeek V4.1 Flash Free | S3.9 | DONE | ~12k | Single reminder prompt builder + shared json_parser; removed `_clean_json`; full/time-only, broken/empty JSON tests; 3774 full; 8cd06c1 |
 | 35 | 2026-10-30 14:14–14:19 | DeepSeek V4.1 Flash Free | S3.10 | DONE | ~11k | One safe_send with return_message + one public call_ai_sync; removed local wrappers; 458 targeted, 3768 full; 549173f |
+| 36 | 2026-10-31 10:58–11:04 | DeepSeek V4.1 Flash Free | S4.1a | DONE | ~7k | RUF100: removed 15 unused noqa; no behavior change; 3768 full; 300c6df |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1842,7 +1875,7 @@
 
 | Дата | Шаг | Отклонение | Причина | Одобрено |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| 2026-10-31 | S4.1 | Разделён на `S4.1a` (RUF100) и `S4.1b` (I001); общее число шагов стало 46 | Запрос пользователя: выполнить шаг в два этапа, каждый этап фиксировать отдельно | Да (пользователь) |
 
 ---
 
