@@ -198,7 +198,7 @@ async def run_agent(
     for i in range(1, max_iterations + 1):
         try:
             resp = await asyncio.to_thread(_qwen_tool_call, model, messages, openai_tools)
-        except Exception as exc:  # noqa: BLE001 — агрегируем в AgentResult
+        except Exception as exc:
             if _is_ollama_unavailable(exc):
                 return AgentResult(
                     final_answer="",
@@ -297,7 +297,7 @@ async def run_agent(
                     "name": name, "ok": False,
                     "output": f"Превышен таймаут инструмента ({tool_timeout:g}с).",
                 })
-            except Exception as exc:  # noqa: BLE001 — результат ошибки видит модель
+            except Exception as exc:
                 logger.error("[AGENT] tool %s failed: %s", name, exc, exc_info=True)
                 step.results.append({
                     "name": name, "ok": False,

@@ -23,7 +23,7 @@ except RuntimeError as e:
     print("📄 Скопируйте .env.example → .env и отредактируйте")
     sys.exit(1)
 
-from services.bot_setup import bot, dp, init_bot  # noqa: E402
+from services.bot_setup import bot, dp, init_bot
 
 logger = setup_logging(DATA_DIR)
 init_bot(logger)

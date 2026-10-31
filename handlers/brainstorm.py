@@ -58,7 +58,7 @@ async def run_storm(uid: int, status_msg, topic: str):
         raw = await get_ai_response_async(engine, model, msgs)
 
         ideas = bs.parse_ideas(raw)
-    except Exception as exc:  # noqa: BLE001 — показываем пользователю текст ошибки
+    except Exception as exc:
         logger.error("[STORM] run failed: %s", exc, exc_info=True)
         await _status_edit(status_msg, f"❌ Ошибка штурма: {exc}")
         return

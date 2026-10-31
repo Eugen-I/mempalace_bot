@@ -22,8 +22,8 @@ import json
 from handlers.personal_note import (
     _waiting_for_note, process_note_input, _quote_waiting, _save_quote_to_palace,
 )
-from handlers.brainstorm import _storm_waiting  # noqa: F401 — используется в 0cc
-from handlers.brainstorm import _reflection_waiting  # noqa: F401 — используется в 0ccb
+from handlers.brainstorm import _storm_waiting
+from handlers.brainstorm import _reflection_waiting
 from handlers.transkript import _tr_ai_waiting, handle_tr_ai_question
 from handlers.reminder import handle_reminder_text
 from handlers.search import search_result_cache as _search_result_cache

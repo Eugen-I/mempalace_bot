@@ -316,7 +316,7 @@ def test_force_execute_unknown_tool_raises():
 
 def test_notes_category_isolates_from_palace(cleanup):
     """allowed_categories=(CAT_NOTES,): дворцовые инструменты не видны."""
-    import services.agent_mcp_tools  # noqa: F401 — регистрирует mp_*
+    import services.agent_mcp_tools
     import services.agent_notes_write_tools  # noqa: F401 — регистрирует notes_write
 
     names = [t.name for t in at.list_agent_tools(

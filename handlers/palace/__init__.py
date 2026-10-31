@@ -23,7 +23,7 @@ from services.ai_engine import call_ai_async, get_current_ai
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
-from .save import _show_save_wings, _show_save_rooms, _save_confirm  # noqa: F401
+from .save import _show_save_wings, _show_save_rooms, _save_confirm
 from .hints import suggest_tunnel_hint  # noqa: F401
 
 from services.conversation_fsm import ConversationState

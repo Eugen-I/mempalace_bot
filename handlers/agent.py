@@ -78,7 +78,7 @@ async def _run_agent_reply(
     except ae.AgentEngineError as exc:
         await _status_edit(status_msg, f"⚠️ {exc}")
         return ae.AgentResult.failure(str(exc))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("[AGENT] run failed: %s", exc, exc_info=True)
         message = f"Ошибка агента: {exc}"
         await _status_edit(status_msg, f"❌ {message}")

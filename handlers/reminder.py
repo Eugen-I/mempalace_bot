@@ -383,7 +383,7 @@ async def handle_reminder_text(uid: int, text: str, reply_func) -> bool:
         _remind_pending.pop(uid, None)
         try:
             parsed = await _parse_reminder(text)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error("[REM] ask_all parse failed: %s", e, exc_info=True)
             await reply_func(
                 "❌ Не удалось разобрать напоминание. Начни заново с «напомни».",

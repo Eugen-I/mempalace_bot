@@ -366,7 +366,7 @@ async def _run_notes_agent_reply(
     except ae.AgentEngineError as exc:
         await _status_edit(status_msg, f"⚠️ {exc}")
         return ae.AgentResult.failure(str(exc))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("[NOTES-AGENT] run failed: %s", exc, exc_info=True)
         message = f"Ошибка агента: {exc}"
         await _status_edit(status_msg, f"❌ {message}")
@@ -470,7 +470,7 @@ async def run_surreal_storm(
             ideas = bs.parse_ideas(
                 raw, require_camera_setup=True, require_camera_keywords=True,
             )
-    except Exception as exc:  # noqa: BLE001 — показываем пользователю текст ошибки
+    except Exception as exc:
         logger.error("[SURREAL] run failed: %s", exc, exc_info=True)
         await _status_edit(status_msg, f"❌ Ошибка штурма: {exc}")
         return

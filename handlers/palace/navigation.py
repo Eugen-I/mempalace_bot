@@ -354,7 +354,7 @@ async def cb_cross_ai_article(cb: types.CallbackQuery):
         )
         try:
             engine, model = get_current_ai()
-        except Exception as exc:  # noqa: BLE001 — показываем понятную ошибку
+        except Exception as exc:
             logger.error("[CROSS_AI] model resolution failed: %s", exc, exc_info=True)
             await safe_edit_text(
                 cb.message,
