@@ -36,7 +36,8 @@ def list_chat_files(chats_dir: str, limit: int | None = None) -> list[str]:
     def mtime(name: str) -> float:
         try:
             return os.path.getmtime(os.path.join(chats_dir, name))
-        except OSError:
+        except OSError as exc:
+            logger.warning("Не удалось получить mtime чата %s: %s", name, exc)
             return 0.0
 
     files.sort(key=lambda name: (-mtime(name), name))

@@ -103,6 +103,14 @@ def test_build_settings_kb_default(monkeypatch, tmp_path):
     assert "🤖 Агент: ВЫКЛ" in texts
 
 
+def test_build_settings_kb_missing_ai_file(monkeypatch, tmp_path, caplog):
+    _enable(monkeypatch, tmp_path)
+    (tmp_path / "ai.txt").unlink()
+    _markup, curr = st.build_settings_kb(4242)
+    assert curr == "gemini-flash-latest"
+    assert "Не удалось прочитать текущую модель AI" in caplog.text
+
+
 def test_build_settings_kb_agent_enabled(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     monkeypatch.setattr(st, "get_agent_enabled", lambda uid: True)
@@ -268,7 +276,7 @@ async def test_cmd_callback_analyze_photo_whitespace_part(monkeypatch, tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_cmd_callback_analyze_photo_html_fallback(monkeypatch, tmp_path):
+async def test_cmd_callback_analyze_photo_html_fallback(monkeypatch, tmp_path, caplog):
     _enable(monkeypatch, tmp_path)
     photos = tmp_path / "photos4"
     photos.mkdir()
@@ -293,6 +301,7 @@ async def test_cmd_callback_analyze_photo_html_fallback(monkeypatch, tmp_path):
     await st.cmd_callback_handler(cb)
     bodies = [a[0] for a in cb.message.answers]
     assert any("<b>x</b>" in b for b in bodies)
+    assert "HTML-отправка анализа фото не удалась" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -936,12 +945,23 @@ async def test_render_ollama_list(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_render_ollama_list_broken_models_file(monkeypatch, tmp_path):
+async def test_render_ollama_list_broken_models_file(monkeypatch, tmp_path, caplog):
     _enable(monkeypatch, tmp_path)
     (tmp_path / "models.json").write_text("{broken", encoding="utf-8")
     cb = FakeCb(4242, data="list_ollama")
     await st.render_ollama_list(cb)
     assert "Активная модель" in cb.message.edits[0][0]
+    assert "Не удалось прочитать конфиг моделей" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_render_ollama_list_missing_ai_file(monkeypatch, tmp_path, caplog):
+    _enable(monkeypatch, tmp_path)
+    (tmp_path / "ai.txt").unlink()
+    cb = FakeCb(4242, data="list_ollama")
+    await st.render_ollama_list(cb)
+    assert "Активная модель" in cb.message.edits[0][0]
+    assert "Не удалось прочитать текущую модель AI" in caplog.text
 
 
 # ---------- cmd_settings ----------

@@ -420,7 +420,7 @@ async def test_cb_delete_chat_file_missing(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cb_delete_chat_edit_fails(monkeypatch, tmp_path):
+async def test_cb_delete_chat_edit_fails(monkeypatch, tmp_path, caplog):
     d = _enable(monkeypatch, tmp_path)
     ch._chat_callback_cache["abcd"] = "ch_1.json"
     _write_chat(d, "ch_1.json", [])
@@ -433,6 +433,7 @@ async def test_cb_delete_chat_edit_fails(monkeypatch, tmp_path):
     cb = FakeCb(data="del:abcd", message=FailMsg())
     await ch.cb_delete_chat(cb)
     assert cb.answered == [("🗑️ Удален: ch_1.json", True)]
+    assert "Не удалось обновить список чатов" in caplog.text
 
 
 # ---------- generate_fresh_summary ----------
@@ -625,7 +626,7 @@ async def test_cb_show_summary_send_fails(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cb_show_summary_all_send_fail(monkeypatch, tmp_path):
+async def test_cb_show_summary_all_send_fail(monkeypatch, tmp_path, caplog):
     d = _enable(monkeypatch, tmp_path)
     ch._chat_callback_cache["abcd"] = "ch_1.json"
     (d / "ch_1_summary.txt").write_text("текст", encoding="utf-8")
@@ -637,6 +638,7 @@ async def test_cb_show_summary_all_send_fail(monkeypatch, tmp_path):
     cb = FakeCb(data="show_summary:abcd", message=FailMsg())
     await ch.cb_show_summary(cb)
     assert cb.answered == [(None, None)]
+    assert "Не удалось отправить часть саммари" in caplog.text
 
 
 # ---------- cb_show_full_chat ----------
@@ -711,7 +713,7 @@ async def test_cb_show_full_chat_multi_part(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cb_show_full_chat_send_fails(monkeypatch, tmp_path):
+async def test_cb_show_full_chat_send_fails(monkeypatch, tmp_path, caplog):
     d = _enable(monkeypatch, tmp_path)
     ch._chat_callback_cache["abcd"] = "ch_1.json"
     _write_chat(d, "ch_1.json", [
@@ -729,6 +731,7 @@ async def test_cb_show_full_chat_send_fails(monkeypatch, tmp_path):
     cb = FakeCb(data="show_full:abcd")
     await ch.cb_show_full_chat(cb)
     assert cb.answered == [(None, None)]
+    assert "Не удалось отправить часть истории" in caplog.text
 
 
 # ---------- cb_refresh_summary ----------

@@ -298,8 +298,10 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                     cwd=DATA_DIR,
                 )
                 await proc.communicate()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(
+                    "Не удалось инициализировать крыло %s: %s", wing, e, exc_info=True,
+                )
             await _show_save_rooms(msg.edit_text, uid)
             return True
 
@@ -577,7 +579,11 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                         "mempalace_read_drawer", {"wing": wing, "room": room},
                     )
                     ctx_parts.append(f"[{wing}/{room}]\n{r.strip()}")
-                except Exception:
+                except Exception as e:
+                    logger.warning(
+                        "[PALACE_TUNNEL] Не удалось прочитать %s/%s: %s",
+                        wing, room, e,
+                    )
                     ctx_parts.append(f"[{wing}/{room}]\n(не удалось прочитать)")
             engine, model = get_current_ai()
             system = (
@@ -607,8 +613,10 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                     ),
                 )
             except Exception as ai_e:
+                logger.error("[PALACE_TUNNEL] Ошибка ИИ: %s", ai_e, exc_info=True)
                 await msg.edit_text(f"❌ Ошибка ИИ: {ai_e}")
 
     except Exception as e:
+        logger.error("[PALACE_TUNNEL] Ошибка анализа: %s", e, exc_info=True)
         await msg.edit_text(f"❌ Ошибка: {e}")
     return True

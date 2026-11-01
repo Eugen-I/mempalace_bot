@@ -106,9 +106,11 @@ def format_chat_history(
 
 def build_settings_kb(user_id: int):
     curr = "gemini-flash-latest"
-    if os.path.exists(CONFIG_AI_FILE):
+    try:
         with open(CONFIG_AI_FILE) as f:
             curr = f.read().strip() or curr
+    except OSError as e:
+        logger.warning("Не удалось прочитать текущую модель AI: %s", e)
     vs = get_voice_settings(user_id)
     mode_txt = {"text": "📝 Текст", "voice": "🎤 Голос", "both": "📝+🎤 Вместе"}.get(
         vs["mode"], "📝 Текст",
@@ -286,11 +288,15 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
                         try:
                             # Пробуем отправить с форматированием
                             await callback.message.answer(part, parse_mode="HTML")
-                        except Exception:
+                        except Exception as e:
                             # Fallback: отправляем как простой текст, если парсер сломался
+                            logger.warning(
+                                "HTML-отправка анализа фото не удалась, fallback: %s", e,
+                            )
                             await callback.message.answer(part, parse_mode=None)
 
             except Exception as e:
+                logger.warning("Ошибка анализа фото: %s", e, exc_info=True)
                 await status_msg.edit_text(format_user_error(e, "settings_photo_analysis"))
         else:
             await status_msg.edit_text("❌ Ошибка кодирования фото.")
@@ -377,14 +383,17 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
 async def render_ollama_list(cb: types.CallbackQuery):
     """Отрисовывает список Ollama моделей с подсветкой активной."""
     current_tag = "gemini-flash-latest"
-    if os.path.exists(CONFIG_AI_FILE):
+    try:
         with open(CONFIG_AI_FILE) as f:
             current_tag = f.read().strip() or current_tag
+    except OSError as e:
+        logger.warning("Не удалось прочитать текущую модель AI: %s", e)
 
     try:
         with open(MODELS_CONFIG_PATH, encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:
+    except Exception as e:
+        logger.warning("Не удалось прочитать конфиг моделей %s: %s", MODELS_CONFIG_PATH, e)
         data = {"ollama": []}
 
     kb = InlineKeyboardBuilder()

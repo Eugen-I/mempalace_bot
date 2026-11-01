@@ -189,8 +189,10 @@ async def cb_delete_chat(callback: types.CallbackQuery):
             await callback.message.edit_text(
                 "📅 Выберите чат:", reply_markup=kb.as_markup(),
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(
+            "Не удалось обновить список чатов после удаления %s: %s", fname, e,
+        )
 
     await callback.answer(f"🗑️ Удален: {fname}", show_alert=True)
 
@@ -303,8 +305,10 @@ async def cb_show_summary(callback: types.CallbackQuery):
             if i == 0:
                 first_msg = msg
             last_msg = msg
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "Не удалось отправить часть саммари %d/%d: %s", i + 1, len(parts), e,
+            )
     target = last_msg or first_msg
     if target:
         cache_ai_response(target.chat.id, target.message_id, text)
@@ -346,8 +350,10 @@ async def cb_show_full_chat(callback: types.CallbackQuery):
                 await send_text_only(callback.message, p)
             else:
                 await callback.message.answer(p, parse_mode="HTML")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "Не удалось отправить часть истории %d/%d: %s", i + 1, len(parts), e,
+            )
     await callback.answer()
 
 

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import time
@@ -6,6 +7,8 @@ import uuid
 from pathlib import Path
 
 from config import DATA_DIR
+
+logger = logging.getLogger("WebSearchCache")
 
 SEARCH_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{8,32}$")
 
@@ -82,7 +85,8 @@ def load_web_search(search_id: str) -> dict | None:
         return None
     try:
         return json.loads(cache_file.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        logger.warning("Не удалось прочитать кэш поиска %s: %s", cache_file, e)
         return None
 
 
@@ -93,8 +97,8 @@ def cleanup_old_cache():
         try:
             if now - f.stat().st_mtime > CACHE_TTL:
                 f.unlink()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Не удалось очистить кэш поиска %s: %s", f, e)
 
 
 def list_cached_searches() -> list[dict]:
@@ -109,6 +113,6 @@ def list_cached_searches() -> list[dict]:
                 "source_count": len(data.get("sources", [])),
                 "timestamp": data.get("timestamp"),
             })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Не удалось прочитать кэш поиска %s: %s", f, e)
     return sorted(searches, key=lambda x: x.get("timestamp", 0), reverse=True)

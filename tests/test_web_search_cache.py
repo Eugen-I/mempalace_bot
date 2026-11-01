@@ -105,9 +105,10 @@ def test_load_web_search_missing_returns_none(_cache_dir):
     assert wsc.load_web_search("nope12345") is None
 
 
-def test_load_web_search_corrupt_file_returns_none(_cache_dir):
+def test_load_web_search_corrupt_file_returns_none(_cache_dir, caplog):
     (_cache_dir / "bad12345.json").write_text("{не json", encoding="utf-8")
     assert wsc.load_web_search("bad12345") is None
+    assert "Не удалось прочитать кэш поиска" in caplog.text
 
 
 @pytest.mark.parametrize("bad", [
@@ -184,15 +185,16 @@ def test_list_cached_searches_sorted_by_timestamp_desc(_cache_dir):
     assert result[1]["id"] == "old11111"
 
 
-def test_list_cached_searches_skips_corrupt(_cache_dir):
+def test_list_cached_searches_skips_corrupt(_cache_dir, caplog):
     (_cache_dir / "bad.json").write_text("мусор", encoding="utf-8")
     wsc.save_web_search_with_id("good11111", "ок", [], "")
     result = wsc.list_cached_searches()
     assert len(result) == 1
     assert result[0]["id"] == "good11111"
+    assert "Не удалось прочитать кэш поиска" in caplog.text
 
 
-def test_cleanup_stat_error_ignored(_cache_dir, monkeypatch):
+def test_cleanup_stat_error_ignored(_cache_dir, monkeypatch, caplog):
     class BoomFile:
         def stat(self):
             raise OSError("gone")
@@ -206,3 +208,4 @@ def test_cleanup_stat_error_ignored(_cache_dir, monkeypatch):
 
     monkeypatch.setattr(wsc, "WEB_SEARCH_CACHE_DIR", FakeDir())
     wsc.cleanup_old_cache()
+    assert "Не удалось очистить кэш поиска" in caplog.text

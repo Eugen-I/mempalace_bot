@@ -596,7 +596,7 @@ async def test_connected_rooms_skips_self_and_bad_keys(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_connected_rooms_mcp_error_quietly_skips(monkeypatch):
+async def test_connected_rooms_mcp_error_quietly_skips(monkeypatch, caplog):
     class BoomMCP:
         async def start(self):
             raise RuntimeError("mcp down")
@@ -606,6 +606,7 @@ async def test_connected_rooms_mcp_error_quietly_skips(monkeypatch):
 
     monkeypatch.setattr(palace_mcp, "get_mcp", lambda: BoomMCP())
     assert await pb._search_connected_rooms("q", [{"wing": "a", "room": "b"}]) == ""
+    assert "[PALACE_TUNNELS]" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -796,7 +797,7 @@ async def test_search_with_kg_circuit_breaker_open(monkeypatch, palace_cb):
 
 
 @pytest.mark.asyncio
-async def test_search_with_kg_mcp_error(monkeypatch, palace_cb):
+async def test_search_with_kg_mcp_error(monkeypatch, palace_cb, caplog):
     async def fake_impl(q, limit=5, wing=""):
         return {"text": "запись", "sources": []}
 
@@ -809,6 +810,7 @@ async def test_search_with_kg_mcp_error(monkeypatch, palace_cb):
     monkeypatch.setattr(pb, "_search_connected_rooms", _async_empty_rooms)
     out = await pb.search_with_kg("тема")
     assert "запись" in out
+    assert "[PALACE_KG] Ошибка поиска KG" in caplog.text
 
 
 @pytest.mark.asyncio

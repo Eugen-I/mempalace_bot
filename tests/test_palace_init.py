@@ -481,7 +481,7 @@ def test_save_new_wing(monkeypatch):
     assert called == [(msg.edit_text, 4242)]
 
 
-def test_save_new_wing_subprocess_error(monkeypatch):
+def test_save_new_wing_subprocess_error(monkeypatch, caplog):
     _enable(monkeypatch)
 
     async def boom(*a, **k):
@@ -498,6 +498,7 @@ def test_save_new_wing_subprocess_error(monkeypatch):
         4242, "крыло", FakeAnswerFactory(msg),
     ))
     assert result is True
+    assert "Не удалось инициализировать крыло" in caplog.text
 
 
 # ---------- save_new_room ----------

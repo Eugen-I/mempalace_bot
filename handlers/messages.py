@@ -223,8 +223,10 @@ async def process_user_message(message: types.Message):
                 for p in parts:
                     try:
                         os.remove(p)
-                    except OSError:
-                        pass
+                    except OSError as e:
+                        logger.debug(
+                            "[YOUTUBE] Не удалось удалить временный файл %s: %s", p, e,
+                        )
                 return None
 
             await st.edit_text("✅ Аудио готово. Отправляю...")
@@ -245,6 +247,7 @@ async def process_user_message(message: types.Message):
                 reply_markup=kb.as_markup(),
             )
         except Exception as e:
+            logger.warning("[YOUTUBE] Ошибка обработки: %s", e, exc_info=True)
             await st.edit_text(format_user_error(e, "youtube_download"))
         return None
 
@@ -320,6 +323,7 @@ async def process_user_message(message: types.Message):
                 reply_markup=kb.as_markup(),
             )
         except Exception as e:
+            logger.warning("[WING_SEARCH] Ошибка поиска: %s", e, exc_info=True)
             await st.edit_text(format_user_error(e, "wing_search"))
         return None
 
@@ -368,6 +372,7 @@ async def process_user_message(message: types.Message):
             else:
                 await message.answer("❌ Ошибка: неожиданный формат ответа поиска")
         except Exception as e:
+            logger.warning("[WEB_SEARCH] Ошибка глубокого поиска: %s", e, exc_info=True)
             await st.edit_text(format_user_error(e, "deep_web_search"))
         return None
 
@@ -393,7 +398,8 @@ async def process_user_message(message: types.Message):
                     check=False,
                 )
             await message.answer("✅ Выполнено.")
-        except Exception:
+        except Exception as e:
+            logger.warning("[MAC] Ошибка выполнения команды: %s", e, exc_info=True)
             await message.answer("❌ Ошибка выполнения команды.")
         return None
 
@@ -426,6 +432,7 @@ async def process_user_message(message: types.Message):
                         "💾 Сохранено в my_notes.", reply_markup=kb.as_markup(),
                     )
             except Exception as e:
+                logger.warning("[NOTE] Ошибка сохранения заметки: %s", e, exc_info=True)
                 return await message.answer(f"❌ Ошибка: {e}")
 
     # 4. 🆕 Ввод имени чата
@@ -486,7 +493,8 @@ async def process_user_message(message: types.Message):
     fpath = os.path.join(CHATS_DIR, fname)
     try:
         data = load_chat(fpath)
-    except Exception:
+    except Exception as e:
+        logger.warning("[CHAT] Ошибка загрузки %s: %s", fpath, e, exc_info=True)
         return await message.answer("❌ Ошибка загрузки чата.")
 
     msgs = data.get("messages", [])
@@ -528,6 +536,7 @@ async def process_user_message(message: types.Message):
             if not clean_q:
                 return None
         except Exception as e:
+            logger.warning("[INSIGHT] Ошибка сохранения: %s", e, exc_info=True)
             await st.edit_text(format_user_error(e, "insight_save"))
             return None
 
@@ -544,6 +553,7 @@ async def process_user_message(message: types.Message):
             await st.delete()
             await send_text_only(message, results)
         except Exception as e:
+            logger.warning("[WEB_SEARCH] Ошибка поиска: %s", e, exc_info=True)
             await st.edit_text(f"❌ Ошибка: {e}")
         return None
 
@@ -638,8 +648,8 @@ async def process_user_message(message: types.Message):
                     f"⏳ <code>{get_current_ai()[1]}</code> думает{wing_info}...",
                     parse_mode="HTML",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("[MSG] Не удалось обновить статус: %s", e)
 
         palace_context = ""
         deg = get_degradation_manager()
@@ -773,8 +783,8 @@ async def process_user_message(message: types.Message):
                 memory_ctx = get_memory_context(clean_q, uid)
                 if memory_ctx:
                     system_instruction += "\n" + memory_ctx
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("[DEGRADE] Ошибка memory context: %s", e)
         else:
             logger.info("[DEGRADE] Memory context skipped")
 
@@ -845,8 +855,8 @@ async def process_user_message(message: types.Message):
             status_text = f"💾 <code>{_model}</code> (из кэша)"
             try:
                 await status.edit_text(status_text, parse_mode="HTML")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("[MSG] Не удалось обновить статус кэша: %s", e)
         else:
             async for event in stream_ai_events_async(
                 _engine,
@@ -882,8 +892,8 @@ async def process_user_message(message: types.Message):
                             await stream_msg.edit_text(preview)
                         last_update = time.time()
                         stream_buffer = ""
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("[MSG] Не удалось обновить streaming preview: %s", e)
 
         # 🌐 SEARCH pattern: если ИИ запросил поиск
         search_match = None
@@ -909,8 +919,8 @@ async def process_user_message(message: types.Message):
                 if stream_msg is not None:
                     try:
                         await bot.delete_message(message.chat.id, stream_msg.message_id)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("[MSG] Не удалось удалить stream message: %s", e)
                 answer = ""
                 async for event in stream_ai_events_async(
                     _engine, _model, context_msgs,
@@ -937,8 +947,8 @@ async def process_user_message(message: types.Message):
         if stream_msg is not None:
             try:
                 await bot.delete_message(message.chat.id, stream_msg.message_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("[MSG] Не удалось удалить stream message: %s", e)
 
         if not answer and stream_error is None:
             stream_error = AIStreamEvent(
@@ -1051,5 +1061,5 @@ async def process_user_message(message: types.Message):
     finally:
         try:
             await bot.delete_message(message.chat.id, status.message_id)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[MSG] Не удалось удалить статус: %s", e)

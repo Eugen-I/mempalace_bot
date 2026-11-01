@@ -38,7 +38,7 @@ def test_list_chat_files_sorts_newest_first_and_limits(tmp_path):
     assert chat_store.list_chat_files(str(tmp_path), limit=1) == ["new.json"]
 
 
-def test_list_chat_files_puts_unstatable_last(tmp_path, monkeypatch):
+def test_list_chat_files_puts_unstatable_last(tmp_path, monkeypatch, caplog):
     (tmp_path / "good.json").write_text("{}", encoding="utf-8")
     (tmp_path / "bad.json").write_text("{}", encoding="utf-8")
     real_getmtime = chat_store.os.path.getmtime
@@ -51,6 +51,7 @@ def test_list_chat_files_puts_unstatable_last(tmp_path, monkeypatch):
     monkeypatch.setattr(chat_store.os.path, "getmtime", fake_getmtime)
 
     assert chat_store.list_chat_files(str(tmp_path)) == ["good.json", "bad.json"]
+    assert "Не удалось получить mtime чата bad.json" in caplog.text
 
 
 def test_load_chat_missing_returns_independent_empty(tmp_path):

@@ -349,10 +349,13 @@ async def _search_connected_rooms(
                             if label:
                                 tag += f" ({label})"
                             blocks.append(f"{tag}\n{conn['text']}")
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    "[PALACE_TUNNELS] Ошибка поиска связи %s/%s: %s", cw, cr, e,
+                )
                 continue
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[PALACE_TUNNELS] Ошибка поиска туннелей: %s", e, exc_info=True)
     if blocks:
         return (
             "\n\n--- СВЯЗИ ПО ТУННЕЛЯМ ---\n"
@@ -424,8 +427,8 @@ async def search_with_kg_status(
             kg_block = "\n".join(lines) + "\n--- КОНЕЦ KG ---\n"
     except CircuitBreakerOpenError:
         logger.warning("[PALACE_KG] Circuit breaker OPEN, skipping KG search")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[PALACE_KG] Ошибка поиска KG: %s", e, exc_info=True)
 
     tunnel_block = await _search_connected_rooms(query, sources)
 
@@ -482,6 +485,7 @@ async def _run_mempalace(args: list[str]) -> str:
         logger.warning(f"[PALACE] Circuit breaker OPEN: {e}")
         return "❌ Сервис дворца временно недоступен. Попробуйте позже."
     except Exception as e:
+        logger.error("[PALACE] Ошибка run_mempalace: %s", e, exc_info=True)
         return f"❌ Ошибка: {e}"
 
 
@@ -597,6 +601,7 @@ async def sync_to_palace(target_path: str | None = None) -> str:
         logger.warning(f"[PALACE] Circuit breaker OPEN during sync: {e}")
         return "❌ Синхронизация временно недоступна."
     except Exception as e:
+        logger.error("[PALACE] Ошибка синхронизации: %s", e, exc_info=True)
         return f"❌ Ошибка синхронизации: {e}"
 
 
@@ -638,4 +643,5 @@ async def _sync_to_palace_impl(target_path: str | None = None) -> str:
                     os.remove(fp)
         return "✅ Синхронизация с MemPalace завершена. Данные добавлены в базу (verbatim)."
     except Exception as e:
+        logger.error("[PALACE] Ошибка вызова mine: %s", e, exc_info=True)
         return f"❌ Ошибка вызова mine: {e}"

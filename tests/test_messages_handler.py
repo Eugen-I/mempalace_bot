@@ -1477,13 +1477,14 @@ def test_ai_explicit_wing_normalizes_case(monkeypatch, tmp_path):
     assert any("Крыло: 💻 Проекты" in e[0] for e in msg.edits)
 
 
-def test_ai_explicit_wing_status_edit_fail(monkeypatch, tmp_path):
+def test_ai_explicit_wing_status_edit_fail(monkeypatch, tmp_path, caplog):
     data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
     msg = FakeMessage(text="/dreams: вопрос")
     msg.fail_status_edits = True
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
     assert data["messages"][-1]["content"] == "x" * 40 + "y" * 40
+    assert "[MSG] Не удалось обновить статус" in caplog.text
 
 
 def test_ai_unknown_wing_then_auto(monkeypatch, tmp_path):
