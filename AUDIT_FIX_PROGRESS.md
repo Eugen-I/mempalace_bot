@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (37/46 шагов `DONE`)
+**Статус работы:** в работе (38/46 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-10-31 11:09 CET
+- **Дата последнего обновления:** 2026-10-31 11:22 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S4.1 — код `4504735`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S4.1b` — завершён
+- **HEAD:** S4.2 — код `d93ba44`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S4.2` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S4.2` — мёртвый код, unused imports, остаточный mypy
-- **Бюджет текущего шага:** 15k
-- **Израсходовано (оценка):** ~10k (diff, ручная чистка, тесты, QA)
+- **Следующее действие:** `S4.3` — критичные `except Exception`
+- **Бюджет текущего шага:** 25k
+- **Израсходовано (оценка):** ~20k (аудит мёртвых символов, удаление, 149 unsafe RUF059, тесты, QA)
 - **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`.
-- **Последний QA:** 3768 passed / 0 failed (без untracked Garmin); `RUF100`: 15 → 0; `I001`: 99 → 0; `RUF059`: 155 остаётся; `ruff --select ALL`: 41396 → 41274; lint — 7 baseline; mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`); AST-проверка 70 изменённых `.py`: вне import-узлов код идентичен, набор импортируемых символов не изменился.
+- **Последний QA:** 3762 passed / 0 failed (без untracked Garmin; на 6 меньше из-за удаления тестов мёртвых функций); `F401`: 27 → 0; `RUF059`: 155 → 0; `F841`: 15 → 0; `F401/F841/RUF059/I001` — all checks passed; `ruff --select ALL`: 41274 → 40980; flake8 — 7 baseline (Garmin/scripts); mypy — 0 (114 файлов); bandit — 73 Low + 2 Medium (оба Medium в пользовательском `services/garmin/repository.py`).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -124,7 +124,7 @@
 | S3.10 | Palace utils/wrappers | P2 | 25k | DONE | `549173f` | 2026-10-30 14:19 | ~11k |
 | S4.1a | Ruff: unused noqa (`RUF100`) | P2 | 15k | DONE | `300c6df` | 2026-10-31 11:04 | ~7k |
 | S4.1b | Ruff: сортировка импортов (`I001`) | P2 | 15k | DONE | `4504735` | 2026-10-31 11:09 | ~10k |
-| S4.2 | Мёртвый код/unused/mypy | P2 | 25k | TODO | — | — | — |
+| S4.2 | Мёртвый код/unused/mypy | P2 | 25k | DONE | `d93ba44` | 2026-10-31 11:22 | ~20k |
 | S4.3 | Критичные `except Exception` | P2 | 40k | TODO | — | — | — |
 | S4.4 | Зависимости и flake8-конфиг | P2 | 20k | TODO | — | — | — |
 | S4.5 | Garmin/mutants/untracked | P2 | 25k | TODO | — | — | — |
@@ -144,8 +144,8 @@
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
 | 3 — P2 дублирование | 11 | 11 | 0 | 0 |
-| 4 — чистота/тесты | 11 | 2 | 0 | 9 |
-| **Итого** | **46** | **37** | **0** | **9** |
+| 4 — чистота/тесты | 11 | 3 | 0 | 8 |
+| **Итого** | **46** | **38** | **0** | **8** |
 
 > Обновлять после каждого шага.
 
@@ -1797,6 +1797,53 @@
 - Найдено попутно: INC-15 — несоответствие pre-commit flake8 и `.flake8` exclude для staged test/feature файлов.
 - Следующее действие: `S4.2` — мёртвый код, unused imports, остаточный mypy.
 
+### S4.2 — Мёртвый код, unused imports, остаточный mypy
+
+- Дата/время: 2026-10-31 11:10–11:22 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `d93ba44`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 25k / ~20k
+- Файлы: 48 tracked `.py` (handlers, services, cli, `_scripts`, features/steps, tests, `main.py`); общий diff — 92 insertions, 304 deletions.
+- Baseline до:
+  - `ruff check --select F401` → **27**; `F841` → **15**; `RUF059` → **155**; `I001` → **0** (после S4.1b).
+  - `ruff --select ALL` → **41274**; flake8 — **7** baseline; mypy — **0** (114 файлов); bandit — **73 Low + 2 Medium**.
+- Что сделано:
+  1. Удалены **27** неиспользуемых импортов (`F401`) в production-, test- и script-файлах. Side-effect импорты в `handlers/palace/__init__.py` и `services/agent_engine.py` сохранены: они нужны для регистрации роутеров/инструментов и защищены `# noqa: F401`.
+  2. Для каждого якоря плана принято решение:
+     - `config.py::get_allowed_ids` — символа уже нет (удалён в S1.10), якорь устарел; действий нет.
+     - `handlers/chat.py::update_summary_if_needed` — удалена: production-вызовов нет, функция дублировала `summary_service`; удалены 4 теста.
+     - `handlers/chat.py::get_ai_context` — удалена: production-вызовов нет, контекст собирается в `agent_context`/`messages`; удалены 2 теста.
+     - `services/agent_context.py::get_button_session_id` — удалена как мёртвая. Вместе с ней удалены неиспользуемая запись `answer_sid:*` и параметр `answer_sid` у `create_button_session`; сессия и так привязывается к uid через `bind_button_session_to_uid`.
+     - `services/palace_bridge.py` — удалён недостижимый guard `if not safe_query` (INC-14); RUF059 `stdout` переименован в `_stdout`.
+     - `services/web_search.py` — «мёртвые» константы `DDG_API_URL`, `DDG_HTML_URL`, `DDG_LITE_URL`, `BING_SEARCH_URL` подключены вместо повторяющихся строковых литералов; поведение URL не изменилось.
+     - `handlers/palace/__init__.py` и `services/agent_engine.py` — импорты оставлены осознанно (side-effect регистрация), не удалялись.
+     - `handlers/palace/kg.py` — неиспользуемый параметр `original_msg` удалён вместе с аргументом вызова; тесты обновлены.
+     - `cli/commands.py` — удалён недостижимый блок `SEARCH pattern` после `return answer`; удалена мёртвая ветка, которая никогда не выполнялась.
+     - `main.py` и `cli/dialog.py` — неиспользуемые параметры сигнатур переименованы в `_signum`, `_frame`, `_complete_event` без изменения интерфейса.
+  3. `RUF059`: 6 production-случаев исправлены вручную (`_engine`, `_idx`, `_method`, `_stdout`); 149 test-only случаев исправлены `ruff --fix --unsafe-fixes`, diff просмотрен — только переименование неиспользуемых распакованных имён в `_name`, логика тестов не менялась.
+  4. `F841`: 15 test-only случаев разобраны вручную. Удалены только чистые присваивания; вызовы с побочным эффектом (`_enable`, `get_degradation_manager`) сохранены без присваивания.
+  5. После удаления импортов устранены 5 новых `I001`; повторный `ruff check --select F401,F841,RUF059,I001` → **All checks passed**.
+- Тесты и команды:
+  - targeted-набор по затронутым модулям: **741 passed, 1 failed**; падение — тест `test_cb_kg_read_search` ожидал старую 4-аргументную сигнатуру; тест обновлён; повторно `tests/test_palace_kg.py` → **88 passed**.
+  - Полный прогон: `python3 -m pytest -q --tb=short --ignore-glob='tests/test_garmin_*.py'` → **3762 passed, 6 warnings in 19.23s** (на 6 меньше: удалены тесты двух мёртвых функций).
+  - `python3 -m flake8 .` → **7 baseline-замечаний** (Garmin/scripts; новых 0).
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **73 Low, 2 Medium, 0 High**; новых нет (оба Medium — в пользовательском Garmin-коде).
+  - `ruff --select ALL --statistics` → **40980** (было 41274); `F401` 27 → 0, `RUF059` 155 → 0, `F841` 15 → 0, `I001` 0 → 0.
+  - `SKIP=flake8 pre-commit run` → end-of-file, trailing whitespace, merge conflicts, debug statements, no-secrets — **Passed**; flake8 пропущен из-за INC-15, отдельный полный `flake8 .` дал 7 baseline.
+- AC:
+  - [x] Нет новых ошибок: тесты зелёные, lint/mypy/bandit не хуже baseline.
+  - [x] Мёртвый код в затронутых модулях удалён или подключён; решения по якорям зафиксированы выше.
+  - [x] `F401`, `F841`, `RUF059` — 0; `I001` — 0.
+- Коммит: `d93ba44` (`chore(step-4.2): remove dead code and fix typing`)
+- Проблемы/решения:
+  - `RUF059` fix остаётся unsafe; применён только к тестам после ручного просмотра diff, production-случаи исправлены отдельно.
+  - Pre-commit flake8 снова падает на pre-existing замечаниях в staged tests/features (INC-15); использован `SKIP=flake8` после полного `flake8 .` с 7 baseline. Конфиг не менялся — это S4.6.
+  - INC-3 (таймаут старого `get_ai_response_async`) не входил в AC S4.2 и остаётся открытым для отдельного шага.
+- Найдено попутно: INC-14 закрыт удалением недостижимого guard; INC-3 и INC-15 остаются открытыми; новых нет.
+- Следующее действие: `S4.3` — критичные `except Exception`.
+
 ---
 
 ## 7. Журнал сессий
@@ -1840,6 +1887,7 @@
 | 35 | 2026-10-30 14:14–14:19 | DeepSeek V4.1 Flash Free | S3.10 | DONE | ~11k | One safe_send with return_message + one public call_ai_sync; removed local wrappers; 458 targeted, 3768 full; 549173f |
 | 36 | 2026-10-31 10:58–11:04 | DeepSeek V4.1 Flash Free | S4.1a | DONE | ~7k | RUF100: removed 15 unused noqa; no behavior change; 3768 full; 300c6df |
 | 37 | 2026-10-31 11:05–11:09 | DeepSeek V4.1 Flash Free | S4.1b | DONE | ~10k | I001: sorted imports in 70 files; AST parity + 3768 full; RUF059 deferred; 4504735 |
+| 38 | 2026-10-31 11:10–11:22 | DeepSeek V4.1 Flash Free | S4.2 | DONE | ~20k | Dead funcs/guard/params removed; F401 27→0, RUF059 155→0, F841 15→0; mypy 0; 3762 full; d93ba44 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -1889,7 +1937,7 @@
 |---|---|---|---|---|---|
 | INC-1 | 2026-10-25 | `tests/test_semantic_cache.py` | `test_ttl_eviction` флаки при `ttl=0`: `set()` и `get()` могли попасть в один тик. В S1.9 тесты TTL переведены на детерминированные часы; логика TTL не менялась. | S4.x — стабилизировать тест/логику TTL | RESOLVED (S1.9) |
 | INC-2 | 2026-10-25 | `handlers/palace/save.py:281`, `services/brainstorm.py:370`, `handlers/notes_agent.py:268` | Вызывающие оборачивают `safe_html_format(...)` в `<code>`; разрешённые теги внутри такого значения сохраняются как HTML, а не выводятся литерально. Для данных в code нужен `html.escape`. | S4.3 или отдельный шаг HTML-санитизации | TODO |
-| INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов. `call_ai_async` уже внедрён в `navigation`, `action_bar`, `palace/__init__` и `transkript` (S1.4a/b); старый путь остаётся. S3.8b не менял контракт старого пути. | S4.2 или отдельный шаг | PARTIAL |
+| INC-3 | 2026-10-25 | `services/ai_engine.py:396` | Старый `get_ai_response_async` не имеет таймаута и создаёт `ThreadPoolExecutor` на каждый вызов. `call_ai_async` уже внедрён в `navigation`, `action_bar`, `palace/__init__` и `transkript` (S1.4a/b); старый путь остаётся. S3.8b не менял контракт старого пути. | Отдельный шаг — таймаут старого async API (S4.2 не менял контракт) | PARTIAL |
 | INC-4 | 2026-10-25 | `services/ai_engine.py` (`stream_ai_events_async`) | Gemini-ветка стриминга игнорирует `images` и system-сообщение из `messages`, используя только `system_prompt`. Sync-путь исправлен в S1.5. | Отдельный шаг стримингового Gemini-контракта | TODO |
 | INC-5 | 2026-10-25 | `handlers/messages.py` (ветка `search_web`) | При исключении `search_web` исходный ответ с `SEARCH: ...` остаётся в `answer` и может быть сохранён/закэширован как обычный ответ; `test_ai_search_pattern_error` закрепляет это поведение. | Отдельный шаг обработки ошибок web search | TODO |
 | INC-6 | 2026-10-25 | `services/palace_mcp.py` (`start`/`stop`) | Нет lifecycle-lock: конкурентные `start()`/`stop()` могут гонять создание и завершение процесса; два одновременных `start()` теоретически оставят один процесс без ссылки. | Отдельный шаг сериализации lifecycle | TODO |
@@ -1900,7 +1948,7 @@
 | INC-11 | 2026-10-29 | `services/auto_sync.py` | Автосинхронизация сама вызывает `export_chat_verbatim` + `sync_to_palace`, дублируя `services/chat_sync.sync_chat_file`; политика другая (тихий лог без UI), S3.2 не менял. | Перевести `auto_sync_chat` на общий `sync_chat_file` | TODO |
 | INC-12 | 2026-10-29 | `cli/menu.py`, `cli/utils.py` | Собственный `list_chats` с mtime-сортировкой дублирует `services/chat_store.list_chat_files`; S3.3 перевёл только Telegram-потребителей. | Перевести CLI на общий `list_chat_files` | TODO |
 | INC-13 | 2026-10-30 | `handlers/messages.py:1050` | После S3.4 `get_ai_response_sync_wrapper` не используется в production-коде (его вызывает только `tests/test_messages_handler.py::test_get_ai_response_sync_wrapper`). | S4.2 — удалить или подключить осознанно | RESOLVED (S3.10 — удалена, как и дубли в photos) |
-| INC-14 | 2026-10-30 | `services/palace_bridge.py::_search_palace_context_impl` | Guard `if not safe_query` после `query.strip().replace('"', "'")[:200]` недостижим: replace не удаляет символы, а пустой strip отсечён выше. Строка не покрывается тестами. | S4.2 — удалить мёртвый guard | TODO |
+| INC-14 | 2026-10-30 | `services/palace_bridge.py::_search_palace_context_impl` | Guard `if not safe_query` после `query.strip().replace('"', "'")[:200]` недостижим: replace не удаляет символы, а пустой strip отсечён выше. Строка не покрывается тестами. | S4.2 — удалить мёртвый guard | RESOLVED (S4.2 — guard удалён) |
 | INC-15 | 2026-10-31 | `.pre-commit-config.yaml`, `.flake8` | Pre-commit flake8 передаёт staged-файлы явно; flake8 игнорирует `exclude=tests,features,...` для явных путей и падает на 93 pre-existing замечаниях в tests/features/scripts. S4.1b закоммичен с `SKIP=flake8` после полного `flake8 .` (7 baseline). | S4.6 — согласовать pre-commit flake8 с `.flake8` (hook-level `exclude` или аргументы) | TODO |
 
 ---
