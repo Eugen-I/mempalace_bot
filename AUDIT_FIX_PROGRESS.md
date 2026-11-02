@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (40/46 шагов `DONE`)
+**Статус работы:** в работе (41/46 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-11-02 11:42 CET
+- **Дата последнего обновления:** 2026-11-02 11:53 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S4.4 — код `fd62824`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S4.4` — завершён
+- **HEAD:** S4.5 — код `82dfc14`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S4.5` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S4.5` — Garmin/mutants/untracked
-- **Бюджет текущего шага:** 20k
-- **Израсходовано (оценка):** ~14k (сверка зависимостей, pyproject/requirements, flake8-конфиг, проверки)
-- **Незакоммиченные изменения:** в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились. В `pyproject.toml`/`requirements.txt` audit-изменения закоммичены отдельно; поверх них сохранены пользовательские Garmin-зависимости и `selectolax<1.0`.
+- **Следующее действие:** `S4.6` — CI quality gate
+- **Бюджет текущего шага:** 25k
+- **Израсходовано (оценка):** ~9k (решения по Garmin/mutants/untracked, `.gitignore`, collect-only/behave)
+- **Незакоммиченные изменения:** 37 untracked Garmin-файлов (feature, steps, `services/garmin/`, тесты, `models/garmin.py`, CLI-скрипты, документы) оставлены как WIP и не коммитились; `mutants/` (8,3 MB) уже был в `.gitignore` и не удалён; `.claude/`, `CLAUDE.md`, `.cursorrules`, `GARMIN_INTEGRATION_PLAN.md`, `THIRD_PARTY_NOTICES.md` оставлены untracked. `exports/` и `mempalace_bot.egg-info/` добавлены в `.gitignore`, файлы на диске сохранены. Пользовательские Garmin-зависимости и `selectolax<1.0` в `pyproject.toml`/`requirements.txt` по-прежнему не закоммичены.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`.
-- **Последний QA:** 3764 passed / 0 failed (без untracked Garmin; первый прогон дал известный флейк `test_confirm_write_delete_requires_two_confirmations`, повтор и изолированный запуск — зелёные); `pip check` — clean; flake8 — 7 baseline; mypy — 0 (114 файлов); bandit — 52 Low + 2 Medium. `S110` остаётся 38, `BLE001` — 222 (S4.4 их не менял).
+- **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` падает только на них. Garmin-фича в `behave --dry-run` не даёт ImportError, но общий dry-run содержит 7 pre-existing features с неопределёнными шагами.
+- **Последний QA:** 3764 passed / 0 failed (без Garmin); `pytest --collect-only` без Garmin — 3764 tests collected; полный collect — 3796 tests + 10 Garmin errors (`ModuleNotFoundError: fitparse`); `behave --dry-run features/garmin_integration.feature` — 0 errors (1 feature untested), общий dry-run — без ImportError, 7 pre-existing undefined-step features; `pip check` — clean; flake8 — 7 baseline; mypy — 0 (114 файлов); bandit — 52 Low + 2 Medium.
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -127,7 +127,7 @@
 | S4.2 | Мёртвый код/unused/mypy | P2 | 25k | DONE | `d93ba44` | 2026-10-31 11:22 | ~20k |
 | S4.3 | Критичные `except Exception` | P2 | 40k | DONE | `cb5c9c0` | 2026-11-01 13:21 | ~30k |
 | S4.4 | Зависимости и flake8-конфиг | P2 | 20k | DONE | `fd62824` | 2026-11-02 11:42 | ~14k |
-| S4.5 | Garmin/mutants/untracked | P2 | 25k | TODO | — | — | — |
+| S4.5 | Garmin/mutants/untracked | P2 | 25k | DONE | `82dfc14` | 2026-11-02 11:53 | ~9k |
 | S4.6 | CI quality gate | P2 | 30k | TODO | — | — | — |
 | S4.7 | Покрытие критичных сервисов A | P2 | 40k | TODO | — | — | — |
 | S4.8 | Покрытие критичных handler'ов B | P2 | 40k | TODO | — | — | — |
@@ -144,8 +144,8 @@
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
 | 3 — P2 дублирование | 11 | 11 | 0 | 0 |
-| 4 — чистота/тесты | 11 | 5 | 0 | 6 |
-| **Итого** | **46** | **40** | **0** | **6** |
+| 4 — чистота/тесты | 11 | 6 | 0 | 5 |
+| **Итого** | **46** | **41** | **0** | **5** |
 
 > Обновлять после каждого шага.
 
@@ -1923,6 +1923,40 @@
 - Найдено попутно: новых инцидентов нет. INC-15 (pre-commit flake8 vs `.flake8`) остаётся открытым для S4.6; `selectolax<1.0` остаётся пользовательской незакоммиченной правкой.
 - Следующее действие: `S4.5` — Garmin/mutants/untracked.
 
+### S4.5 — Гигиена репозитория: Garmin, mutants, untracked
+
+- Дата/время: 2026-11-02 11:43–11:53 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `82dfc14`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 25k / ~9k
+- Файлы: `.gitignore` (+4 строки); решения по 37 Garmin-файлам, `mutants/` и прочим untracked-артефактам зафиксированы ниже.
+- Решения по артефактам:
+  1. **Garmin — WIP, untracked.** `features/garmin_integration.feature`, `features/steps/garmin_integration_steps.py`, `services/garmin/`, `models/garmin.py`, `scripts/garmin_*.py`, `tests/test_garmin_*.py`, `GARMIN_INTEGRATION_PLAN.md` и связанные документы не коммитились и не удалялись. Это отдельная незавершённая ветка работ; Garmin-тесты требуют `fitparse` (а далее, вероятно, `reportlab`/`matplotlib`), поэтому в аудит-прогонах исключены через `--ignore-glob='tests/test_garmin_*.py'`.
+  2. **`mutants/` — 8,3 MB, untracked.** Уже был в `.gitignore` (строка `mutants/`), поэтому новых правок не потребовалось; каталог не удалён. Происхождение — `mutmut`; воспроизводится через `make mutate`.
+  3. **`exports/` — 4 KB, generated.** Добавлен в `.gitignore`, файлы на диске сохранены.
+  4. **`mempalace_bot.egg-info/` — 64 KB, generated.** Добавлен в `.gitignore`, файлы на диске сохранены.
+  5. **`.claude/`, `CLAUDE.md`, `.cursorrules`, `GARMIN_INTEGRATION_PLAN.md`, `THIRD_PARTY_NOTICES.md`** — пользовательские документы/локальные настройки; оставлены untracked, в ignore не добавлялись.
+  6. **`models/garmin.py`, `scripts/garmin_*.py`** — исходники Garmin WIP, не generated; оставлены untracked.
+- Проверки:
+  - `python3 -m pytest --collect-only -q --ignore-glob='tests/test_garmin_*.py'` → **3764 tests collected, exit 0**.
+  - Полный `python3 -m pytest --collect-only -q` → **3796 collected, 10 errors**, все 10 — Garmin-тесты с `ModuleNotFoundError: No module named 'fitparse'`; скрытых ImportError в tracked/не-Garmin коде нет.
+  - `python3 -m behave --dry-run features/garmin_integration.feature` → **0 errors**, 1 feature untested; шаги Garmin импортируются.
+  - Общий `python3 -m behave --dry-run` → **ImportError нет**, но 7 pre-existing features/45 scenarios с неопределёнными шагами (`StepNotImplementedError`); это не Garmin-регрессия.
+  - Полный pytest без Garmin: **3764 passed, 6 warnings in 18.66s**.
+  - `python3 -m pip check` → **No broken requirements found**; `python3 -m flake8 .` → **7 baseline**; mypy/bandit не менялись (0/114 и 52 Low + 2 Medium).
+- AC:
+  - [x] Нет скрытых ImportError: все 10 collection errors явно локализованы в untracked Garmin WIP и известной missing `fitparse`.
+  - [x] Судьба `mutants/` и untracked-артефактов зафиксирована; generated-каталоги добавлены в `.gitignore`.
+  - [x] Garmin-файлы не удалялись и не коммитились.
+- Коммит: `82dfc14` (`chore(step-4.5): ignore generated artifacts`)
+- Проблемы/решения:
+  - Пользователь выбрал оставить Garmin как WIP untracked, `mutants/` — в ignore без удаления, generated-артефакты — в ignore без удаления. Решения выполнены без изменения Garmin-кода.
+  - `mutants/` уже был в `.gitignore`; повторная запись не добавлялась.
+  - `.gitignore` содержит незакоммиченные пользовательские Garmin-пути; audit-строка добавлена отдельным hunk и закоммичена без них.
+- Найдено попутно: новых инцидентов нет. Garmin WIP и missing `fitparse` зафиксированы как внешнее состояние, не как регрессия аудита. INC-15 остаётся открытым для S4.6.
+- Следующее действие: `S4.6` — CI quality gate.
+
 ---
 
 ## 7. Журнал сессий
@@ -1969,6 +2003,7 @@
 | 38 | 2026-10-31 11:10–11:22 | DeepSeek V4.1 Flash Free | S4.2 | DONE | ~20k | Dead funcs/guard/params removed; F401 27→0, RUF059 155→0, F841 15→0; mypy 0; 3762 full; d93ba44 |
 | 39 | 2026-11-01 12:55–13:21 | DeepSeek V4.1 Flash Free | S4.3 | DONE | ~30k | 20 S110 + 15 broad catch logged; critical S110 0; BLE001 236→222; bandit Low 73→52; 3764 full; cb5c9c0 |
 | 40 | 2026-11-01 13:30–2026-11-02 11:42 | DeepSeek V4.1 Flash Free | S4.4 | DONE | ~14k | Runtime/dev deps synced; chromadb scripts extra; one .flake8 config; pip check clean; 3764 full; fd62824 |
+| 41 | 2026-11-02 11:43–11:53 | DeepSeek V4.1 Flash Free | S4.5 | DONE | ~9k | Garmin left WIP untracked; mutants already ignored; exports/egg-info ignored; 3764 collect/full; 82dfc14 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
