@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (38/46 шагов `DONE`)
+**Статус работы:** в работе (40/46 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-11-01 13:21 CET
+- **Дата последнего обновления:** 2026-11-02 11:42 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S4.3 — код `cb5c9c0`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S4.3` — завершён
+- **HEAD:** S4.4 — код `fd62824`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S4.4` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S4.4` — синхронизация зависимостей и конфигов
-- **Бюджет текущего шага:** 40k
-- **Израсходовано (оценка):** ~30k (аудит critical except, 20 S110, 15 broad catch, тесты, QA)
-- **Незакоммиченные изменения:** до checkpoint-коммита — только этот файл прогресса; в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились.
+- **Следующее действие:** `S4.5` — Garmin/mutants/untracked
+- **Бюджет текущего шага:** 20k
+- **Израсходовано (оценка):** ~14k (сверка зависимостей, pyproject/requirements, flake8-конфиг, проверки)
+- **Незакоммиченные изменения:** в дереве остаются пользовательские Garmin-правки и untracked-файлы (`.env.example`, `.gitignore`, `pyproject.toml`, `requirements.txt`, `services/garmin/`, `scripts/`, `models/`, `tests/test_garmin_*`, `exports/`, `CLAUDE.md` и др.) — не трогались и не коммитились. В `pyproject.toml`/`requirements.txt` audit-изменения закоммичены отдельно; поверх них сохранены пользовательские Garmin-зависимости и `selectolax<1.0`.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** для шага нет. Внешнее: `make test` не собирает untracked Garmin-тесты из-за отсутствующих `fitparse`/`reportlab`; проверка выполнена с `--ignore-glob='tests/test_garmin_*.py'`.
-- **Последний QA:** 3764 passed / 0 failed (без untracked Garmin; +2 новых теста); `S110`: 58 → 38, в критичных модулях 0; `BLE001`: 236 → 222; flake8 — 7 baseline (Garmin/scripts); mypy — 0 (114 файлов); bandit — 52 Low + 2 Medium (было 73 Low + 2 Medium; Medium в пользовательском Garmin). `ruff --select ALL` (tracked-only): 40980 → 41063; рост объяснён русскими лог-строками (`RUF001` +70) и новыми caplog-тестами, S110 −20 и BLE001 −14; gate не использует `ALL`.
+- **Последний QA:** 3764 passed / 0 failed (без untracked Garmin; первый прогон дал известный флейк `test_confirm_write_delete_requires_two_confirmations`, повтор и изолированный запуск — зелёные); `pip check` — clean; flake8 — 7 baseline; mypy — 0 (114 файлов); bandit — 52 Low + 2 Medium. `S110` остаётся 38, `BLE001` — 222 (S4.4 их не менял).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -126,7 +126,7 @@
 | S4.1b | Ruff: сортировка импортов (`I001`) | P2 | 15k | DONE | `4504735` | 2026-10-31 11:09 | ~10k |
 | S4.2 | Мёртвый код/unused/mypy | P2 | 25k | DONE | `d93ba44` | 2026-10-31 11:22 | ~20k |
 | S4.3 | Критичные `except Exception` | P2 | 40k | DONE | `cb5c9c0` | 2026-11-01 13:21 | ~30k |
-| S4.4 | Зависимости и flake8-конфиг | P2 | 20k | TODO | — | — | — |
+| S4.4 | Зависимости и flake8-конфиг | P2 | 20k | DONE | `fd62824` | 2026-11-02 11:42 | ~14k |
 | S4.5 | Garmin/mutants/untracked | P2 | 25k | TODO | — | — | — |
 | S4.6 | CI quality gate | P2 | 30k | TODO | — | — | — |
 | S4.7 | Покрытие критичных сервисов A | P2 | 40k | TODO | — | — | — |
@@ -144,8 +144,8 @@
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
 | 3 — P2 дублирование | 11 | 11 | 0 | 0 |
-| 4 — чистота/тесты | 11 | 4 | 0 | 7 |
-| **Итого** | **46** | **39** | **0** | **7** |
+| 4 — чистота/тесты | 11 | 5 | 0 | 6 |
+| **Итого** | **46** | **40** | **0** | **6** |
 
 > Обновлять после каждого шага.
 
@@ -1891,6 +1891,38 @@
 - Найдено попутно: новых инцидентов нет. INC-2 (HTML-escape в `<code>`) не входил в AC S4.3 и остаётся открытым; INC-3, INC-4, INC-5, INC-6, INC-7, INC-8, INC-9, INC-10, INC-11, INC-12, INC-15 также остаются открытыми.
 - Следующее действие: `S4.4` — синхронизация зависимостей и конфигов.
 
+### S4.4 — Синхронизация зависимостей и конфигов
+
+- Дата/время: 2026-11-01 13:30–2026-11-02 11:42 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `fd62824`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 20k / ~14k
+- Файлы: `pyproject.toml`, `requirements.txt`; audit-only diff — 13 insertions, 4 deletions. Пользовательские Garmin-зависимости и `selectolax<1.0` в коммит не включены и сохранены в рабочем дереве.
+- Что сделано:
+  1. В `[project].dependencies` добавлены реальные runtime-зависимости, которые уже использовались кодом, но отсутствовали в metadata: `httpx`, `selectolax`, `aiofiles`, `numpy`, `prompt-toolkit`. Теперь `pip install .` ставит рабочий набор, а не только 9 базовых пакетов.
+  2. `chromadb==1.5.9` добавлен в `[project.optional-dependencies].scripts`: он нужен только `_scripts/restructure_wings.py` и проверке версии при старте (`services/deps_guard.py`), не импортируется основным runtime. В `requirements.txt` pin сохранён, чтобы README-команда `pip install -r requirements.txt` по-прежнему ставила его.
+  3. В dev-extra добавлен `pytest-asyncio`; в `requirements.txt` добавлены `mypy`, `bandit`, `pip-audit`, `vulture`, `pytest-timeout`, чтобы инструменты из `make qa` устанавливались по README.
+  4. Удалён неработающий `[tool.flake8]` из `pyproject.toml`: flake8 не читает `pyproject.toml`. Единственным конфигом остался `.flake8` (`max-line-length=100`, `exclude`, `extend-ignore`).
+- Проверки:
+  - `python3 -m pip check` → **No broken requirements found**.
+  - `python3` TOML parse + `import config`, `import main` → **OK**.
+  - `python3 -m flake8 .` → **7 baseline** (6 в untracked Garmin `scripts/verify_garmin_login.py`, 1 `W292` в `services/deps_guard.py`); audit-изменения новых замечаний не дали. `make lint` возвращает 1 из-за baseline.
+  - `python3 -m mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `python3 -m bandit -q -r handlers/ services/` → **52 Low + 2 Medium, 0 High**; новых нет.
+  - Полный прогон: первый запуск — **3763 passed, 1 failed** (известный флейк `test_confirm_write_delete_requires_two_confirmations`); изолированный тест — **1 passed**, повторный полный прогон — **3764 passed, 6 warnings in 16.67s**.
+  - Pre-commit: end-of-file, trailing whitespace, check-toml, merge-conflict, no-secrets — passed; flake8 hook пропущен, потому что среди staged-файлов не было `.py` (INC-15 не менялся).
+- AC:
+  - [x] Прямые runtime- и dev-зависимости согласованы между `pyproject.toml` и `requirements.txt`.
+  - [x] `chromadb` и security-floors обоснованы: первый — optional scripts/requirements pin, вторые — транзитивные минимумы для `pip-audit`, не прямые зависимости пакета.
+  - [x] flake8-конфиг один — `.flake8`; `[tool.flake8]` удалён.
+- Коммит: `fd62824` (`chore(step-4.4): sync dependencies and lint config`)
+- Проблемы/решения:
+  - В рабочем дереве уже были незакоммиченные пользовательские правки `pyproject.toml`/`requirements.txt` (Garmin-зависимости и `selectolax<1.0`). Audit-изменения подготовлены от `HEAD` и staged частично; пользовательские строки не попали в коммит и восстановлены поверх audit-версии.
+  - `requirements.txt` остаётся install-entrypoint с явным списком; `pyproject.toml` — package metadata. Дублирование прямых зависимостей сохранено осознанно, чтобы README-команда работала без `pip install .`; при следующем изменении зависимостей обновлять оба файла.
+- Найдено попутно: новых инцидентов нет. INC-15 (pre-commit flake8 vs `.flake8`) остаётся открытым для S4.6; `selectolax<1.0` остаётся пользовательской незакоммиченной правкой.
+- Следующее действие: `S4.5` — Garmin/mutants/untracked.
+
 ---
 
 ## 7. Журнал сессий
@@ -1936,6 +1968,7 @@
 | 37 | 2026-10-31 11:05–11:09 | DeepSeek V4.1 Flash Free | S4.1b | DONE | ~10k | I001: sorted imports in 70 files; AST parity + 3768 full; RUF059 deferred; 4504735 |
 | 38 | 2026-10-31 11:10–11:22 | DeepSeek V4.1 Flash Free | S4.2 | DONE | ~20k | Dead funcs/guard/params removed; F401 27→0, RUF059 155→0, F841 15→0; mypy 0; 3762 full; d93ba44 |
 | 39 | 2026-11-01 12:55–13:21 | DeepSeek V4.1 Flash Free | S4.3 | DONE | ~30k | 20 S110 + 15 broad catch logged; critical S110 0; BLE001 236→222; bandit Low 73→52; 3764 full; cb5c9c0 |
+| 40 | 2026-11-01 13:30–2026-11-02 11:42 | DeepSeek V4.1 Flash Free | S4.4 | DONE | ~14k | Runtime/dev deps synced; chromadb scripts extra; one .flake8 config; pip check clean; 3764 full; fd62824 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
