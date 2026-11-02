@@ -54,7 +54,7 @@
 
 - **Дата последнего обновления:** 2026-11-02 12:05 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S4.9 — report commit `docs(step-4.9): record final audit remediation report`
+- **HEAD:** S4.9 — `547a82a`, docs/checkpoint — текущий коммит
 - **Текущий шаг:** `S4.9` — завершён
 - **Статус:** `DONE`
 - **Следующее действие:** `S4.10` — smoke/acceptance
@@ -131,7 +131,7 @@
 | S4.6 | CI quality gate | P2 | 30k | DONE | `6d02ecc` | 2026-11-02 11:57 | ~12k |
 | S4.7 | Покрытие критичных сервисов A | P2 | 40k | DONE | `180df06` | 2026-11-02 12:00 | ~16k |
 | S4.8 | Покрытие критичных handler'ов B | P2 | 40k | DONE | `3711bdb` | 2026-11-02 12:03 | ~18k |
-| S4.9 | Полный regression и отчёт | P0 | 40k | DONE | `docs(step-4.9)` | 2026-11-02 12:05 | ~12k |
+| S4.9 | Полный regression и отчёт | P0 | 40k | DONE | `547a82a` | 2026-11-02 12:05 | ~12k |
 | S4.10 | Smoke/acceptance | P1 | 20k | TODO | — | — | — |
 
 ---
