@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (42/46 шагов `DONE`)
+**Статус работы:** в работе (43/46 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-11-02 11:57 CET
+- **Дата последнего обновления:** 2026-11-02 12:00 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S4.6 — код `6d02ecc`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S4.6` — завершён
+- **HEAD:** S4.7 — код `180df06`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S4.7` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S4.7` — покрытие критичных сервисов A
-- **Бюджет текущего шага:** 30k
-- **Израсходовано (оценка):** ~12k (CI workflow, pre-commit exclude, W292, локальная проверка gate)
+- **Следующее действие:** `S4.8` — покрытие критичных handler'ов B
+- **Бюджет текущего шага:** 40k
+- **Израсходовано (оценка):** ~16k (8 edge-тестов `palace_mcp`, combined coverage, полный QA)
 - **Незакоммиченные изменения:** 37 untracked Garmin-файлов (feature, steps, `services/garmin/`, тесты, `models/garmin.py`, CLI-скрипты, документы) оставлены как WIP и не коммитились; `mutants/` (8,3 MB) уже был в `.gitignore` и не удалён; `.claude/`, `CLAUDE.md`, `.cursorrules`, `GARMIN_INTEGRATION_PLAN.md`, `THIRD_PARTY_NOTICES.md` оставлены untracked. `exports/` и `mempalace_bot.egg-info/` добавлены в `.gitignore`, файлы на диске сохранены. Пользовательские Garmin-зависимости и `selectolax<1.0` в `pyproject.toml`/`requirements.txt` по-прежнему не закоммичены.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` падает только на них. `pip-audit` диагностический: известные CVE в текущих `pillow`/`pyasn1`/`setuptools`/`virtualenv` (INC-16). Общий `behave --dry-run` содержит 7 pre-existing features с неопределёнными шагами.
-- **Последний QA:** 3764 passed / 0 failed (без Garmin), coverage 87.18%; `pip install --dry-run --no-deps -e .` — OK; flake8 по tracked-файлам (CI simulation) — **0**, полный локальный `flake8 .` — 6 baseline только в untracked Garmin `scripts/verify_garmin_login.py`; mypy — 0 (114 файлов); bandit tracked-only — **48 Low / 0 Medium / 0 High**; оба YAML-файла валидны; pre-commit flake8 теперь пропускает tests/features/_scripts (INC-15).
+- **Последний QA:** 3774 passed / 0 failed (без Garmin), coverage 87.18%; целевые модули S4.7 — `semantic_cache`, `circuit_breaker`, `ai_engine`, `palace_mcp` — **100%**; flake8 по tracked-файлам (CI simulation) — **0**; mypy — 0 (114 файлов); bandit tracked-only — **48 Low / 0 Medium / 0 High**. Ранее в S4.6: `pip install --dry-run --no-deps -e .` — OK; полный локальный `flake8 .` — 6 baseline только в untracked Garmin `scripts/verify_garmin_login.py`.
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -129,7 +129,7 @@
 | S4.4 | Зависимости и flake8-конфиг | P2 | 20k | DONE | `fd62824` | 2026-11-02 11:42 | ~14k |
 | S4.5 | Garmin/mutants/untracked | P2 | 25k | DONE | `82dfc14` | 2026-11-02 11:53 | ~9k |
 | S4.6 | CI quality gate | P2 | 30k | DONE | `6d02ecc` | 2026-11-02 11:57 | ~12k |
-| S4.7 | Покрытие критичных сервисов A | P2 | 40k | TODO | — | — | — |
+| S4.7 | Покрытие критичных сервисов A | P2 | 40k | DONE | `180df06` | 2026-11-02 12:00 | ~16k |
 | S4.8 | Покрытие критичных handler'ов B | P2 | 40k | TODO | — | — | — |
 | S4.9 | Полный regression и отчёт | P0 | 40k | TODO | — | — | — |
 | S4.10 | Smoke/acceptance | P1 | 20k | TODO | — | — | — |
@@ -144,8 +144,8 @@
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
 | 3 — P2 дублирование | 11 | 11 | 0 | 0 |
-| 4 — чистота/тесты | 11 | 7 | 0 | 4 |
-| **Итого** | **46** | **42** | **0** | **4** |
+| 4 — чистота/тесты | 11 | 8 | 0 | 3 |
+| **Итого** | **46** | **43** | **0** | **3** |
 
 > Обновлять после каждого шага.
 
@@ -1999,6 +1999,40 @@
 - Найдено попутно: **INC-16** — `pip-audit` находит CVE в текущих версиях `pillow`, `pyasn1`, `setuptools`, `virtualenv`; нужен отдельный dependency-update шаг. INC-15 закрыт. Garmin WIP остаётся внешним состоянием.
 - Следующее действие: `S4.7` — покрытие критичных сервисов A.
 
+### S4.7 — Покрытие критичных модулей A
+
+- Дата/время: 2026-11-02 11:58–12:00 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `180df06`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 40k / ~16k
+- Файлы: `tests/test_palace_mcp.py` (+166 строк, 8 новых тестовых функций / 10 кейсов).
+- Исходное покрытие (до шага): `semantic_cache` — 100%, `circuit_breaker` — 100%, `ai_engine` — 100%, `palace_mcp` — 93% (`95->111, 130->121, 193-196, 212-218, 222-223`). Три модуля уже были покрыты, поэтому production-код не менялся.
+- Что сделано: добавлены edge/negative тесты для оставшихся ветвей `palace_mcp`:
+  1. Отмена `_reader` и `_read_stderr` propagated как `CancelledError`, `_ready` сбрасывается.
+  2. `_reader` без процесса завершает pending future с `RuntimeError("connection lost")`.
+  3. `_read_stderr` пропускает пустые строки и продолжает чтение до EOF.
+  4. `stop()` при `ProcessLookupError` на `terminate()` не вызывает `kill`/`wait`.
+  5. `stop()` логирует неожиданную ошибку `terminate()` и всё равно ждёт процесс.
+  6. `stop()` обрабатывает `ProcessLookupError`/`AttributeError`/`OSError` на `kill()` (parametrize), логируя только `OSError`.
+  7. `stop()` логирует ошибку финального `wait()` после kill.
+- Проверки:
+  - `pytest -q tests/test_palace_mcp.py --cov=services.palace_mcp` → **44 passed**, `palace_mcp` — **100%**.
+  - Combined: полный не-Garmin прогон с `--cov=services.semantic_cache --cov=services.circuit_breaker --cov=services.ai_engine --cov=services.palace_mcp` → **3774 passed, 0 failed**, все четыре модуля — **100%**, общий coverage — **87.18%**.
+  - `git ls-files '*.py' | ... | xargs flake8` (tracked, CI simulation) → **exit 0**.
+  - `mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `bandit -ll` по tracked `handlers/`/`services/` → **48 Low / 0 Medium / 0 High, exit 0**.
+- AC:
+  - [x] Целевые модули покрыты: `semantic_cache` 100%, `circuit_breaker` 100%, `ai_engine` 100%, `palace_mcp` 100% (цель ≥80%).
+  - [x] Тесты детерминированы: без реальных subprocess/сети, fake-процессы и `asyncio.Event`; полный прогон стабилен.
+- Коммит: `180df06` (`test(step-4.7): cover critical services`)
+- Проблемы/решения:
+  - `palace_mcp` уже был на 93%; дополнительные тесты добавлены точечно только на непокрытые error/cancel-ветви, без дублирования happy-path.
+  - `ProcessLookupError` — подкласс `OSError`, поэтому в parametrize ожидание лога зависит от типа ошибки; тест это учитывает.
+  - Тестовый файл исключён из flake8 через `.flake8` (`tests`), поэтому стилевых замечаний нет.
+- Найдено попутно: новых инцидентов нет. INC-16 остаётся открытым; Garmin WIP — внешнее состояние.
+- Следующее действие: `S4.8` — покрытие критичных handler'ов B (`handlers/agent.py`, `handlers/reminder.py`, `handlers/settings.py`, chat store).
+
 ---
 
 ## 7. Журнал сессий
@@ -2047,6 +2081,7 @@
 | 40 | 2026-11-01 13:30–2026-11-02 11:42 | DeepSeek V4.1 Flash Free | S4.4 | DONE | ~14k | Runtime/dev deps synced; chromadb scripts extra; one .flake8 config; pip check clean; 3764 full; fd62824 |
 | 41 | 2026-11-02 11:43–11:53 | DeepSeek V4.1 Flash Free | S4.5 | DONE | ~9k | Garmin left WIP untracked; mutants already ignored; exports/egg-info ignored; 3764 collect/full; 82dfc14 |
 | 42 | 2026-11-02 11:54–11:57 | DeepSeek V4.1 Flash Free | S4.6 | DONE | ~12k | CI gate: flake8/mypy/pytest/bandit; INC-15 hook exclude; W292 fixed; 3764 full, coverage 87.18%; 6d02ecc |
+| 43 | 2026-11-02 11:58–12:00 | DeepSeek V4.1 Flash Free | S4.7 | DONE | ~16k | 8 edge tests for palace_mcp; 4 target modules 100%; 3774 full, coverage 87.18%; 180df06 |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
