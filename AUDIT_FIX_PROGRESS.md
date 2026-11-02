@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** завершено (46/46 шагов `DONE`), ожидается финальное подтверждение пользователя
+**Статус работы:** завершено (46/46 шагов `DONE`), принято пользователем 2026-11-02
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,19 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-11-02 12:13 CET
+- **Дата последнего обновления:** 2026-11-02 12:39 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S4.10 — `f73e0be`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S4.10` — завершён
+- **HEAD:** `ba3eb94` — docs(step-4.10) checkpoint + текущая docs-запись
+- **Текущий шаг:** `Пост-аудит` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** финальная приёмка пользователем
-- **Бюджет текущего шага:** 20k
-- **Израсходовано (оценка):** ~8k (import/router smoke, empty-state tests, live polling ~3s, live token check)
-- **Незакоммиченные изменения:** 37 untracked Garmin-файлов (feature, steps, `services/garmin/`, тесты, `models/garmin.py`, CLI-скрипты, документы) оставлены как WIP и не коммитились; `mutants/` (8,3 MB) уже был в `.gitignore` и не удалён; `.claude/`, `CLAUDE.md`, `.cursorrules`, `GARMIN_INTEGRATION_PLAN.md`, `THIRD_PARTY_NOTICES.md` оставлены untracked. `exports/` и `mempalace_bot.egg-info/` добавлены в `.gitignore`, файлы на диске сохранены. Пользовательские Garmin-зависимости и `selectolax<1.0` в `pyproject.toml`/`requirements.txt` по-прежнему не закоммичены.
+- **Следующее действие:** аудит закрыт; INC-16 — отдельный dependency-update шаг (сейчас не выполняется)
+- **Бюджет текущего шага:** 2k
+- **Израсходовано (оценка):** ~2k (проверка токена/админа, live-запуск, фиксация приёмки)
+- **Незакоммиченные изменения:** 37 untracked Garmin-файлов (feature, steps, `services/garmin/`, тесты, `models/garmin.py`, CLI-скрипты, документы) оставлены как WIP и не коммитились; `mutants/` (8,3 MB) уже был в `.gitignore` и не удалён; `.claude/`, `CLAUDE.md`, `.cursorrules`, `GARMIN_INTEGRATION_PLAN.md`, `THIRD_PARTY_NOTICES.md` оставлены untracked. `exports/` и `mempalace_bot.egg-info/` добавлены в `.gitignore`, файлы на диске сохранены. Пользовательские Garmin-зависимости и `selectolax<1.0` в `pyproject.toml`/`requirements.txt` по-прежнему не закоммичены. Локально в игнорируемом проектном `.env`: строка `TELEGRAM_BOT_TOKEN` закомментирована (используется legacy-токен), `ADMIN_ID=8922772619`; файл не коммитится.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` и `make test`/`make cov` падают только на них. `pip-audit` диагностический: известные CVE в текущих `pillow`/`pyasn1`/`setuptools`/`virtualenv` (INC-16). Общий `behave --dry-run` содержит 7 pre-existing features/45 scenarios с неопределёнными шагами; ImportError нет. Полный `make qa` красный из-за untracked Garmin и политики bandit на baseline Low; tracked-only gate зелёный.
+- **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` и `make test`/`make cov` падают только на них. `pip-audit` диагностический: известные CVE в текущих `pillow`/`pyasn1`/`setuptools`/`virtualenv` (INC-16). Общий `behave --dry-run` содержит 7 pre-existing features/45 scenarios с неопределёнными шагами; ImportError нет. Полный `make qa` красный из-за untracked Garmin и политики bandit на baseline Low; tracked-only gate зелёный. INC-17 закрыт в пост-аудите: проектный токен отключён, `ADMIN_ID` исправлен, бот работает через legacy-токен.
 - **Последний QA (S4.9/S4.10):** `make qa` — exit 2 на `lint` (6 baseline только в untracked `scripts/verify_garmin_login.py`); `make test`/`make cov` — exit 2, 10 Garmin collection errors (`fitparse`); эквивалент без Garmin — **3789 passed, 0 failed**, coverage **87.42%** (с untracked Garmin) / **98%** tracked-only; collect без Garmin — **3789**, полный collect — **3821 + 10 errors**; `behave --dry-run` — 7 pre-existing errors, 45 scenarios undefined, ImportError 0; Garmin feature dry-run — 0 errors; `import config, main, handlers.*` — OK; `pip check` — clean; `pip install --dry-run --no-deps -e .` — OK; flake8 tracked — **0**; mypy — **0/114**; bandit tracked — **48 Low / 0 Medium / 0 High**, full — 52 Low + 2 Medium (Garmin); ruff source — **426** (baseline 495). Live smoke S4.10: legacy-токен валиден, `main.py` стартовал, MCP ready, whisper pre-warmed, polling started, SIGINT → graceful stop, exit 0.
+- **Пост-аудит (2026-11-02 12:39):** проверен legacy-токен — Telegram `getMe` вернул `ok=True` / `@Ask_Qwen_bot`; `config.API_TOKEN` совпадает с legacy, `ALLOWED_IDS` содержит `8922772619`. `main.py` запущен: polling @Ask_Qwen_bot (id `8738990849`) работает; пользователь подтвердил, что меню открывается. INC-17 закрыт.
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -2159,6 +2160,34 @@
 - Найдено попутно: **INC-17** — проектный `.env` содержит недействительный Telegram-токен; live-запуск возможен только с legacy-токеном.
 - Следующее действие: финальная приёмка пользователем.
 
+### Пост-аудит — приёмка и закрытие INC-17
+
+- Дата/время: 2026-11-02 12:39 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `ba3eb94` + текущая docs-запись
+- Статус: `DONE`
+- Бюджет/факт (оценка): 2k / ~2k
+- Файлы: только `AUDIT_FIX_PROGRESS.md` (docs-only); локально изменён игнорируемый проектный `.env` — не коммитится.
+- Что сделано:
+  1. INC-17 диагностирован: токен в проектном `.env` отклонялся Telegram (`Unauthorized`), legacy-токен из `~/Documents/mempalace/.env` валиден для `@Ask_Qwen_bot`.
+  2. В проектном `.env` строка `TELEGRAM_BOT_TOKEN` закомментирована, чтобы `config.py` использовал legacy-токен; `ADMIN_ID` исправлен с `352998626` на `8922772619` (проектный `.env` перекрывал legacy-значение, из-за чего `allowed_only` молча блокировал пользователя).
+  3. Проверено совпадение `config.API_TOKEN` с legacy-токеном и наличие `8922772619` в `ALLOWED_IDS`.
+  4. Бот запущен: polling `@Ask_Qwen_bot` (id `8738990849`), меню работает; пользователь подтвердил приёмку сообщением «заработало».
+- Проверки:
+  - Telegram `getMe` для legacy-токена → **ok=True, @Ask_Qwen_bot** (токен не выводился).
+  - `config.API_TOKEN` == legacy-токен; `8922772619 in config.ALLOWED_IDS` → **True**.
+  - `python3 main.py` → `Bot polling started`, `Run polling for bot @Ask_Qwen_bot`; меню открывается (подтверждено пользователем).
+- AC:
+  - [x] Пользователь подтвердил работу бота и финальную приёмку.
+  - [x] INC-17 закрыт: проектный токен больше не перекрывает валидный legacy-токен, admin ID исправлен.
+  - [x] Секреты не попали в git/лог; `.env` остаётся игнорируемым.
+- Коммит: docs-only (`docs(post-audit): record acceptance and close INC-17`)
+- Проблемы/решения:
+  - Проектный `.env` имеет приоритет над legacy (S1.10); поэтому недостаточно было «просто иметь» валидный токен в legacy — конфликтующий токен в проектном `.env` нужно было отключить.
+  - `allowed_only` возвращает `None` без ответа для неавторизованного ID; отсюда «бот стартовал, но меню не появлялось». Исправление `ADMIN_ID` устранило блокировку.
+- Найдено попутно: новых инцидентов нет. INC-16 остаётся открытым и вынесен в отдельный dependency-update шаг; зависимости в этом шаге не менялись.
+- Следующее действие: отдельных действий по аудиту нет.
+
 ---
 
 ## 7. Журнал сессий
@@ -2212,6 +2241,7 @@
 | 45 | 2026-11-02 12:04–12:05 | DeepSeek V4.1 Flash Free | S4.9 | DONE | ~12k | Full regression vs baseline; non-Garmin 3789/0, tracked coverage 98%, mypy 0, flake8 0, bandit 48 Low; report recorded |
 | 46 | 2026-11-02 12:06 | DeepSeek V4.1 Flash Free | S4.10 | BLOCKED | ~5k | Import/router/config OK; 30 empty-state settings tests; live polling not run (no test token/permission) |
 | 47 | 2026-11-02 12:12–12:13 | DeepSeek V4.1 Flash Free | S4.10a | DONE | ~3k | Legacy token valid (@Ask_Qwen_bot); live polling started/stopped gracefully, exit 0; project .env token unauthorized (INC-17) |
+| 48 | 2026-11-02 12:39 | DeepSeek V4.1 Flash Free | Пост-аудит | DONE | ~2k | Приёмка получена («заработало»); INC-17 закрыт: project .env token отключён, ADMIN_ID=8922772619; @Ask_Qwen_bot polling, меню работает; INC-16 остаётся открытым |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -2275,7 +2305,7 @@
 | INC-14 | 2026-10-30 | `services/palace_bridge.py::_search_palace_context_impl` | Guard `if not safe_query` после `query.strip().replace('"', "'")[:200]` недостижим: replace не удаляет символы, а пустой strip отсечён выше. Строка не покрывается тестами. | S4.2 — удалить мёртвый guard | RESOLVED (S4.2 — guard удалён) |
 | INC-15 | 2026-10-31 | `.pre-commit-config.yaml`, `.flake8` | Pre-commit flake8 передаёт staged-файлы явно; flake8 игнорирует `exclude=tests,features,...` для явных путей и падает на 93 pre-existing замечаниях в tests/features/scripts. S4.1b закоммичен с `SKIP=flake8` после полного `flake8 .` (7 baseline). | S4.6 — согласовать pre-commit flake8 с `.flake8` (hook-level `exclude` или аргументы) | RESOLVED (S4.6 — hook-level exclude) |
 | INC-16 | 2026-11-02 | `requirements.txt`, CI `pip-audit` | `pip-audit` находит CVE в текущих версиях: `pillow` 12.3.0 → 13.0.0, `pyasn1` 0.6.4 → 0.6.5, `setuptools` 84.0.0 → 84.1.0, `virtualenv` 21.7.0 → 21.14.9. CI-шаг оставлен диагностическим. Дополнительно startup-warning `chromadb 1.5.9 < 1.6.0` (CVE-2026-45829). | Отдельный dependency-update шаг / S4.9 | TODO |
-| INC-17 | 2026-11-02 | проектный `.env` | `TELEGRAM_BOT_TOKEN` в проектном `.env` отклоняется Telegram (`Unauthorized`); live smoke S4.10 выполнен с legacy-токеном из `~/Documents/mempalace/.env`. | Заменить токен в проектном `.env` на актуальный | TODO |
+| INC-17 | 2026-11-02 | проектный `.env` | `TELEGRAM_BOT_TOKEN` в проектном `.env` отклоняется Telegram (`Unauthorized`); live smoke S4.10 выполнен с legacy-токеном из `~/Documents/mempalace/.env`. Проектный `.env` перекрывал legacy-значения, а его `ADMIN_ID=352998626` не входил в `ALLOWED_IDS` — `allowed_only` молча блокировал пользователя. | Локально: строка токена закомментирована (fallback на legacy), `ADMIN_ID=8922772619`; бот @Ask_Qwen_bot работает, пользователь подтвердил | RESOLVED (пост-аудит 2026-11-02) |
 
 ---
 
@@ -2299,11 +2329,11 @@
 - [x] Каждый исправленный баг покрыт тестом.
 - [x] Нет новых секретов/мусора в git; пользовательские Garmin-файлы остались untracked.
 - [x] Итоговый отчёт с метриками записан (раздел 12).
-- [ ] Пользователь подтвердил приёмку.
+- [x] Пользователь подтвердил приёмку.
 
-**Итоговый статус:** все шаги `DONE`, ожидает подтверждения пользователя
-**Дата приёмки:** —
-**Подпись/подтверждение пользователя:** —
+**Итоговый статус:** все шаги `DONE`, аудит закрыт; INC-16 вынесен в отдельный dependency-update шаг
+**Дата приёмки:** 2026-11-02
+**Подпись/подтверждение пользователя:** подтверждено сообщением «заработало» после запуска `@Ask_Qwen_bot` (меню открывается)
 
 ---
 
@@ -2338,7 +2368,7 @@
 ### 12.4. Остаточные риски и открытые инциденты
 
 - **Garmin WIP (внешнее состояние):** 37 untracked файлов, тесты требуют `fitparse`/`reportlab`/`matplotlib`; `make test`/`make cov`/полный collect падают на 10 collection errors. Код не коммитился и не менялся.
-- **INC-17 — токен в проектном `.env`:** Telegram отвечает `Unauthorized`; live smoke выполнен с legacy-токеном. Нужно заменить `TELEGRAM_BOT_TOKEN` в проектном `.env` на актуальный.
+- **INC-17 — закрыт (2026-11-02, пост-аудит):** строка `TELEGRAM_BOT_TOKEN` в проектном `.env` закомментирована (используется legacy-токен), `ADMIN_ID=8922772619`; бот `@Ask_Qwen_bot` запускается, меню работает. Файл `.env` остаётся игнорируемым и не коммитится.
 - **INC-16 — CVE зависимостей:** `pillow` 12.3.0, `pyasn1` 0.6.4, `setuptools` 84.0.0, `virtualenv` 21.7.0; плюс startup-warning `chromadb 1.5.9 < 1.6.0` (CVE-2026-45829). `pip-audit` оставлен диагностическим; нужен отдельный dependency-update.
 - **INC-2:** HTML внутри `<code>` в `safe_html_format` не экранируется.
 - **INC-3 (PARTIAL):** старый `get_ai_response_async` без таймаута и с executor на вызов.
@@ -2355,4 +2385,4 @@
 
 ### 12.5. Итог
 
-Аудит-план выполнен на **46/46** шагов: все `DONE`. P0, P1 и P2 завершены; S4.10 подтверждён реальным запуском бота с legacy-токеном: polling стартовал и остановился штатно (exit 0). Открытые пункты — внешний Garmin WIP, недействительный токен в проектном `.env` (INC-17), dependency-CVE (INC-16), startup-warning `chromadb` и функциональный долг INC-2…INC-12, явно вынесенный за рамки аудита. Итоговая приёмка ожидает подтверждения пользователя.
+Аудит-план выполнен на **46/46** шагов: все `DONE`. P0, P1 и P2 завершены; S4.10 подтверждён реальным запуском бота с legacy-токеном: polling стартовал и остановился штатно (exit 0). Итоговая приёмка получена 2026-11-02: пользователь подтвердил, что бот `@Ask_Qwen_bot` запускается и меню работает. INC-17 закрыт (проектный токен отключён, `ADMIN_ID` исправлен); открытые пункты — внешний Garmin WIP, dependency-CVE INC-16 (отдельный dependency-update шаг), startup-warning `chromadb` и функциональный долг INC-2…INC-12, явно вынесенный за рамки аудита.
