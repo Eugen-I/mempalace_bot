@@ -662,6 +662,172 @@ async def test_stop_swallows_wait_exception(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reader_cancellation_is_propagated():
+    class BlockingStdout:
+        async def readline(self):
+            await asyncio.Event().wait()
+
+    client = PalaceMCPClient()
+    client._proc = FakeProc(stdout=BlockingStdout())
+    client._ready.set()
+    task = asyncio.create_task(client._reader())
+    await asyncio.sleep(0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not client._ready.is_set()
+
+
+@pytest.mark.asyncio
+async def test_stderr_reader_cancellation_is_propagated():
+    class BlockingStderr:
+        async def readline(self):
+            await asyncio.Event().wait()
+
+    client = PalaceMCPClient()
+    client._proc = FakeProc(stderr=BlockingStderr())
+    task = asyncio.create_task(client._read_stderr())
+    await asyncio.sleep(0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_reader_without_process_fails_pending():
+    client = PalaceMCPClient()
+    fut = asyncio.get_event_loop().create_future()
+    client._pending[1] = fut
+    client._ready.set()
+
+    await client._reader()
+
+    assert fut.done()
+    with pytest.raises(RuntimeError, match="connection lost"):
+        fut.result()
+    assert not client._ready.is_set()
+
+
+@pytest.mark.asyncio
+async def test_read_stderr_skips_blank_lines():
+    class BlankThenEOF:
+        def __init__(self):
+            self.calls = 0
+
+        async def readline(self):
+            self.calls += 1
+            if self.calls == 1:
+                return "\n"
+            return b""
+
+    stream = BlankThenEOF()
+    client = PalaceMCPClient()
+    client._proc = FakeProc(stderr=stream)
+
+    await client._read_stderr()
+
+    assert stream.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_stop_returns_when_terminate_process_is_gone():
+    class GoneProc(FakeProc):
+        def terminate(self):
+            raise ProcessLookupError
+
+    proc = GoneProc()
+    client = PalaceMCPClient()
+    client._proc = proc
+
+    await client.stop()
+
+    assert not proc.killed
+    assert not proc.waited
+
+
+@pytest.mark.asyncio
+async def test_stop_logs_unexpected_terminate_error(caplog):
+    class BrokenTerminateProc(FakeProc):
+        def terminate(self):
+            raise OSError("terminate failed")
+
+    proc = BrokenTerminateProc()
+    client = PalaceMCPClient()
+    client._proc = proc
+    caplog.set_level(logging.WARNING, logger="PalaceMCP")
+
+    await client.stop()
+
+    assert proc.waited
+    assert "Не удалось завершить MCP-процесс" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [ProcessLookupError, AttributeError, OSError])
+async def test_stop_handles_kill_errors(caplog, error):
+    class KillErrorProc(FakeProc):
+        def __init__(self):
+            super().__init__()
+            self.wait_calls = 0
+
+        async def wait(self):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                await asyncio.sleep(60)
+            return 0
+
+        def kill(self):
+            raise error("kill failed")
+
+    proc = KillErrorProc()
+    client = PalaceMCPClient()
+    client._STOP_TIMEOUT = 0.01
+    client._proc = proc
+    caplog.set_level(logging.WARNING, logger="PalaceMCP")
+
+    await client.stop()
+
+    assert proc.terminated
+    assert proc.wait_calls == 1
+    if error is OSError:
+        assert "Не удалось убить MCP-процесс" in caplog.text
+    else:
+        assert "Не удалось убить MCP-процесс" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stop_logs_final_wait_error(caplog):
+    class FinalWaitErrorProc(FakeProc):
+        def __init__(self):
+            super().__init__()
+            self.wait_calls = 0
+
+        async def wait(self):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                await asyncio.sleep(60)
+            raise OSError("final wait failed")
+
+        def kill(self):
+            self.killed = True
+
+    proc = FinalWaitErrorProc()
+    client = PalaceMCPClient()
+    client._STOP_TIMEOUT = 0.01
+    client._proc = proc
+    caplog.set_level(logging.WARNING, logger="PalaceMCP")
+
+    await client.stop()
+
+    assert proc.killed
+    assert proc.wait_calls == 2
+    assert "не подтвердил завершение" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_get_mcp_singleton_and_reset():
     reset_mcp()
     a = get_mcp()
