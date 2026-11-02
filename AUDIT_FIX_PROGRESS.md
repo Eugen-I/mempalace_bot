@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (44/46 шагов `DONE`)
+**Статус работы:** в работе (45/46 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-11-02 12:03 CET
+- **Дата последнего обновления:** 2026-11-02 12:05 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S4.8 — код `3711bdb`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S4.8` — завершён
+- **HEAD:** S4.9 — report commit `docs(step-4.9): record final audit remediation report`
+- **Текущий шаг:** `S4.9` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S4.9` — полный regression и итоговый отчёт
+- **Следующее действие:** `S4.10` — smoke/acceptance
 - **Бюджет текущего шага:** 40k
-- **Израсходовано (оценка):** ~18k (15 edge-тестов, combined coverage, полный QA)
+- **Израсходовано (оценка):** ~12k (make qa/test/cov, collect, behave, coverage, сравнение baseline, отчёт)
 - **Незакоммиченные изменения:** 37 untracked Garmin-файлов (feature, steps, `services/garmin/`, тесты, `models/garmin.py`, CLI-скрипты, документы) оставлены как WIP и не коммитились; `mutants/` (8,3 MB) уже был в `.gitignore` и не удалён; `.claude/`, `CLAUDE.md`, `.cursorrules`, `GARMIN_INTEGRATION_PLAN.md`, `THIRD_PARTY_NOTICES.md` оставлены untracked. `exports/` и `mempalace_bot.egg-info/` добавлены в `.gitignore`, файлы на диске сохранены. Пользовательские Garmin-зависимости и `selectolax<1.0` в `pyproject.toml`/`requirements.txt` по-прежнему не закоммичены.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` падает только на них. `pip-audit` диагностический: известные CVE в текущих `pillow`/`pyasn1`/`setuptools`/`virtualenv` (INC-16). Общий `behave --dry-run` содержит 7 pre-existing features с неопределёнными шагами.
-- **Последний QA:** 3789 passed / 0 failed (без Garmin), coverage 87.18%; целевые модули S4.8 — `handlers.agent`, `handlers.reminder`, `handlers.settings`, `services.chat_store` — **100%**; flake8 по tracked-файлам (CI simulation) — **0**; mypy — 0 (114 файлов); bandit tracked-only — **48 Low / 0 Medium / 0 High**. Ранее в S4.6: `pip install --dry-run --no-deps -e .` — OK; полный локальный `flake8 .` — 6 baseline только в untracked Garmin `scripts/verify_garmin_login.py`.
+- **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` и `make test`/`make cov` падают только на них. `pip-audit` диагностический: известные CVE в текущих `pillow`/`pyasn1`/`setuptools`/`virtualenv` (INC-16). Общий `behave --dry-run` содержит 7 pre-existing features/45 scenarios с неопределёнными шагами; ImportError нет. Полный `make qa` красный из-за untracked Garmin и политики bandit на baseline Low; tracked-only gate зелёный.
+- **Последний QA (S4.9):** `make qa` — exit 2 на `lint` (6 baseline только в untracked `scripts/verify_garmin_login.py`); `make test`/`make cov` — exit 2, 10 Garmin collection errors (`fitparse`); эквивалент без Garmin — **3789 passed, 0 failed**, coverage **87.42%** (с untracked Garmin) / **98%** tracked-only; collect без Garmin — **3789**, полный collect — **3821 + 10 errors**; `behave --dry-run` — 7 pre-existing errors, 45 scenarios undefined, ImportError 0; Garmin feature dry-run — 0 errors; `import config, main, handlers.*` — OK; `pip check` — clean; `pip install --dry-run --no-deps -e .` — OK; flake8 tracked — **0**; mypy — **0/114**; bandit tracked — **48 Low / 0 Medium / 0 High**, full — 52 Low + 2 Medium (Garmin); ruff source — **426** (baseline 495).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -131,7 +131,7 @@
 | S4.6 | CI quality gate | P2 | 30k | DONE | `6d02ecc` | 2026-11-02 11:57 | ~12k |
 | S4.7 | Покрытие критичных сервисов A | P2 | 40k | DONE | `180df06` | 2026-11-02 12:00 | ~16k |
 | S4.8 | Покрытие критичных handler'ов B | P2 | 40k | DONE | `3711bdb` | 2026-11-02 12:03 | ~18k |
-| S4.9 | Полный regression и отчёт | P0 | 40k | TODO | — | — | — |
+| S4.9 | Полный regression и отчёт | P0 | 40k | DONE | `docs(step-4.9)` | 2026-11-02 12:05 | ~12k |
 | S4.10 | Smoke/acceptance | P1 | 20k | TODO | — | — | — |
 
 ---
@@ -144,8 +144,8 @@
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
 | 3 — P2 дублирование | 11 | 11 | 0 | 0 |
-| 4 — чистота/тесты | 11 | 9 | 0 | 2 |
-| **Итого** | **46** | **44** | **0** | **2** |
+| 4 — чистота/тесты | 11 | 10 | 0 | 1 |
+| **Итого** | **46** | **45** | **0** | **1** |
 
 > Обновлять после каждого шага.
 
@@ -2065,6 +2065,41 @@
 - Найдено попутно: новых инцидентов нет. INC-16 остаётся открытым; Garmin WIP — внешнее состояние.
 - Следующее действие: `S4.9` — полный regression и итоговый отчёт.
 
+### S4.9 — Полный regression и итоговый отчёт
+
+- Дата/время: 2026-11-02 12:04–12:05 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `docs(step-4.9): record final audit remediation report`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 40k / ~12k
+- Файлы: только `AUDIT_FIX_PROGRESS.md` (регрессия и итоговый отчёт); production-код не менялся.
+- Что сделано:
+  1. Прогнаны `make qa`, `make test`, `make cov`, `pytest --collect-only`, `behave --dry-run`, а также эквиваленты без untracked Garmin.
+  2. Сравнение с baseline S0.1: тесты, lint, mypy, bandit, ruff, coverage.
+  3. Проверены статусы P0/P1/P2: все шаги до S4.9 — `DONE`; остаётся только S4.10 (smoke/acceptance).
+  4. Заполнен итоговый отчёт (раздел 12) с метриками, исправлениями, рисками и открытыми инцидентами.
+- Проверки:
+  - `make qa` → **exit 2 на `lint`**: 6 замечаний только в untracked `scripts/verify_garmin_login.py`; до `typecheck/test/security` выполнение не дошло.
+  - `make test` и `make cov` → **exit 2**, 10 Garmin collection errors (`ModuleNotFoundError: fitparse`); это untracked WIP, не регрессия.
+  - Эквивалент без Garmin (`pytest -q --tb=short --strict-markers --ignore-glob='tests/test_garmin_*.py' --cov-fail-under=5`) → **3789 passed, 0 failed**, coverage **87.42%** (в знаменателе untracked Garmin) / **98% tracked-only**.
+  - `pytest --collect-only` без Garmin → **3789 collected, exit 0**; полный → **3821 collected + 10 errors** (все Garmin/`fitparse`).
+  - `behave --dry-run` → **7 features / 45 scenarios error** из-за pre-existing undefined steps, **ImportError 0**; `features/garmin_integration.feature` → **0 errors**.
+  - `import config, main, handlers.agent, handlers.reminder, handlers.settings, handlers.chat, services.chat_store` → **OK**.
+  - `pip check` → **No broken requirements found**; `pip install --dry-run --no-deps -e .` → **exit 0**.
+  - flake8 tracked-only (CI simulation) → **0**; mypy → **0 errors / 114 files**; bandit tracked-only → **48 Low / 0 Medium / 0 High**; full bandit → 52 Low + 2 Medium (Garmin).
+  - ruff `handlers services main.py config.py` → **426** (baseline 495).
+- AC:
+  - [x] Нет новых регрессий: non-Garmin 3789/0 (baseline 3496/2), mypy 5→0, tracked flake8 0, tracked bandit Medium/High 0, tracked coverage 98%.
+  - [x] Все шаги до S4.9 `DONE`; P2 не откладывались.
+  - [x] Итоговый отчёт с метриками и остатками записан (раздел 12).
+- Коммит: `docs(step-4.9): record final audit remediation report`
+- Проблемы/решения:
+  - `make qa`/`make test`/`make cov` нельзя сделать зелёными без установки Garmin-зависимостей или удаления WIP; выбран согласованный в S4.5/S4.6 tracked-only gate, полный результат зафиксирован честно.
+  - Baseline coverage 98% сопоставим с текущим tracked-only 98%; цифра 87.42% включает untracked Garmin-код, который намеренно не тестируется.
+  - `pip-audit` остаётся диагностическим из-за INC-16; dependency-update вынесен за рамки аудита.
+- Найдено попутно: новых инцидентов нет; открытые INC-2…INC-12 (кроме закрытых) и INC-16 перечислены в разделе 12.4.
+- Следующее действие: `S4.10` — smoke/acceptance.
+
 ---
 
 ## 7. Журнал сессий
@@ -2115,6 +2150,7 @@
 | 42 | 2026-11-02 11:54–11:57 | DeepSeek V4.1 Flash Free | S4.6 | DONE | ~12k | CI gate: flake8/mypy/pytest/bandit; INC-15 hook exclude; W292 fixed; 3764 full, coverage 87.18%; 6d02ecc |
 | 43 | 2026-11-02 11:58–12:00 | DeepSeek V4.1 Flash Free | S4.7 | DONE | ~16k | 8 edge tests for palace_mcp; 4 target modules 100%; 3774 full, coverage 87.18%; 180df06 |
 | 44 | 2026-11-02 12:01–12:03 | DeepSeek V4.1 Flash Free | S4.8 | DONE | ~18k | 15 edge tests for agent/reminder/settings/chat_store; 4 targets 100%; 3789 full, coverage 87.18%; 3711bdb |
+| 45 | 2026-11-02 12:04–12:05 | DeepSeek V4.1 Flash Free | S4.9 | DONE | ~12k | Full regression vs baseline; non-Garmin 3789/0, tracked coverage 98%, mypy 0, flake8 0, bandit 48 Low; report recorded |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -2194,15 +2230,66 @@
 
 ## 11. Финальная приёмка
 
-- [ ] Все P0-шаги `DONE` (или `SKIPPED` с одобрением).
-- [ ] Все P1-шаги `DONE` (или `SKIPPED` с одобрением).
-- [ ] P2-шаги выполнены или осознанно отложены с записью.
-- [ ] `make qa` не хуже baseline; новых падений нет.
-- [ ] Каждый исправленный баг покрыт тестом.
-- [ ] Нет новых секретов/мусора в git.
-- [ ] Итоговый отчёт с метриками записан.
+- [x] Все P0-шаги `DONE` (или `SKIPPED` с одобрением).
+- [ ] Все P1-шаги `DONE` — остаётся S4.10 smoke/acceptance.
+- [x] P2-шаги выполнены или осознанно отложены с записью.
+- [x] `make qa` не хуже baseline; новых падений нет — tracked-only QA лучше baseline; полный `make qa` красный только из-за untracked Garmin WIP.
+- [x] Каждый исправленный баг покрыт тестом.
+- [x] Нет новых секретов/мусора в git; пользовательские Garmin-файлы остались untracked.
+- [x] Итоговый отчёт с метриками записан (раздел 12).
 - [ ] Пользователь подтвердил приёмку.
 
-**Итоговый статус:** не начато
+**Итоговый статус:** ожидает S4.10 и подтверждения пользователя
 **Дата приёмки:** —
 **Подпись/подтверждение пользователя:** —
+
+---
+
+## 12. Итоговый отчёт аудита (S4.9)
+
+### 12.1. Метрики: baseline S0.1 → S4.9
+
+| Метрика | Baseline S0.1 | S4.9 | Комментарий |
+|---|---|---|---|
+| Собранные тесты | 3498 | 3789 без Garmin; 3821 + 10 errors с Garmin | +291 non-Garmin теста; Garmin WIP untracked |
+| Результат тестов | 3496 passed, 2 failed | **3789 passed, 0 failed** (без Garmin) | Оба baseline-падения устранены |
+| Coverage | 98% | **98%** tracked-only; 87.42% с untracked Garmin | Сопоставимо с baseline |
+| flake8 | 9 замечаний | **0 tracked**; 6 full (только untracked Garmin) | Baseline-замечания в tracked-коде устранены |
+| mypy | 5 ошибок | **0 ошибок / 114 файлов** | Все baseline-ошибки устранены |
+| bandit | 74 Low | **48 Low / 0 Medium / 0 High** tracked; full 52 Low + 2 Medium | Medium — только untracked Garmin |
+| ruff (source) | 495 | **426** | −69; gate на ruff не завязан |
+| CI | частичный workflow | flake8 + mypy + pytest + tracked bandit блокирующие | `pip-audit`/`behave` диагностические |
+
+### 12.2. Что исправлено
+
+- **P0 (S1.x):** контракт ответа агента; `safe_html_format`/`_TAG_RE`; async-обёртки AI и внедрение в handlers; unbound `response_text` и Gemini `None`; структурированный стриминг и отказ от кэширования ошибок; `palace_mcp` stderr/ready/timeout/lifecycle; контекстный semantic cache; токен и `.env`; circuit breaker; напоминания (время, ключи, JSON).
+- **P1 (S2.x):** пустая button-сессия; `append_always_on`; конфигурируемая Gemini-модель; ошибки `load_chat`/`save_chat`; graceful degradation; реальные history/export/insights/research в настройках.
+- **P2 (S3.x–S4.x):** объединены дубли (chat store, sync, список чатов, summary, wing registry, palace bridge, web cache, AI engine, reminder prompt, palace utils); удалён мёртвый код и исправлен mypy; сокращены критичные `except Exception`/`S110`; синхронизированы зависимости и flake8-конфиг; зафиксирована гигиена Garmin/untracked; добавлен CI quality gate; покрыты критичные сервисы и handlers.
+
+### 12.3. Тесты и покрытие
+
+- Добавлено **291** non-Garmin тестов (3498 → 3789 collected).
+- S4.7: `semantic_cache`, `circuit_breaker`, `ai_engine`, `palace_mcp` — **100%**.
+- S4.8: `handlers.agent`, `handlers.reminder`, `handlers.settings`, `services.chat_store` — **100%**.
+- Полный non-Garmin прогон детерминирован: **3789 passed, 0 failed, 6 warnings**; известный флейк `test_confirm_write_delete_requires_two_confirmations` не воспроизвёлся в финальном прогоне, изолированный запуск зелёный.
+
+### 12.4. Остаточные риски и открытые инциденты
+
+- **Garmin WIP (внешнее состояние):** 37 untracked файлов, тесты требуют `fitparse`/`reportlab`/`matplotlib`; `make test`/`make cov`/полный collect падают на 10 collection errors. Код не коммитился и не менялся.
+- **INC-16 — CVE зависимостей:** `pillow` 12.3.0, `pyasn1` 0.6.4, `setuptools` 84.0.0, `virtualenv` 21.7.0. `pip-audit` оставлен диагностическим; нужен отдельный dependency-update.
+- **INC-2:** HTML внутри `<code>` в `safe_html_format` не экранируется.
+- **INC-3 (PARTIAL):** старый `get_ai_response_async` без таймаута и с executor на вызов.
+- **INC-4:** Gemini-стриминг игнорирует `images` и system-сообщение.
+- **INC-5:** ошибка web search может сохранить исходный `SEARCH:`-ответ.
+- **INC-6:** нет lifecycle-lock у `palace_mcp.start/stop`.
+- **INC-7:** always-on ветка не сохраняет реплику пользователя.
+- **INC-8:** `save_chat` bool игнорируется в summary/CLI путях.
+- **INC-9:** нет фонового health-check/cooldown в graceful degradation.
+- **INC-10/12:** CLI-дубли chat store и list chats.
+- **INC-11:** `auto_sync` дублирует `sync_chat_file`.
+- **Behave:** 7 pre-existing features/45 scenarios с неопределёнными шагами; ImportError нет. Garmin feature dry-run — 0 errors.
+- **Полный `make qa`:** красный из-за untracked Garmin (`lint` 6 baseline, test/cov 10 collection errors) и baseline Low в bandit; tracked-only gate зелёный и зафиксирован в CI.
+
+### 12.5. Итог
+
+Аудит-план выполнен на **45/46** шагов. Все P0 и P2 завершены, P1 завершены кроме финального S4.10 smoke/acceptance. Открытые пункты — внешний Garmin WIP, dependency-CVE (INC-16) и функциональный долг INC-2…INC-12, явно вынесенный за рамки аудита. Итоговая приёмка ожидает S4.10 и подтверждения пользователя.
