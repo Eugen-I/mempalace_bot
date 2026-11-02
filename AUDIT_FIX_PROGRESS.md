@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (43/46 шагов `DONE`)
+**Статус работы:** в работе (44/46 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-11-02 12:00 CET
+- **Дата последнего обновления:** 2026-11-02 12:03 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S4.7 — код `180df06`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S4.7` — завершён
+- **HEAD:** S4.8 — код `3711bdb`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S4.8` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S4.8` — покрытие критичных handler'ов B
+- **Следующее действие:** `S4.9` — полный regression и итоговый отчёт
 - **Бюджет текущего шага:** 40k
-- **Израсходовано (оценка):** ~16k (8 edge-тестов `palace_mcp`, combined coverage, полный QA)
+- **Израсходовано (оценка):** ~18k (15 edge-тестов, combined coverage, полный QA)
 - **Незакоммиченные изменения:** 37 untracked Garmin-файлов (feature, steps, `services/garmin/`, тесты, `models/garmin.py`, CLI-скрипты, документы) оставлены как WIP и не коммитились; `mutants/` (8,3 MB) уже был в `.gitignore` и не удалён; `.claude/`, `CLAUDE.md`, `.cursorrules`, `GARMIN_INTEGRATION_PLAN.md`, `THIRD_PARTY_NOTICES.md` оставлены untracked. `exports/` и `mempalace_bot.egg-info/` добавлены в `.gitignore`, файлы на диске сохранены. Пользовательские Garmin-зависимости и `selectolax<1.0` в `pyproject.toml`/`requirements.txt` по-прежнему не закоммичены.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` падает только на них. `pip-audit` диагностический: известные CVE в текущих `pillow`/`pyasn1`/`setuptools`/`virtualenv` (INC-16). Общий `behave --dry-run` содержит 7 pre-existing features с неопределёнными шагами.
-- **Последний QA:** 3774 passed / 0 failed (без Garmin), coverage 87.18%; целевые модули S4.7 — `semantic_cache`, `circuit_breaker`, `ai_engine`, `palace_mcp` — **100%**; flake8 по tracked-файлам (CI simulation) — **0**; mypy — 0 (114 файлов); bandit tracked-only — **48 Low / 0 Medium / 0 High**. Ранее в S4.6: `pip install --dry-run --no-deps -e .` — OK; полный локальный `flake8 .` — 6 baseline только в untracked Garmin `scripts/verify_garmin_login.py`.
+- **Последний QA:** 3789 passed / 0 failed (без Garmin), coverage 87.18%; целевые модули S4.8 — `handlers.agent`, `handlers.reminder`, `handlers.settings`, `services.chat_store` — **100%**; flake8 по tracked-файлам (CI simulation) — **0**; mypy — 0 (114 файлов); bandit tracked-only — **48 Low / 0 Medium / 0 High**. Ранее в S4.6: `pip install --dry-run --no-deps -e .` — OK; полный локальный `flake8 .` — 6 baseline только в untracked Garmin `scripts/verify_garmin_login.py`.
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -130,7 +130,7 @@
 | S4.5 | Garmin/mutants/untracked | P2 | 25k | DONE | `82dfc14` | 2026-11-02 11:53 | ~9k |
 | S4.6 | CI quality gate | P2 | 30k | DONE | `6d02ecc` | 2026-11-02 11:57 | ~12k |
 | S4.7 | Покрытие критичных сервисов A | P2 | 40k | DONE | `180df06` | 2026-11-02 12:00 | ~16k |
-| S4.8 | Покрытие критичных handler'ов B | P2 | 40k | TODO | — | — | — |
+| S4.8 | Покрытие критичных handler'ов B | P2 | 40k | DONE | `3711bdb` | 2026-11-02 12:03 | ~18k |
 | S4.9 | Полный regression и отчёт | P0 | 40k | TODO | — | — | — |
 | S4.10 | Smoke/acceptance | P1 | 20k | TODO | — | — | — |
 
@@ -144,8 +144,8 @@
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
 | 3 — P2 дублирование | 11 | 11 | 0 | 0 |
-| 4 — чистота/тесты | 11 | 8 | 0 | 3 |
-| **Итого** | **46** | **43** | **0** | **3** |
+| 4 — чистота/тесты | 11 | 9 | 0 | 2 |
+| **Итого** | **46** | **44** | **0** | **2** |
 
 > Обновлять после каждого шага.
 
@@ -2033,6 +2033,38 @@
 - Найдено попутно: новых инцидентов нет. INC-16 остаётся открытым; Garmin WIP — внешнее состояние.
 - Следующее действие: `S4.8` — покрытие критичных handler'ов B (`handlers/agent.py`, `handlers/reminder.py`, `handlers/settings.py`, chat store).
 
+### S4.8 — Покрытие критичных модулей B
+
+- Дата/время: 2026-11-02 12:01–12:03 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `3711bdb`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 40k / ~18k
+- Файлы: `tests/test_agent_handler.py` (+101), `tests/test_chat_store.py` (+65), `tests/test_reminder_handler.py` (+27), `tests/test_settings_handler.py` (+53); всего +246 строк, 15 новых тестов.
+- Исходное покрытие: `handlers/agent.py` — 87% (`252-267`), `handlers/reminder.py` — 98% (`248, 281-283`), `handlers/settings.py` — 98% (`322-324, 483-484, 490->496`), `services/chat_store.py` — 100% в полном прогоне, но 83% при изолированном запуске (corrupt-backup, migration-failure, cleanup-ветви). Production-код не менялся.
+- Что сделано:
+  1. `handlers/agent.py`: тесты `cb_ab_agent_stop` — no data, истёкшая сессия (alert), ответ без `_agent_session_id`, ответ с привязанной button-сессией (end + unbind); тесты `should_route_to_agent` — префиксы `/`, `~`, `#` и учёт настройки пользователя.
+  2. `handlers/reminder.py`: `cb_remind_target` с `data=None`; ошибка `get_kv_store()` логируется и показывается в результате как `❌`, не роняя handler.
+  3. `handlers/settings.py`: fallback истории чата с HTML на plain text при отказе Telegram; `cb_set_ai` при ошибке `get_current_ai()` пишет warning, сохраняет модель и пропускает `invalidate_model` для пустой предыдущей модели.
+  4. `services/chat_store.py`: битый JSON → backup создаётся; ошибка backup логируется; не-dict JSON → backup; ошибка save при миграции list→dict; ошибка создания tempfile при `save_chat`.
+- Проверки:
+  - Targeted: `pytest -q tests/test_agent_handler.py tests/test_reminder_handler.py tests/test_settings_handler.py tests/test_chat_store.py --cov=...` → **179 passed**, все четыре модуля — **100%**.
+  - Combined full non-Garmin: **3789 passed, 0 failed**, все четыре целевых модуля — **100%**, общий coverage — **87.18%**.
+  - `flake8` по tracked Python (CI simulation) → **exit 0**.
+  - `mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `bandit -ll` по tracked `handlers/`/`services/` → **48 Low / 0 Medium / 0 High, exit 0**.
+- AC:
+  - [x] Целевые модули покрыты: `handlers.agent` 100%, `handlers.reminder` 100%, `handlers.settings` 100%, `services.chat_store` 100%.
+  - [x] Особое внимание ошибкам и пустым состояниям: expired/no-data, backup/read/write/migration/tempfile failures, HTML fallback, KV failure.
+  - [x] Тесты детерминированы: tmp_path, monkeypatch, fake Telegram-объекты; без сети и реальных файлов вне tmp.
+- Коммит: `3711bdb` (`test(step-4.8): cover critical handlers`)
+- Проблемы/решения:
+  - `handlers/agent.py` имел полностью непокрытый `cb_ab_agent_stop`; добавлены все четыре ветви, включая button-session cleanup.
+  - `chat_store` в полном прогоне уже был 100%, но изолированный файл не покрывал corrupt/migration-ветви; добавлены точечные error-тесты, чтобы покрытие не зависело от других suites.
+  - Для fallback истории использован flaky-answer, который падает только на `parse_mode="HTML"`; проверяется последовательность `HTML → None`.
+- Найдено попутно: новых инцидентов нет. INC-16 остаётся открытым; Garmin WIP — внешнее состояние.
+- Следующее действие: `S4.9` — полный regression и итоговый отчёт.
+
 ---
 
 ## 7. Журнал сессий
@@ -2082,6 +2114,7 @@
 | 41 | 2026-11-02 11:43–11:53 | DeepSeek V4.1 Flash Free | S4.5 | DONE | ~9k | Garmin left WIP untracked; mutants already ignored; exports/egg-info ignored; 3764 collect/full; 82dfc14 |
 | 42 | 2026-11-02 11:54–11:57 | DeepSeek V4.1 Flash Free | S4.6 | DONE | ~12k | CI gate: flake8/mypy/pytest/bandit; INC-15 hook exclude; W292 fixed; 3764 full, coverage 87.18%; 6d02ecc |
 | 43 | 2026-11-02 11:58–12:00 | DeepSeek V4.1 Flash Free | S4.7 | DONE | ~16k | 8 edge tests for palace_mcp; 4 target modules 100%; 3774 full, coverage 87.18%; 180df06 |
+| 44 | 2026-11-02 12:01–12:03 | DeepSeek V4.1 Flash Free | S4.8 | DONE | ~18k | 15 edge tests for agent/reminder/settings/chat_store; 4 targets 100%; 3789 full, coverage 87.18%; 3711bdb |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
