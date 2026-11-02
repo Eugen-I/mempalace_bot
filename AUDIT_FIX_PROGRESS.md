@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (41/46 шагов `DONE`)
+**Статус работы:** в работе (42/46 шагов `DONE`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,18 +52,18 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-11-02 11:53 CET
+- **Дата последнего обновления:** 2026-11-02 11:57 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S4.5 — код `82dfc14`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S4.5` — завершён
+- **HEAD:** S4.6 — код `6d02ecc`, docs/checkpoint — текущий коммит
+- **Текущий шаг:** `S4.6` — завершён
 - **Статус:** `DONE`
-- **Следующее действие:** `S4.6` — CI quality gate
-- **Бюджет текущего шага:** 25k
-- **Израсходовано (оценка):** ~9k (решения по Garmin/mutants/untracked, `.gitignore`, collect-only/behave)
+- **Следующее действие:** `S4.7` — покрытие критичных сервисов A
+- **Бюджет текущего шага:** 30k
+- **Израсходовано (оценка):** ~12k (CI workflow, pre-commit exclude, W292, локальная проверка gate)
 - **Незакоммиченные изменения:** 37 untracked Garmin-файлов (feature, steps, `services/garmin/`, тесты, `models/garmin.py`, CLI-скрипты, документы) оставлены как WIP и не коммитились; `mutants/` (8,3 MB) уже был в `.gitignore` и не удалён; `.claude/`, `CLAUDE.md`, `.cursorrules`, `GARMIN_INTEGRATION_PLAN.md`, `THIRD_PARTY_NOTICES.md` оставлены untracked. `exports/` и `mempalace_bot.egg-info/` добавлены в `.gitignore`, файлы на диске сохранены. Пользовательские Garmin-зависимости и `selectolax<1.0` в `pyproject.toml`/`requirements.txt` по-прежнему не закоммичены.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` падает только на них. Garmin-фича в `behave --dry-run` не даёт ImportError, но общий dry-run содержит 7 pre-existing features с неопределёнными шагами.
-- **Последний QA:** 3764 passed / 0 failed (без Garmin); `pytest --collect-only` без Garmin — 3764 tests collected; полный collect — 3796 tests + 10 Garmin errors (`ModuleNotFoundError: fitparse`); `behave --dry-run features/garmin_integration.feature` — 0 errors (1 feature untested), общий dry-run — без ImportError, 7 pre-existing undefined-step features; `pip check` — clean; flake8 — 7 baseline; mypy — 0 (114 файлов); bandit — 52 Low + 2 Medium.
+- **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` падает только на них. `pip-audit` диагностический: известные CVE в текущих `pillow`/`pyasn1`/`setuptools`/`virtualenv` (INC-16). Общий `behave --dry-run` содержит 7 pre-existing features с неопределёнными шагами.
+- **Последний QA:** 3764 passed / 0 failed (без Garmin), coverage 87.18%; `pip install --dry-run --no-deps -e .` — OK; flake8 по tracked-файлам (CI simulation) — **0**, полный локальный `flake8 .` — 6 baseline только в untracked Garmin `scripts/verify_garmin_login.py`; mypy — 0 (114 файлов); bandit tracked-only — **48 Low / 0 Medium / 0 High**; оба YAML-файла валидны; pre-commit flake8 теперь пропускает tests/features/_scripts (INC-15).
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -128,7 +128,7 @@
 | S4.3 | Критичные `except Exception` | P2 | 40k | DONE | `cb5c9c0` | 2026-11-01 13:21 | ~30k |
 | S4.4 | Зависимости и flake8-конфиг | P2 | 20k | DONE | `fd62824` | 2026-11-02 11:42 | ~14k |
 | S4.5 | Garmin/mutants/untracked | P2 | 25k | DONE | `82dfc14` | 2026-11-02 11:53 | ~9k |
-| S4.6 | CI quality gate | P2 | 30k | TODO | — | — | — |
+| S4.6 | CI quality gate | P2 | 30k | DONE | `6d02ecc` | 2026-11-02 11:57 | ~12k |
 | S4.7 | Покрытие критичных сервисов A | P2 | 40k | TODO | — | — | — |
 | S4.8 | Покрытие критичных handler'ов B | P2 | 40k | TODO | — | — | — |
 | S4.9 | Полный regression и отчёт | P0 | 40k | TODO | — | — | — |
@@ -144,8 +144,8 @@
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
 | 3 — P2 дублирование | 11 | 11 | 0 | 0 |
-| 4 — чистота/тесты | 11 | 6 | 0 | 5 |
-| **Итого** | **46** | **41** | **0** | **5** |
+| 4 — чистота/тесты | 11 | 7 | 0 | 4 |
+| **Итого** | **46** | **42** | **0** | **4** |
 
 > Обновлять после каждого шага.
 
@@ -1957,6 +1957,48 @@
 - Найдено попутно: новых инцидентов нет. Garmin WIP и missing `fitparse` зафиксированы как внешнее состояние, не как регрессия аудита. INC-15 остаётся открытым для S4.6.
 - Следующее действие: `S4.6` — CI quality gate.
 
+### S4.6 — CI quality gate
+
+- Дата/время: 2026-11-02 11:54–11:57 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `6d02ecc`
+- Статус: `DONE`
+- Бюджет/факт (оценка): 30k / ~12k
+- Файлы: `.github/workflows/ci.yml`, `.pre-commit-config.yaml`, `services/deps_guard.py` (только финальный newline); 34 insertions, 18 deletions.
+- Что сделано:
+  1. Обновлён существующий `.github/workflows/ci.yml`, без второго workflow:
+     - убран дублирующий `pip install -e .[dev]` (requirements уже содержит dev-инструменты), оставлен `pip install -e . --no-deps`;
+     - блокирующие шаги: `flake8 .`, `mypy --explicit-package-bases`, `pytest` с coverage ≥5%, `bandit -ll` только по tracked `handlers/`/`services/`;
+     - `pip-audit` и `behave --dry-run` оставлены диагностическими (`continue-on-error`) из-за известных CVE и 7 features без step definitions;
+     - `mutmut` убран из PR-gate (слишком долгий) и остаётся локальным `make mutate`;
+     - добавлен `timeout-minutes: 20`, `permissions: contents: read`, триггер `fix/**`.
+  2. Зафиксирован baseline в комментарии workflow: flake8 0, mypy 0/114, pytest 3764, bandit tracked-only 48 Low / 0 Medium / 0 High. Новые Medium/High bandit-находки валят gate; Low приняты на baseline.
+  3. INC-15: в `.pre-commit-config.yaml` для flake8 добавлен hook-level `exclude` (`tests/`, `features/`, `_scripts/`, `mutants/`, `cli_ask.py`, `*MemPalace*`). Теперь pre-commit flake8 не пытается линтовать staged test/feature файлы, которые `.flake8` и так исключает.
+  4. Исправлен единственный tracked baseline flake8: добавлен финальный newline в `services/deps_guard.py` (`W292`).
+- Проверки:
+  - `pre-commit run flake8 --files tests/test_notes_agent_handler.py features/steps/garmin_integration_steps.py` → **no files to check / Skipped, exit 0** (INC-15 закрыт).
+  - `pre-commit run --all-files` → flake8, yaml, toml, json, merge-conflict, debug-statements, no-secrets — **Passed**; end-of-file/trailing-whitespace нашли старые долги и изменили файлы, эти auto-fix правки сразу откачены и в коммит не попали.
+  - `git ls-files '*.py' | grep -vE '^(tests|features|_scripts|mutants)/|^cli_ask\.py$' | xargs flake8` → **exit 0** (CI simulation).
+  - Полный локальный `flake8 .` → **6 baseline** только в untracked `scripts/verify_garmin_login.py` (Garmin WIP); tracked-файлов с замечаниями нет.
+  - `mypy --explicit-package-bases handlers/ services/ main.py config.py` → **Success: no issues found in 114 source files**.
+  - `pytest --cov=. --cov-report=term-missing --cov-report=xml --cov-fail-under=5 -q --ignore-glob='tests/test_garmin_*.py'` → **3764 passed, coverage 87.18%**.
+  - `git ls-files -z 'handlers/*.py' 'services/*.py' | xargs -0 bandit -ll` → **48 Low, 0 Medium, 0 High, exit 0**.
+  - `pip install --dry-run --no-deps -e .` → **Would install mempalace-bot-0.1.0, exit 0**.
+  - `.github/workflows/ci.yml` и `.pre-commit-config.yaml` — YAML parse OK; `pre-commit run check-yaml` — Passed.
+  - `pip-audit` локально падает на известных CVE (`pillow` 12.3.0 → 13.0.0, `pyasn1` 0.6.4 → 0.6.5, `setuptools` 84.0.0 → 84.1.0, `virtualenv` 21.7.0 → 21.14.9); поэтому шаг диагностический, зафиксирован INC-16.
+  - `behave --dry-run` — без ImportError, но 7 pre-existing features с неопределёнными шагами; шаг диагностический.
+- AC:
+  - [x] CI запускает согласованный набор проверок: flake8, mypy, pytest, bandit; YAML валиден.
+  - [x] Baseline зафиксирован, блокирующие проверки зелёные на tracked-коде.
+  - [x] INC-15 закрыт; pre-commit flake8 согласован с `.flake8` для staged-файлов.
+- Коммит: `6d02ecc` (`ci(step-4.6): add audit quality gate`)
+- Проблемы/решения:
+  - `pip-audit` и `behave` не могут быть блокирующими без отдельного обновления зависимостей и step definitions; они оставлены диагностическими, чтобы gate не был заведомо красным.
+  - `mutmut` удалён из CI, но сохранён в Makefile; это осознанное ограничение PR-gate по времени.
+  - `pre-commit run --all-files` показал, что старые файлы имеют end-of-file/trailing-whitespace долги; auto-fix откачен, чтобы не смешивать с S4.6. Это не регрессия.
+- Найдено попутно: **INC-16** — `pip-audit` находит CVE в текущих версиях `pillow`, `pyasn1`, `setuptools`, `virtualenv`; нужен отдельный dependency-update шаг. INC-15 закрыт. Garmin WIP остаётся внешним состоянием.
+- Следующее действие: `S4.7` — покрытие критичных сервисов A.
+
 ---
 
 ## 7. Журнал сессий
@@ -2004,6 +2046,7 @@
 | 39 | 2026-11-01 12:55–13:21 | DeepSeek V4.1 Flash Free | S4.3 | DONE | ~30k | 20 S110 + 15 broad catch logged; critical S110 0; BLE001 236→222; bandit Low 73→52; 3764 full; cb5c9c0 |
 | 40 | 2026-11-01 13:30–2026-11-02 11:42 | DeepSeek V4.1 Flash Free | S4.4 | DONE | ~14k | Runtime/dev deps synced; chromadb scripts extra; one .flake8 config; pip check clean; 3764 full; fd62824 |
 | 41 | 2026-11-02 11:43–11:53 | DeepSeek V4.1 Flash Free | S4.5 | DONE | ~9k | Garmin left WIP untracked; mutants already ignored; exports/egg-info ignored; 3764 collect/full; 82dfc14 |
+| 42 | 2026-11-02 11:54–11:57 | DeepSeek V4.1 Flash Free | S4.6 | DONE | ~12k | CI gate: flake8/mypy/pytest/bandit; INC-15 hook exclude; W292 fixed; 3764 full, coverage 87.18%; 6d02ecc |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -2065,7 +2108,8 @@
 | INC-12 | 2026-10-29 | `cli/menu.py`, `cli/utils.py` | Собственный `list_chats` с mtime-сортировкой дублирует `services/chat_store.list_chat_files`; S3.3 перевёл только Telegram-потребителей. | Перевести CLI на общий `list_chat_files` | TODO |
 | INC-13 | 2026-10-30 | `handlers/messages.py:1050` | После S3.4 `get_ai_response_sync_wrapper` не используется в production-коде (его вызывает только `tests/test_messages_handler.py::test_get_ai_response_sync_wrapper`). | S4.2 — удалить или подключить осознанно | RESOLVED (S3.10 — удалена, как и дубли в photos) |
 | INC-14 | 2026-10-30 | `services/palace_bridge.py::_search_palace_context_impl` | Guard `if not safe_query` после `query.strip().replace('"', "'")[:200]` недостижим: replace не удаляет символы, а пустой strip отсечён выше. Строка не покрывается тестами. | S4.2 — удалить мёртвый guard | RESOLVED (S4.2 — guard удалён) |
-| INC-15 | 2026-10-31 | `.pre-commit-config.yaml`, `.flake8` | Pre-commit flake8 передаёт staged-файлы явно; flake8 игнорирует `exclude=tests,features,...` для явных путей и падает на 93 pre-existing замечаниях в tests/features/scripts. S4.1b закоммичен с `SKIP=flake8` после полного `flake8 .` (7 baseline). | S4.6 — согласовать pre-commit flake8 с `.flake8` (hook-level `exclude` или аргументы) | TODO |
+| INC-15 | 2026-10-31 | `.pre-commit-config.yaml`, `.flake8` | Pre-commit flake8 передаёт staged-файлы явно; flake8 игнорирует `exclude=tests,features,...` для явных путей и падает на 93 pre-existing замечаниях в tests/features/scripts. S4.1b закоммичен с `SKIP=flake8` после полного `flake8 .` (7 baseline). | S4.6 — согласовать pre-commit flake8 с `.flake8` (hook-level `exclude` или аргументы) | RESOLVED (S4.6 — hook-level exclude) |
+| INC-16 | 2026-11-02 | `requirements.txt`, CI `pip-audit` | `pip-audit` находит CVE в текущих версиях: `pillow` 12.3.0 → 13.0.0, `pyasn1` 0.6.4 → 0.6.5, `setuptools` 84.0.0 → 84.1.0, `virtualenv` 21.7.0 → 21.14.9. CI-шаг оставлен диагностическим. | Отдельный dependency-update шаг / S4.9 | TODO |
 
 ---
 
