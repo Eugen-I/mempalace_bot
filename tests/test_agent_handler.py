@@ -384,6 +384,107 @@ async def test_cb_room_agent_no_data_returns():
     assert cb.answers == [(None, None)]
 
 
+# ─── ab_agent_stop:sid (завершение button-mode диалога) ───
+
+
+async def test_cb_ab_agent_stop_no_data_returns():
+    cb = FakeCb(4242, data=None)
+    await h.cb_ab_agent_stop(cb)
+    assert cb.answers == [(None, None)]
+    assert cb.message.edits == []
+
+
+async def test_cb_ab_agent_stop_expired_session_alerts():
+    cb = FakeCb(4242, data="ab_agent_stop:missing")
+    await h.cb_ab_agent_stop(cb)
+    assert cb.answers[-1] == ("Сессия истекла.", True)
+    assert cb.message.edits == []
+
+
+async def test_cb_ab_agent_stop_without_session_id_only_edits(monkeypatch):
+    from handlers.palace.action_bar import Answer, answer_store
+
+    class FakeCtxStore:
+        def __init__(self):
+            self.ended = []
+            self.unbound = []
+
+        def end_button_session(self, session_id):
+            self.ended.append(session_id)
+
+        def unbind_button_session_from_uid(self, uid):
+            self.unbound.append(uid)
+
+    store = FakeCtxStore()
+    monkeypatch.setattr(h, "get_agent_context_store", lambda: store)
+
+    sid = "stop_no_session"
+    answer_store[sid] = Answer(sid=sid, text="Ответ", ctx={})
+    try:
+        cb = FakeCb(4242, data=f"ab_agent_stop:{sid}")
+        await h.cb_ab_agent_stop(cb)
+    finally:
+        answer_store.pop(sid, None)
+
+    assert store.ended == []
+    assert store.unbound == []
+    assert cb.message.edits == [
+        "⏹ Диалог с агентом завершён. Возвращаюсь в обычный режим.",
+    ]
+
+
+async def test_cb_ab_agent_stop_ends_bound_session(monkeypatch):
+    from handlers.palace.action_bar import Answer, answer_store
+
+    class FakeCtxStore:
+        def __init__(self):
+            self.ended = []
+            self.unbound = []
+
+        def end_button_session(self, session_id):
+            self.ended.append(session_id)
+
+        def unbind_button_session_from_uid(self, uid):
+            self.unbound.append(uid)
+
+    store = FakeCtxStore()
+    monkeypatch.setattr(h, "get_agent_context_store", lambda: store)
+
+    sid = "stop_with_session"
+    answer_store[sid] = Answer(
+        sid=sid, text="Ответ", ctx={"_agent_session_id": "ctx-42"},
+    )
+    try:
+        cb = FakeCb(4242, data=f"ab_agent_stop:{sid}")
+        await h.cb_ab_agent_stop(cb)
+    finally:
+        answer_store.pop(sid, None)
+
+    assert store.ended == ["ctx-42"]
+    assert store.unbound == [4242]
+    assert cb.message.edits == [
+        "⏹ Диалог с агентом завершён. Возвращаюсь в обычный режим.",
+    ]
+
+
+# ─── should_route_to_agent ───
+
+
+def test_should_route_to_agent_rejects_command_prefixes():
+    for text in ("/agent", "~заметка", "#тег"):
+        assert h.should_route_to_agent(4242, text) is False
+
+
+def test_should_route_to_agent_uses_settings(monkeypatch):
+    from services import agent_settings
+
+    monkeypatch.setattr(
+        agent_settings, "get_agent_enabled", lambda uid: uid == 4242,
+    )
+    assert h.should_route_to_agent(4242, "привет") is True
+    assert h.should_route_to_agent(7, "привет") is False
+
+
 # ─── Промпт агента: обязательное цитирование заметок ───
 
 

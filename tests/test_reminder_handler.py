@@ -466,6 +466,33 @@ async def test_cb_remind_target_no_session(clean_pending):
 
 
 @pytest.mark.asyncio
+async def test_cb_remind_target_no_data_returns(clean_pending):
+    cb = FakeCb(4242)
+    cb.data = None
+    await rem.cb_remind_target(cb)
+    assert cb.answered == [(None, None)]
+    assert not hasattr(cb.message, "edits")
+
+
+@pytest.mark.asyncio
+async def test_cb_remind_target_kv_error_is_reported(clean_pending, monkeypatch, caplog):
+    def broken_kv():
+        raise RuntimeError("kv unavailable")
+
+    monkeypatch.setattr(rem, "get_kv_store", broken_kv)
+    clean_pending[4242] = {"text": "текст", "ts": _future_ts(), "step": "confirm"}
+    cb = FakeCb(4242)
+    cb.data = "rem_tgt:bot"
+
+    await rem.cb_remind_target(cb)
+
+    text = cb.message.edits[-1]
+    assert "Бот:" in text and "❌" in text
+    assert "kv unavailable" in text
+    assert "kv save failed" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_cb_remind_target_missing_data(clean_pending):
     clean_pending[4242] = {"step": "confirm"}
     cb = FakeCb(4242)

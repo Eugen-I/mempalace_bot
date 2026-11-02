@@ -81,6 +81,58 @@ def test_load_chat_read_error_returns_empty(tmp_path, caplog):
     assert "Не удалось прочитать чат" in caplog.text
 
 
+def test_load_chat_corrupt_json_creates_backup(tmp_path, caplog):
+    path = tmp_path / "chat.json"
+    path.write_text("{not json", encoding="utf-8")
+
+    assert chat_store.load_chat(str(path)) == {"summary": "", "messages": []}
+
+    backups = list(tmp_path.glob("chat.json.corrupt.*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "{not json"
+    assert "Битый JSON" in caplog.text
+    assert backups[0].name in caplog.text
+
+
+def test_load_chat_corrupt_json_backup_failure_is_logged(tmp_path, monkeypatch, caplog):
+    path = tmp_path / "chat.json"
+    path.write_text("{not json", encoding="utf-8")
+
+    def fail_copy(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(chat_store.shutil, "copy2", fail_copy)
+
+    assert chat_store.load_chat(str(path)) == {"summary": "", "messages": []}
+    assert "Не удалось создать резервную копию битого чата" in caplog.text
+    assert "резервная копия: не создана" in caplog.text
+
+
+def test_load_chat_non_dict_structure_creates_backup(tmp_path, caplog):
+    path = tmp_path / "chat.json"
+    path.write_text('"just a string"', encoding="utf-8")
+
+    assert chat_store.load_chat(str(path)) == {"summary": "", "messages": []}
+
+    backups = list(tmp_path.glob("chat.json.corrupt.*"))
+    assert len(backups) == 1
+    assert "Некорректная структура чата" in caplog.text
+
+
+def test_load_chat_migration_save_failure_logs(tmp_path, monkeypatch, caplog):
+    path = tmp_path / "chat.json"
+    path.write_text(
+        json.dumps([{"role": "user", "content": "hi"}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(chat_store, "save_chat", lambda *a, **k: False)
+
+    data = chat_store.load_chat(str(path))
+
+    assert data["messages"] == [{"role": "user", "content": "hi"}]
+    assert "Не удалось мигрировать чат" in caplog.text
+
+
 def test_save_chat_roundtrip(tmp_path):
     path = tmp_path / "chat.json"
 
@@ -119,6 +171,19 @@ def test_save_chat_cleanup_failure_is_safe(tmp_path, monkeypatch, caplog):
     assert chat_store.save_chat(str(path), {"messages": []}) is False
     assert "Не удалось сохранить чат" in caplog.text
     assert "Не удалось удалить временный файл" in caplog.text
+
+
+def test_save_chat_tempfile_creation_failure_is_safe(tmp_path, monkeypatch, caplog):
+    path = tmp_path / "chat.json"
+
+    def fail_tempfile(*args, **kwargs):
+        raise OSError("cannot create temp file")
+
+    monkeypatch.setattr(chat_store.tempfile, "NamedTemporaryFile", fail_tempfile)
+
+    assert chat_store.save_chat(str(path), {"messages": []}) is False
+    assert not path.exists()
+    assert "Не удалось сохранить чат" in caplog.text
 
 
 def test_append_message_roundtrip(tmp_path):

@@ -377,6 +377,34 @@ async def test_cmd_callback_history_shows_real_messages(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cmd_callback_history_html_send_falls_back_to_plain(
+    monkeypatch, tmp_path, caplog,
+):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [
+        {"role": "user", "content": "привет"},
+    ])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    parse_modes = []
+
+    async def flaky_answer(text, parse_mode=None, reply_markup=None):
+        parse_modes.append(parse_mode)
+        if parse_mode == "HTML":
+            raise RuntimeError("can't parse entities")
+
+    monkeypatch.setattr(cb.message, "answer", flaky_answer)
+
+    await st.cmd_callback_handler(cb)
+
+    assert parse_modes == ["HTML", None]
+    assert "HTML-разметка истории не принята Telegram" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_cmd_callback_history_no_active_chat(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     from handlers.chat import user_sessions
@@ -1125,6 +1153,31 @@ async def test_cb_set_ai_success(monkeypatch, tmp_path):
     assert (tmp_path / "ai.txt").read_text(encoding="utf-8") == "qwen"
     assert invalidated == [1]
     assert semantic_models == ["old-model"]
+    assert cb.answered == [("✅ Выбрана: qwen", True)]
+
+
+@pytest.mark.asyncio
+async def test_cb_set_ai_previous_model_error_skips_cache_invalidation(
+    monkeypatch, tmp_path, caplog,
+):
+    _enable(monkeypatch, tmp_path)
+
+    def broken_current_ai():
+        raise RuntimeError("no active model")
+
+    monkeypatch.setattr(st, "get_current_ai", broken_current_ai)
+    invalidated = []
+    monkeypatch.setattr(st, "invalidate_ai_cache", lambda: invalidated.append(1))
+    semantic_cache_calls = []
+    monkeypatch.setattr(st, "get_cache", lambda: semantic_cache_calls.append(1))
+
+    cb = FakeCb(4242, data="set_ai:qwen")
+    await st.cb_set_ai(cb)
+
+    assert (tmp_path / "ai.txt").read_text(encoding="utf-8") == "qwen"
+    assert invalidated == [1]
+    assert semantic_cache_calls == []
+    assert "Не удалось определить предыдущую модель AI" in caplog.text
     assert cb.answered == [("✅ Выбрана: qwen", True)]
 
 
