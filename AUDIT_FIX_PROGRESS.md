@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** в работе (45/46 шагов `DONE`)
+**Статус работы:** в работе (45/46 шагов `DONE`, 1 `BLOCKED`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,14 +52,14 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-11-02 12:05 CET
+- **Дата последнего обновления:** 2026-11-02 12:06 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** S4.9 — `547a82a`, docs/checkpoint — текущий коммит
-- **Текущий шаг:** `S4.9` — завершён
-- **Статус:** `DONE`
-- **Следующее действие:** `S4.10` — smoke/acceptance
-- **Бюджет текущего шага:** 40k
-- **Израсходовано (оценка):** ~12k (make qa/test/cov, collect, behave, coverage, сравнение baseline, отчёт)
+- **HEAD:** S4.10 — journal commit (`docs(step-4.10): record smoke results`) — текущий коммит
+- **Текущий шаг:** `S4.10` — smoke/acceptance
+- **Статус:** `BLOCKED`
+- **Следующее действие:** получить разрешение/тестовый токен для live polling и закрыть S4.10; затем финальная приёмка пользователем
+- **Бюджет текущего шага:** 20k
+- **Израсходовано (оценка):** ~5k (import/router smoke, config, empty-state settings tests, проверка возможности live run)
 - **Незакоммиченные изменения:** 37 untracked Garmin-файлов (feature, steps, `services/garmin/`, тесты, `models/garmin.py`, CLI-скрипты, документы) оставлены как WIP и не коммитились; `mutants/` (8,3 MB) уже был в `.gitignore` и не удалён; `.claude/`, `CLAUDE.md`, `.cursorrules`, `GARMIN_INTEGRATION_PLAN.md`, `THIRD_PARTY_NOTICES.md` оставлены untracked. `exports/` и `mempalace_bot.egg-info/` добавлены в `.gitignore`, файлы на диске сохранены. Пользовательские Garmin-зависимости и `selectolax<1.0` в `pyproject.toml`/`requirements.txt` по-прежнему не закоммичены.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
 - **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` и `make test`/`make cov` падают только на них. `pip-audit` диагностический: известные CVE в текущих `pillow`/`pyasn1`/`setuptools`/`virtualenv` (INC-16). Общий `behave --dry-run` содержит 7 pre-existing features/45 scenarios с неопределёнными шагами; ImportError нет. Полный `make qa` красный из-за untracked Garmin и политики bandit на baseline Low; tracked-only gate зелёный.
@@ -132,7 +132,7 @@
 | S4.7 | Покрытие критичных сервисов A | P2 | 40k | DONE | `180df06` | 2026-11-02 12:00 | ~16k |
 | S4.8 | Покрытие критичных handler'ов B | P2 | 40k | DONE | `3711bdb` | 2026-11-02 12:03 | ~18k |
 | S4.9 | Полный regression и отчёт | P0 | 40k | DONE | `547a82a` | 2026-11-02 12:05 | ~12k |
-| S4.10 | Smoke/acceptance | P1 | 20k | TODO | — | — | — |
+| S4.10 | Smoke/acceptance | P1 | 20k | BLOCKED | — | 2026-11-02 12:06 | ~5k |
 
 ---
 
@@ -144,8 +144,8 @@
 | 1 — P0 | 13 | 13 | 0 | 0 |
 | 2 — P1 | 9 | 9 | 0 | 0 |
 | 3 — P2 дублирование | 11 | 11 | 0 | 0 |
-| 4 — чистота/тесты | 11 | 10 | 0 | 1 |
-| **Итого** | **46** | **45** | **0** | **1** |
+| 4 — чистота/тесты | 11 | 10 | 1 | 0 |
+| **Итого** | **46** | **45** | **1** | **0** |
 
 > Обновлять после каждого шага.
 
@@ -2100,6 +2100,35 @@
 - Найдено попутно: новых инцидентов нет; открытые INC-2…INC-12 (кроме закрытых) и INC-16 перечислены в разделе 12.4.
 - Следующее действие: `S4.10` — smoke/acceptance.
 
+### S4.10 — Smoke/acceptance
+
+- Дата/время: 2026-11-02 12:06 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `a036c64` + текущая запись
+- Статус: `BLOCKED` (live polling не выполнялся)
+- Бюджет/факт (оценка): 20k / ~5k
+- Файлы: только `AUDIT_FIX_PROGRESS.md`; production-код не менялся.
+- Что сделано:
+  1. `import main` + импорт ключевых handlers/services (`agent`, `reminder`, `settings`, `chat`, `chat_store`) → **OK**.
+  2. Проверена сборка приложения: `Bot` + `Dispatcher`, **19 sub_routers**, **28 observers**.
+  3. `validate_config()` → **OK** (конфиг валиден).
+  4. Пустые состояния настроек: `pytest -k "history or export or insights or research"` → **30 passed, 45 deselected**.
+  5. Live polling **не запускался**: в `.env` есть токен, но подключение к реальному Telegram без явного разрешения запрещено; тестовый токен/разрешение не предоставлены.
+- Проверки:
+  - `python3 - <<'PY' ... import main ...` → `IMPORT_MAIN_OK`, `BOT_TYPE Bot`, `DP_TYPE Dispatcher`, `ROUTERS 19`, `OBSERVERS 28`.
+  - `python3 -c "from config import validate_config; validate_config()"` → `CONFIG_OK`.
+  - `pytest -q tests/test_settings_handler.py -k "history or export or insights or research"` → **30 passed**.
+- AC:
+  - [x] Приложение импортируется, dispatcher и routers собираются.
+  - [x] Пользовательские сценарии history/export/insights/research не падают на пустых данных (unit-smoke).
+  - [ ] Live start с тестовым токеном — не выполнен, шаг `BLOCKED`.
+- Коммит: journal-only (`docs(step-4.10): record smoke results`)
+- Проблемы/решения:
+  - По плану S4.10 при невозможности live-запуска шаг помечается `BLOCKED`, а не `DONE`. Использовать реальный токен из `.env` без разрешения нельзя; фейковый `test-token` приведёт к ошибке авторизации Telegram и не является полезным smoke-тестом.
+  - Для закрытия шага нужно: предоставить тестовый токен/разрешение на запуск с реальным токеном либо явно принять non-live smoke как достаточный.
+- Найдено попутно: новых инцидентов нет.
+- Следующее действие: закрыть S4.10 после решения пользователя; затем финальная приёмка.
+
 ---
 
 ## 7. Журнал сессий
@@ -2151,6 +2180,7 @@
 | 43 | 2026-11-02 11:58–12:00 | DeepSeek V4.1 Flash Free | S4.7 | DONE | ~16k | 8 edge tests for palace_mcp; 4 target modules 100%; 3774 full, coverage 87.18%; 180df06 |
 | 44 | 2026-11-02 12:01–12:03 | DeepSeek V4.1 Flash Free | S4.8 | DONE | ~18k | 15 edge tests for agent/reminder/settings/chat_store; 4 targets 100%; 3789 full, coverage 87.18%; 3711bdb |
 | 45 | 2026-11-02 12:04–12:05 | DeepSeek V4.1 Flash Free | S4.9 | DONE | ~12k | Full regression vs baseline; non-Garmin 3789/0, tracked coverage 98%, mypy 0, flake8 0, bandit 48 Low; report recorded |
+| 46 | 2026-11-02 12:06 | DeepSeek V4.1 Flash Free | S4.10 | BLOCKED | ~5k | Import/router/config OK; 30 empty-state settings tests; live polling not run (no test token/permission) |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -2231,7 +2261,7 @@
 ## 11. Финальная приёмка
 
 - [x] Все P0-шаги `DONE` (или `SKIPPED` с одобрением).
-- [ ] Все P1-шаги `DONE` — остаётся S4.10 smoke/acceptance.
+- [ ] Все P1-шаги `DONE` — S4.10 `BLOCKED` на live polling (non-live smoke пройден).
 - [x] P2-шаги выполнены или осознанно отложены с записью.
 - [x] `make qa` не хуже baseline; новых падений нет — tracked-only QA лучше baseline; полный `make qa` красный только из-за untracked Garmin WIP.
 - [x] Каждый исправленный баг покрыт тестом.
@@ -2239,7 +2269,7 @@
 - [x] Итоговый отчёт с метриками записан (раздел 12).
 - [ ] Пользователь подтвердил приёмку.
 
-**Итоговый статус:** ожидает S4.10 и подтверждения пользователя
+**Итоговый статус:** ожидает закрытия S4.10 (live smoke) и подтверждения пользователя
 **Дата приёмки:** —
 **Подпись/подтверждение пользователя:** —
 
@@ -2292,4 +2322,4 @@
 
 ### 12.5. Итог
 
-Аудит-план выполнен на **45/46** шагов. Все P0 и P2 завершены, P1 завершены кроме финального S4.10 smoke/acceptance. Открытые пункты — внешний Garmin WIP, dependency-CVE (INC-16) и функциональный долг INC-2…INC-12, явно вынесенный за рамки аудита. Итоговая приёмка ожидает S4.10 и подтверждения пользователя.
+Аудит-план выполнен на **45/46** шагов: 45 `DONE`, 1 `BLOCKED` (S4.10 live polling). Все P0 и P2 завершены; P1 завершены кроме live-запуска, non-live smoke S4.10 пройден (import, dispatcher/routers, config, пустые состояния настроек). Открытые пункты — внешний Garmin WIP, dependency-CVE (INC-16) и функциональный долг INC-2…INC-12, явно вынесенный за рамки аудита. Итоговая приёмка ожидает закрытия S4.10 и подтверждения пользователя.
