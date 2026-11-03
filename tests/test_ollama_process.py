@@ -220,6 +220,7 @@ def test_start_launches_server_and_pulls_model(monkeypatch):
     monkeypatch.setattr(manager, "is_server_available", lambda: False)
     monkeypatch.setattr(manager, "wait_for_server", lambda timeout=30: None)
     monkeypatch.setattr(manager, "is_model_available", lambda: False)
+    monkeypatch.setattr(ollama_process.shutil, "which", lambda name: "/usr/bin/ollama")
 
     calls = []
     proc = DummyProc()
@@ -297,6 +298,7 @@ def test_ensure_running_tracks_when_spawned(monkeypatch):
     monkeypatch.setattr(m, "is_server_available", lambda: False)
     monkeypatch.setattr(m, "wait_for_server", lambda timeout=30: None)
     monkeypatch.setattr(m, "is_model_available", lambda: True)
+    monkeypatch.setattr(ollama_process.shutil, "which", lambda name: "/usr/bin/ollama")
     monkeypatch.setattr(
         ollama_process.subprocess,
         "Popen",
@@ -360,6 +362,7 @@ def test_ensure_running_avoids_pull_if_model_exists(monkeypatch):
     monkeypatch.setattr(m, "is_server_available", fake_available)
     monkeypatch.setattr(m, "wait_for_server", fake_wait)
     monkeypatch.setattr(m, "is_model_available", fake_model_available)
+    monkeypatch.setattr(ollama_process.shutil, "which", lambda name: "/usr/bin/ollama")
     monkeypatch.setattr(
         ollama_process.subprocess,
         "Popen",
