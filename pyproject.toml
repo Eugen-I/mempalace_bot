@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=84.1.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -27,13 +27,14 @@ dependencies = [
   "cachetools>=5.3",
   "tavily-python>=0.7",
   "httpx>=0.28",
-  "selectolax>=0.3.11",
+  "selectolax>=0.3.11,<1.0",
   "aiofiles>=23.2.1",
   "numpy>=2.0",
   "prompt-toolkit>=3.0"
 ]
 
 [project.optional-dependencies]
+# chromadb 1.6.0 с исправлениями PYSEC-2026-311/3813/3814/3815 ещё не выпущен (проверено 2026-11-03)
 scripts = ["chromadb==1.5.9"]
 dev = [
   "pytest>=8.3",

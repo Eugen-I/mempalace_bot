@@ -3,7 +3,7 @@
 **Проект:** `/Users/evg.pit/Documents/mempalace_bot`
 **План:** `AUDIT_FIX_PLAN.md`
 **Создан:** 2026-10-25
-**Статус работы:** завершено (46/46 шагов `DONE`), принято пользователем 2026-11-02
+**Статус работы:** завершено (46/46 шагов `DONE`), принято пользователем 2026-11-02; зависимости обновлены 2026-11-03 (INC-16: 14/15 пакетов, остался `chromadb 1.5.9`)
 
 > Это единственный источник истины о ходе работ.
 > **Не удаляй старые записи и не переписывай историю** — только добавляй новые и меняй статусы в таблице.
@@ -52,19 +52,20 @@
 
 > Обновлять в начале и конце каждого шага.
 
-- **Дата последнего обновления:** 2026-11-02 12:39 CET
+- **Дата последнего обновления:** 2026-11-03 11:07 CET
 - **Ветка:** `fix/audit-2026-10-25`
-- **HEAD:** `ba3eb94` — docs(step-4.10) checkpoint + текущая docs-запись
-- **Текущий шаг:** `Пост-аудит` — завершён
-- **Статус:** `DONE`
-- **Следующее действие:** аудит закрыт; INC-16 — отдельный dependency-update шаг (сейчас не выполняется)
-- **Бюджет текущего шага:** 2k
-- **Израсходовано (оценка):** ~2k (проверка токена/админа, live-запуск, фиксация приёмки)
-- **Незакоммиченные изменения:** 37 untracked Garmin-файлов (feature, steps, `services/garmin/`, тесты, `models/garmin.py`, CLI-скрипты, документы) оставлены как WIP и не коммитились; `mutants/` (8,3 MB) уже был в `.gitignore` и не удалён; `.claude/`, `CLAUDE.md`, `.cursorrules`, `GARMIN_INTEGRATION_PLAN.md`, `THIRD_PARTY_NOTICES.md` оставлены untracked. `exports/` и `mempalace_bot.egg-info/` добавлены в `.gitignore`, файлы на диске сохранены. Пользовательские Garmin-зависимости и `selectolax<1.0` в `pyproject.toml`/`requirements.txt` по-прежнему не закоммичены. Локально в игнорируемом проектном `.env`: строка `TELEGRAM_BOT_TOKEN` закомментирована (используется legacy-токен), `ADMIN_ID=8922772619`; файл не коммитится.
+- **HEAD:** `976647b` — docs(post-audit) + текущая docs/deps-запись
+- **Текущий шаг:** `Пост-аудит — dependency update` — завершён
+- **Статус:** `DONE`; INC-16 — `PARTIAL` (остался `chromadb 1.5.9`)
+- **Следующее действие:** после выхода `chromadb 1.6.0` обновить пин и повторить `pip-audit`
+- **Бюджет текущего шага:** 6k
+- **Израсходовано (оценка):** ~6k (аудит, обновление 14 пакетов, прогон 3789 тестов, проверка `.env`/GitHub)
+- **Незакоммиченные изменения:** 37 untracked Garmin-файлов (feature, steps, `services/garmin/`, тесты, `models/garmin.py`, CLI-скрипты, документы) оставлены как WIP и не коммитились; `mutants/` (8,3 MB) уже был в `.gitignore` и не удалён; `.claude/`, `CLAUDE.md`, `.cursorrules`, `GARMIN_INTEGRATION_PLAN.md`, `THIRD_PARTY_NOTICES.md` оставлены untracked. `exports/` и `mempalace_bot.egg-info/` добавлены в `.gitignore`, файлы на диске сохранены. Пользовательские Garmin-зависимости в `pyproject.toml`/`requirements.txt` по-прежнему не закоммичены (WIP); `selectolax<1.0` включён в это обновление. Локально в игнорируемом проектном `.env`: строка `TELEGRAM_BOT_TOKEN` закомментирована (используется legacy-токен), `ADMIN_ID=8922772619`; файл не коммитится.
 - **Резервная копия:** `~/Documents/mempalace_bot_backups/mempalace_bot_full_20261025_121520.tar.gz` (4.7 MB, sha256 `dd02b6a1...aab4ea`)
-- **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` и `make test`/`make cov` падают только на них. `pip-audit` диагностический: известные CVE в текущих `pillow`/`pyasn1`/`setuptools`/`virtualenv` (INC-16). Общий `behave --dry-run` содержит 7 pre-existing features/45 scenarios с неопределёнными шагами; ImportError нет. Полный `make qa` красный из-за untracked Garmin и политики bandit на baseline Low; tracked-only gate зелёный. INC-17 закрыт в пост-аудите: проектный токен отключён, `ADMIN_ID` исправлен, бот работает через legacy-токен.
+- **Известные блокеры:** untracked Garmin-тесты не собираются без `fitparse` (10 collection errors); полный `pytest --collect-only` и `make test`/`make cov` падают только на них. `pip-audit` после обновления: **5 записей / 4 уникальных PYSEC только в `chromadb 1.5.9`** (PYSEC-2026-311/3813/3814/3815; исправление 1.6.0 не выпущено). Общий `behave --dry-run` содержит 7 pre-existing features/45 scenarios с неопределёнными шагами; ImportError нет. Полный `make qa` красный из-за untracked Garmin и политики bandit на baseline Low; tracked-only gate зелёный. INC-17 закрыт в пост-аудите: проектный токен отключён, `ADMIN_ID` исправлен, бот работает через legacy-токен.
 - **Последний QA (S4.9/S4.10):** `make qa` — exit 2 на `lint` (6 baseline только в untracked `scripts/verify_garmin_login.py`); `make test`/`make cov` — exit 2, 10 Garmin collection errors (`fitparse`); эквивалент без Garmin — **3789 passed, 0 failed**, coverage **87.42%** (с untracked Garmin) / **98%** tracked-only; collect без Garmin — **3789**, полный collect — **3821 + 10 errors**; `behave --dry-run` — 7 pre-existing errors, 45 scenarios undefined, ImportError 0; Garmin feature dry-run — 0 errors; `import config, main, handlers.*` — OK; `pip check` — clean; `pip install --dry-run --no-deps -e .` — OK; flake8 tracked — **0**; mypy — **0/114**; bandit tracked — **48 Low / 0 Medium / 0 High**, full — 52 Low + 2 Medium (Garmin); ruff source — **426** (baseline 495). Live smoke S4.10: legacy-токен валиден, `main.py` стартовал, MCP ready, whisper pre-warmed, polling started, SIGINT → graceful stop, exit 0.
 - **Пост-аудит (2026-11-02 12:39):** проверен legacy-токен — Telegram `getMe` вернул `ok=True` / `@Ask_Qwen_bot`; `config.API_TOKEN` совпадает с legacy, `ALLOWED_IDS` содержит `8922772619`. `main.py` запущен: polling @Ask_Qwen_bot (id `8738990849`) работает; пользователь подтвердил, что меню открывается. INC-17 закрыт.
+- **Пост-аудит deps (2026-11-03 11:07):** `pip-audit` — **98 уязвимостей в 15 пакетах → 5 записей в 1 пакете** (`chromadb 1.5.9`; fix 1.6.0 не выпущен). Обновлены `aiohttp 3.14.5`, `anyio 4.16.0`, `brotli 1.2.1`, `certifi 2026.10.23`, `filelock 4.2.7`, `fsspec 2026.9.0`, `msgpack 1.2.4`, `multidict 7.2.1`, `oauthlib 4.0.1`, `opentelemetry-* 1.45.2`, `pillow 13.0.0`, `pyasn1 0.6.5`, `setuptools 84.2.1`, `virtualenv 21.15.2` (+ `yarl 1.25.1`, `python-discovery 1.9.2`). `pip check` — clean; non-Garmin pytest — **3789 passed, 0 failed** (known notes flake прошёл при повторе). `.env` никогда не был tracked (`git log --all -- .env` пуст); `.gitignore` теперь игнорирует `.env.*`, кроме `.env.example`.
 - **Примечание:** номера строк в плане — якоря на дату аудита; перед правкой искать символы заново.
 
 ---
@@ -2188,6 +2189,37 @@
 - Найдено попутно: новых инцидентов нет. INC-16 остаётся открытым и вынесен в отдельный dependency-update шаг; зависимости в этом шаге не менялись.
 - Следующее действие: отдельных действий по аудиту нет.
 
+### Пост-аудит — безопасное обновление зависимостей (INC-16)
+
+- Дата/время: 2026-11-03 11:07 CET
+- Агент/модель: DeepSeek V4.1 Flash Free
+- Ветка/HEAD: `fix/audit-2026-10-25` / `976647b` + текущая docs/deps-запись
+- Статус: `DONE`; INC-16 — `PARTIAL` (единственный остаток — `chromadb 1.5.9`)
+- Бюджет/факт (оценка): 6k / ~6k
+- Файлы: `requirements.txt`, `pyproject.toml`, `.gitignore`, `AUDIT_FIX_PROGRESS.md`; production-код не менялся.
+- Что сделано:
+  1. Зафиксирован baseline `pip-audit`: **98 уязвимостей в 15 пакетах**.
+  2. Обновлены 14 пакетов до версий с исправлениями: `aiohttp 3.14.5`, `anyio 4.16.0`, `brotli 1.2.1`, `certifi 2026.10.23`, `filelock 4.2.7`, `fsspec 2026.9.0`, `msgpack 1.2.4`, `multidict 7.2.1`, `oauthlib 4.0.1`, `opentelemetry-* 1.45.2`, `pillow 13.0.0`, `pyasn1 0.6.5`, `setuptools 84.2.1`, `virtualenv 21.15.2`; транзитивно обновлены `yarl 1.25.1` и `python-discovery 1.9.2`.
+  3. В `requirements.txt` добавлены безопасные минимумы для транзитивных зависимостей; `pyproject.toml` переведён на `setuptools>=84.1.0`; `selectolax` ограничен `<1.0` в обоих файлах.
+  4. `.gitignore`: добавлены `.env.*` и исключение `!.env.example`; `.env` и раньше был ignored и никогда не попадал в git.
+- Проверки:
+  - `pip-audit` до → **98 / 15 пакетов**; после → **5 записей / 1 пакет** (`chromadb 1.5.9`, PYSEC-2026-311/3813/3814/3815).
+  - `pip check` → **No broken requirements found**.
+  - `pytest` non-Garmin → **3789 passed, 0 failed** (известный флейк notes прошёл при изолированном повторе; повторный полный прогон — 3789 passed).
+  - Импорт ключевых модулей (`aiohttp`, `anyio`, `filelock`, `fsspec`, `msgpack`, `multidict`, `oauthlib`, `opentelemetry.sdk`, `PIL`, `pyasn1`, `setuptools`, `virtualenv`, `chromadb`, `aiogram`, `openai`, `google.genai`, `faster_whisper`, `config`, `main`) → **OK**.
+  - `git log --all -- .env` → **пусто**; `.env` отсутствует в индексе и в истории.
+- AC:
+  - [x] Все исправимые на 2026-11-03 CVE закрыты обновлением версий.
+  - [x] `pip check` чистый, non-Garmin regression зелёный.
+  - [x] `.env` не tracked, не попадает в коммит и не публикуется; добавлена защита `.env.*`.
+  - [ ] `chromadb 1.5.9` → 1.6.0: заблокировано отсутствием релиза на PyPI.
+- Коммит: docs+deps (`deps(security): update vulnerable packages and record INC-16`)
+- Проблемы/решения:
+  - `chromadb 1.5.9` — единственный пакет с CVE без доступного исправления: `1.6.0` отсутствует на PyPI (проверено `pip index versions chromadb`). Пин оставлен, startup-warning `deps_guard` сохраняется.
+  - `virtualenv` обновлён до `21.15.2`, чтобы разрешить `filelock 4.x`; `pip check` подтвердил совместимость.
+- Найдено попутно: новых инцидентов нет. INC-16 остаётся `PARTIAL` до релиза `chromadb 1.6.0`.
+- Следующее действие: мониторить релиз `chromadb 1.6.0`; после выхода — обновить пин, `requirements.txt` и `pyproject.toml`, повторить `pip-audit` и тесты.
+
 ---
 
 ## 7. Журнал сессий
@@ -2242,6 +2274,7 @@
 | 46 | 2026-11-02 12:06 | DeepSeek V4.1 Flash Free | S4.10 | BLOCKED | ~5k | Import/router/config OK; 30 empty-state settings tests; live polling not run (no test token/permission) |
 | 47 | 2026-11-02 12:12–12:13 | DeepSeek V4.1 Flash Free | S4.10a | DONE | ~3k | Legacy token valid (@Ask_Qwen_bot); live polling started/stopped gracefully, exit 0; project .env token unauthorized (INC-17) |
 | 48 | 2026-11-02 12:39 | DeepSeek V4.1 Flash Free | Пост-аудит | DONE | ~2k | Приёмка получена («заработало»); INC-17 закрыт: project .env token отключён, ADMIN_ID=8922772619; @Ask_Qwen_bot polling, меню работает; INC-16 остаётся открытым |
+| 49 | 2026-11-03 11:07 | DeepSeek V4.1 Flash Free | Пост-аудит deps | DONE | ~6k | pip-audit 98/15 → 5/1 (chromadb only); 14 пакетов обновлены; 3789 non-Garmin passed; .env не tracked; INC-16 PARTIAL |
 
 > Добавлять строку на каждую сессию/запуск. Если сессия закончилась handoff'ом — указать `PARTIAL`.
 
@@ -2304,7 +2337,7 @@
 | INC-13 | 2026-10-30 | `handlers/messages.py:1050` | После S3.4 `get_ai_response_sync_wrapper` не используется в production-коде (его вызывает только `tests/test_messages_handler.py::test_get_ai_response_sync_wrapper`). | S4.2 — удалить или подключить осознанно | RESOLVED (S3.10 — удалена, как и дубли в photos) |
 | INC-14 | 2026-10-30 | `services/palace_bridge.py::_search_palace_context_impl` | Guard `if not safe_query` после `query.strip().replace('"', "'")[:200]` недостижим: replace не удаляет символы, а пустой strip отсечён выше. Строка не покрывается тестами. | S4.2 — удалить мёртвый guard | RESOLVED (S4.2 — guard удалён) |
 | INC-15 | 2026-10-31 | `.pre-commit-config.yaml`, `.flake8` | Pre-commit flake8 передаёт staged-файлы явно; flake8 игнорирует `exclude=tests,features,...` для явных путей и падает на 93 pre-existing замечаниях в tests/features/scripts. S4.1b закоммичен с `SKIP=flake8` после полного `flake8 .` (7 baseline). | S4.6 — согласовать pre-commit flake8 с `.flake8` (hook-level `exclude` или аргументы) | RESOLVED (S4.6 — hook-level exclude) |
-| INC-16 | 2026-11-02 | `requirements.txt`, CI `pip-audit` | `pip-audit` находит CVE в текущих версиях: `pillow` 12.3.0 → 13.0.0, `pyasn1` 0.6.4 → 0.6.5, `setuptools` 84.0.0 → 84.1.0, `virtualenv` 21.7.0 → 21.14.9. CI-шаг оставлен диагностическим. Дополнительно startup-warning `chromadb 1.5.9 < 1.6.0` (CVE-2026-45829). | Отдельный dependency-update шаг / S4.9 | TODO |
+| INC-16 | 2026-11-02 | `requirements.txt`, CI `pip-audit` | `pip-audit` находит CVE в текущих версиях: `pillow` 12.3.0 → 13.0.0, `pyasn1` 0.6.4 → 0.6.5, `setuptools` 84.0.0 → 84.1.0, `virtualenv` 21.7.0 → 21.14.9. 2026-11-03 обновлены 14 из 15 пакетов; `pip-audit` сократился с 98 до 5 записей. Остался `chromadb 1.5.9` (PYSEC-2026-311/3813/3814/3815): исправление 1.6.0 ещё не выпущено. CI-шаг оставлен диагностическим. | Выполнено 2026-11-03 (14/15); после релиза `chromadb 1.6.0` обновить пин | PARTIAL (2026-11-03: 98→5, только `chromadb`) |
 | INC-17 | 2026-11-02 | проектный `.env` | `TELEGRAM_BOT_TOKEN` в проектном `.env` отклоняется Telegram (`Unauthorized`); live smoke S4.10 выполнен с legacy-токеном из `~/Documents/mempalace/.env`. Проектный `.env` перекрывал legacy-значения, а его `ADMIN_ID=352998626` не входил в `ALLOWED_IDS` — `allowed_only` молча блокировал пользователя. | Локально: строка токена закомментирована (fallback на legacy), `ADMIN_ID=8922772619`; бот @Ask_Qwen_bot работает, пользователь подтвердил | RESOLVED (пост-аудит 2026-11-02) |
 
 ---
@@ -2327,7 +2360,7 @@
 - [x] P2-шаги выполнены или осознанно отложены с записью.
 - [x] `make qa` не хуже baseline; новых падений нет — tracked-only QA лучше baseline; полный `make qa` красный только из-за untracked Garmin WIP.
 - [x] Каждый исправленный баг покрыт тестом.
-- [x] Нет новых секретов/мусора в git; пользовательские Garmin-файлы остались untracked.
+- [x] Нет новых секретов/мусора в git; пользовательские Garmin-файлы остались untracked; `.env` никогда не был tracked, `.env.*` ignored (кроме `.env.example`).
 - [x] Итоговый отчёт с метриками записан (раздел 12).
 - [x] Пользователь подтвердил приёмку.
 
@@ -2369,7 +2402,7 @@
 
 - **Garmin WIP (внешнее состояние):** 37 untracked файлов, тесты требуют `fitparse`/`reportlab`/`matplotlib`; `make test`/`make cov`/полный collect падают на 10 collection errors. Код не коммитился и не менялся.
 - **INC-17 — закрыт (2026-11-02, пост-аудит):** строка `TELEGRAM_BOT_TOKEN` в проектном `.env` закомментирована (используется legacy-токен), `ADMIN_ID=8922772619`; бот `@Ask_Qwen_bot` запускается, меню работает. Файл `.env` остаётся игнорируемым и не коммитится.
-- **INC-16 — CVE зависимостей:** `pillow` 12.3.0, `pyasn1` 0.6.4, `setuptools` 84.0.0, `virtualenv` 21.7.0; плюс startup-warning `chromadb 1.5.9 < 1.6.0` (CVE-2026-45829). `pip-audit` оставлен диагностическим; нужен отдельный dependency-update.
+- **INC-16 — частично закрыт (2026-11-03):** обновлены 14 из 15 уязвимых пакетов; `pip-audit` сократился с **98** до **5** записей. Остался `chromadb 1.5.9` (PYSEC-2026-311/3813/3814/3815): исправление `1.6.0` ещё не выпущено, startup-warning `deps_guard` сохраняется. После релиза — отдельное обновление пина.
 - **INC-2:** HTML внутри `<code>` в `safe_html_format` не экранируется.
 - **INC-3 (PARTIAL):** старый `get_ai_response_async` без таймаута и с executor на вызов.
 - **INC-4:** Gemini-стриминг игнорирует `images` и system-сообщение.
@@ -2385,4 +2418,4 @@
 
 ### 12.5. Итог
 
-Аудит-план выполнен на **46/46** шагов: все `DONE`. P0, P1 и P2 завершены; S4.10 подтверждён реальным запуском бота с legacy-токеном: polling стартовал и остановился штатно (exit 0). Итоговая приёмка получена 2026-11-02: пользователь подтвердил, что бот `@Ask_Qwen_bot` запускается и меню работает. INC-17 закрыт (проектный токен отключён, `ADMIN_ID` исправлен); открытые пункты — внешний Garmin WIP, dependency-CVE INC-16 (отдельный dependency-update шаг), startup-warning `chromadb` и функциональный долг INC-2…INC-12, явно вынесенный за рамки аудита.
+Аудит-план выполнен на **46/46** шагов: все `DONE`. P0, P1 и P2 завершены; S4.10 подтверждён реальным запуском бота с legacy-токеном: polling стартовал и остановился штатно (exit 0). Итоговая приёмка получена 2026-11-02: пользователь подтвердил, что бот `@Ask_Qwen_bot` запускается и меню работает. INC-17 закрыт (проектный токен отключён, `ADMIN_ID` исправлен). 2026-11-03 безопасно обновлены зависимости: `pip-audit` сократился с 98 до 5 записей, все оставшиеся — `chromadb 1.5.9` (INC-16 `PARTIAL`, fix 1.6.0 не выпущен). Открытые пункты — внешний Garmin WIP, `chromadb 1.6.0`, startup-warning `deps_guard` и функциональный долг INC-2…INC-12, явно вынесенный за рамки аудита.
