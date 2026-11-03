@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-import os, sys, re, json, subprocess, textwrap, urllib.request, urllib.error
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, "/Users/evg.pit/Documents/mempalace_bot")
 from services.ollama_process import OllamaProcessManager

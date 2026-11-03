@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from handlers import chat as ch
+from services import chat_store, chat_sync
 
 
 class FakeUser:
@@ -122,22 +123,104 @@ def test_load_chat_dict(monkeypatch, tmp_path):
     assert data["summary"] == "sum"
 
 
+def test_load_chat_corrupt_json_backs_up_original(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    p = d / "ch_bad.json"
+    p.write_text("{broken", encoding="utf-8")
+
+    data = ch.load_chat(str(p))
+
+    assert data == {"summary": "", "messages": []}
+    assert p.exists()
+    assert p.read_text(encoding="utf-8") == "{broken"
+    backups = list(d.glob("ch_bad.json.corrupt.*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "{broken"
+
+
+def test_load_chat_invalid_root_backs_up_original(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    p = d / "ch_scalar.json"
+    p.write_text('"not a chat"', encoding="utf-8")
+
+    data = ch.load_chat(str(p))
+
+    assert data == {"summary": "", "messages": []}
+    assert p.exists()
+    assert len(list(d.glob("ch_scalar.json.corrupt.*"))) == 1
+
+
+def test_load_chat_corrupt_backup_failure_is_safe(
+    monkeypatch, tmp_path, caplog,
+):
+    d = _enable(monkeypatch, tmp_path)
+    p = d / "ch_bad.json"
+    p.write_text("{broken", encoding="utf-8")
+
+    def boom(*a, **kw):
+        raise OSError("backup failed")
+
+    monkeypatch.setattr(chat_store.shutil, "copy2", boom)
+
+    assert ch.load_chat(str(p)) == {"summary": "", "messages": []}
+    assert p.read_text(encoding="utf-8") == "{broken"
+    assert "резервная копия: не создана" in caplog.text
+
+
+def test_load_chat_list_migration_save_failure_returns_data(
+    monkeypatch, tmp_path, caplog,
+):
+    d = _enable(monkeypatch, tmp_path)
+    p = d / "ch_list.json"
+    p.write_text('[{"role": "user", "content": "hi"}]', encoding="utf-8")
+    monkeypatch.setattr(chat_store, "save_chat", lambda path, data: False)
+
+    data = ch.load_chat(str(p))
+
+    assert data["messages"] == [{"role": "user", "content": "hi"}]
+    assert "Не удалось мигрировать чат" in caplog.text
+
+
 def test_save_chat_roundtrip(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     p = d / "ch_1.json"
-    ch.save_chat(str(p), {"summary": "s", "messages": []})
+    assert ch.save_chat(str(p), {"summary": "s", "messages": []}) is True
     data = json.loads(p.read_text(encoding="utf-8"))
     assert data == {"summary": "s", "messages": []}
 
 
-def test_save_chat_error_swallowed(monkeypatch, tmp_path):
+def test_save_chat_error_returns_false(monkeypatch, tmp_path, caplog):
     _enable(monkeypatch, tmp_path)
 
     def boom(*a, **kw):
         raise OSError("disk")
 
-    monkeypatch.setattr(ch.tempfile, "NamedTemporaryFile", boom)
-    ch.save_chat(str(tmp_path / "x.json"), {"messages": []})
+    monkeypatch.setattr(chat_store.tempfile, "NamedTemporaryFile", boom)
+    assert ch.save_chat(str(tmp_path / "x.json"), {"messages": []}) is False
+    assert "Не удалось сохранить чат" in caplog.text
+
+
+def test_save_chat_missing_directory_returns_false(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    target = tmp_path / "missing" / "x.json"
+    assert ch.save_chat(str(target), {"messages": []}) is False
+    assert not target.exists()
+
+
+def test_save_chat_replace_error_keeps_original(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    p = d / "ch_1.json"
+    original = '{"summary": "old", "messages": []}'
+    p.write_text(original, encoding="utf-8")
+
+    def boom(src, dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(chat_store.os, "replace", boom)
+
+    assert ch.save_chat(str(p), {"summary": "new", "messages": []}) is False
+    assert p.read_text(encoding="utf-8") == original
+    assert list(d.iterdir()) == [p]
 
 
 def test_save_summary_file(monkeypatch, tmp_path):
@@ -213,6 +296,23 @@ async def test_cmd_list_chats_with_files(monkeypatch, tmp_path):
     texts = [b.text for row in msg.answers[0][2].inline_keyboard for b in row]
     assert any("alpha beta" in t for t in texts)
     assert any(t == "🗑️" for t in texts)
+
+
+@pytest.mark.asyncio
+async def test_cmd_list_chats_limits_to_ten(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    for i in range(1, 13):
+        path = _write_chat(d, f"ch_{i:02d}.json", [])
+        os.utime(path, (1000 + i, 1000 + i))
+
+    msg = FakeMessage()
+    await ch.cmd_list_chats(msg)
+
+    texts = [b.text for row in msg.answers[0][2].inline_keyboard for b in row]
+    assert "💬 12" in texts
+    assert "💬 03" in texts
+    assert "💬 02" not in texts
+    assert "💬 01" not in texts
 
 
 # ---------- cb_select_chat ----------
@@ -303,6 +403,9 @@ async def test_cb_delete_chat_with_remaining(monkeypatch, tmp_path):
     cb = FakeCb(data="del:abcd")
     await ch.cb_delete_chat(cb)
     assert "Выберите чат" in cb.message.edits[-1][0]
+    texts = [b.text for row in cb.message.edits[-1][2].inline_keyboard for b in row]
+    assert "💬 2" in texts
+    assert "🗑️" in texts
 
 
 @pytest.mark.asyncio
@@ -317,7 +420,7 @@ async def test_cb_delete_chat_file_missing(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cb_delete_chat_edit_fails(monkeypatch, tmp_path):
+async def test_cb_delete_chat_edit_fails(monkeypatch, tmp_path, caplog):
     d = _enable(monkeypatch, tmp_path)
     ch._chat_callback_cache["abcd"] = "ch_1.json"
     _write_chat(d, "ch_1.json", [])
@@ -330,6 +433,7 @@ async def test_cb_delete_chat_edit_fails(monkeypatch, tmp_path):
     cb = FakeCb(data="del:abcd", message=FailMsg())
     await ch.cb_delete_chat(cb)
     assert cb.answered == [("🗑️ Удален: ch_1.json", True)]
+    assert "Не удалось обновить список чатов" in caplog.text
 
 
 # ---------- generate_fresh_summary ----------
@@ -351,7 +455,7 @@ async def test_generate_fresh_summary_success(monkeypatch, tmp_path):
         calls["context"] = context
         return "короткое саммари диалога"
 
-    monkeypatch.setattr(ch, "get_ai_response_async", fake_ai)
+    monkeypatch.setattr("services.summary_service.call_ai_async", fake_ai)
     msgs = [{"role": "user", "content": f"m{i}"} for i in range(25)]
     res = await ch.generate_fresh_summary(msgs, "старое саммари")
     assert res == "короткое саммари диалога"
@@ -362,7 +466,7 @@ async def test_generate_fresh_summary_success(monkeypatch, tmp_path):
 async def test_generate_fresh_summary_truncated(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("сл " * 60))
+    monkeypatch.setattr("services.summary_service.call_ai_async", _async_result("сл " * 60))
     res = await ch.generate_fresh_summary([{"role": "user", "content": "x"}])
     assert res.endswith("...")
     assert len(res.split()) == 50
@@ -376,61 +480,9 @@ async def test_generate_fresh_summary_error(monkeypatch, tmp_path):
     async def boom(*a, **kw):
         raise RuntimeError("ai down")
 
-    monkeypatch.setattr(ch, "get_ai_response_async", boom)
+    monkeypatch.setattr("services.summary_service.call_ai_async", boom)
     res = await ch.generate_fresh_summary([{"role": "user", "content": "x"}])
     assert res == "Не удалось сгенерировать саммари."
-
-
-# ---------- update_summary_if_needed ----------
-
-
-@pytest.mark.asyncio
-async def test_update_summary_if_needed_skip_under_5(monkeypatch, tmp_path):
-    d = _enable(monkeypatch, tmp_path)
-    p = _write_chat(d, "ch_1.json", [{"role": "user", "content": "x"}])
-    assert await ch.update_summary_if_needed(4242, str(p), [{"role": "user", "content": "x"}]) is None
-    data = json.loads(p.read_text(encoding="utf-8"))
-    assert data["summary"] == ""
-
-
-@pytest.mark.asyncio
-async def test_update_summary_if_needed_success(monkeypatch, tmp_path):
-    d = _enable(monkeypatch, tmp_path)
-    p = _write_chat(d, "ch_1.json", [])
-    monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("свежее саммари"))
-    msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
-    res = await ch.update_summary_if_needed(4242, str(p), msgs)
-    assert res == "свежее саммари"
-    data = json.loads(p.read_text(encoding="utf-8"))
-    assert data["summary"] == "свежее саммари"
-    assert (d / "ch_1_summary.txt").read_text(encoding="utf-8") == "свежее саммари"
-
-
-@pytest.mark.asyncio
-async def test_update_summary_if_needed_truncated(monkeypatch, tmp_path):
-    d = _enable(monkeypatch, tmp_path)
-    p = _write_chat(d, "ch_1.json", [])
-    monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("слово " * 50))
-    msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
-    res = await ch.update_summary_if_needed(4242, str(p), msgs)
-    assert res.endswith("...")
-    assert len(res.split()) == 40
-
-
-@pytest.mark.asyncio
-async def test_update_summary_if_needed_error(monkeypatch, tmp_path):
-    d = _enable(monkeypatch, tmp_path)
-    p = _write_chat(d, "ch_1.json", [])
-    monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-
-    async def boom(*a, **kw):
-        raise RuntimeError("ai down")
-
-    monkeypatch.setattr(ch, "get_ai_response_async", boom)
-    msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
-    assert await ch.update_summary_if_needed(4242, str(p), msgs) is None
 
 
 # ---------- cmd_context ----------
@@ -466,7 +518,7 @@ async def test_cmd_context_generates_new(monkeypatch, tmp_path):
     ch.user_sessions[4242] = "ch_1.json"
     p = _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
     monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("новое саммари"))
+    monkeypatch.setattr("services.summary_service.call_ai_async", _async_result("новое саммари"))
     cached = []
     monkeypatch.setattr(
         ch, "cache_ai_response",
@@ -574,7 +626,7 @@ async def test_cb_show_summary_send_fails(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cb_show_summary_all_send_fail(monkeypatch, tmp_path):
+async def test_cb_show_summary_all_send_fail(monkeypatch, tmp_path, caplog):
     d = _enable(monkeypatch, tmp_path)
     ch._chat_callback_cache["abcd"] = "ch_1.json"
     (d / "ch_1_summary.txt").write_text("текст", encoding="utf-8")
@@ -586,6 +638,7 @@ async def test_cb_show_summary_all_send_fail(monkeypatch, tmp_path):
     cb = FakeCb(data="show_summary:abcd", message=FailMsg())
     await ch.cb_show_summary(cb)
     assert cb.answered == [(None, None)]
+    assert "Не удалось отправить часть саммари" in caplog.text
 
 
 # ---------- cb_show_full_chat ----------
@@ -660,7 +713,7 @@ async def test_cb_show_full_chat_multi_part(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cb_show_full_chat_send_fails(monkeypatch, tmp_path):
+async def test_cb_show_full_chat_send_fails(monkeypatch, tmp_path, caplog):
     d = _enable(monkeypatch, tmp_path)
     ch._chat_callback_cache["abcd"] = "ch_1.json"
     _write_chat(d, "ch_1.json", [
@@ -678,6 +731,7 @@ async def test_cb_show_full_chat_send_fails(monkeypatch, tmp_path):
     cb = FakeCb(data="show_full:abcd")
     await ch.cb_show_full_chat(cb)
     assert cb.answered == [(None, None)]
+    assert "Не удалось отправить часть истории" in caplog.text
 
 
 # ---------- cb_refresh_summary ----------
@@ -707,7 +761,10 @@ async def test_cb_refresh_summary_success(monkeypatch, tmp_path):
     ch._chat_callback_cache["abcd"] = "ch_1.json"
     p = _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
     monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("обновлённое саммари"))
+    monkeypatch.setattr(
+        "services.summary_service.call_ai_async",
+        _async_result("обновлённое саммари"),
+    )
     cached = []
     monkeypatch.setattr(
         ch, "cache_ai_response",
@@ -728,14 +785,14 @@ async def test_cb_refresh_summary_long_expand(monkeypatch, tmp_path):
     ch._chat_callback_cache["abcd"] = "ch_1.json"
     _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
     monkeypatch.setattr(ch, "get_current_ai", lambda: ("ollama", "llama3"))
-    monkeypatch.setattr(ch, "get_ai_response_async", _async_result("д" * 600))
+    monkeypatch.setattr("services.summary_service.call_ai_async", _async_result("д" * 600))
     cb = FakeCb(data="refresh_summary:abcd")
     await ch.cb_refresh_summary(cb)
     texts = [b.text for row in cb.message.edits[0][2].inline_keyboard for b in row]
     assert "📖 Развернуть полностью" in texts
 
 
-# ---------- cmd_sync_palace / get_ai_context / cmd_history / cmd_export ----------
+# ---------- cmd_sync_palace / cmd_history / cmd_export ----------
 
 
 @pytest.mark.asyncio
@@ -751,7 +808,7 @@ async def test_cmd_sync_palace_empty_export(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     ch.user_sessions[4242] = "ch_1.json"
     _write_chat(d, "ch_1.json", [])
-    monkeypatch.setattr(ch, "export_chat_verbatim", lambda p, f: None)
+    monkeypatch.setattr(chat_sync, "export_chat_verbatim", lambda p, f: None)
     msg = FakeMessage()
     await ch.cmd_sync_palace(msg)
     assert msg.answers[0][0] == "ℹ️ Чат пуст или не найден."
@@ -762,8 +819,9 @@ async def test_cmd_sync_palace_success(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     ch.user_sessions[4242] = "ch_1.json"
     _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
-    monkeypatch.setattr(ch, "export_chat_verbatim", lambda p, f: {"text": "экспорт"})
-    monkeypatch.setattr(ch, "sync_to_palace", _async_result("✅ Синхронизировано"))
+    monkeypatch.setattr(chat_sync, "CHATS_DIR", str(d))
+    monkeypatch.setattr(chat_sync, "export_chat_verbatim", lambda p, f: {"text": "экспорт"})
+    monkeypatch.setattr(chat_sync, "sync_to_palace", _async_result("✅ Синхронизировано"))
     msg = FakeMessage()
     await ch.cmd_sync_palace(msg)
     assert msg.answers[0][0] == "🔄 Синхронизирую с MemPalace (verbatim)..."
@@ -771,21 +829,20 @@ async def test_cmd_sync_palace_success(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_get_ai_context_no_session(monkeypatch, tmp_path):
-    _enable(monkeypatch, tmp_path)
-    assert await ch.get_ai_context(4242) == ("", [])
-
-
-@pytest.mark.asyncio
-async def test_get_ai_context_with_chat(monkeypatch, tmp_path):
+async def test_cmd_sync_palace_error_is_shown(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     ch.user_sessions[4242] = "ch_1.json"
-    msgs = [{"role": "user", "content": f"m{i}"} for i in range(8)]
-    _write_chat(d, "ch_1.json", msgs, summary="саммари")
-    summary, recent = await ch.get_ai_context(4242)
-    assert summary == "саммари"
-    assert len(recent) == 6
-    assert recent[0]["content"] == "m2"
+    _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
+    monkeypatch.setattr(chat_sync, "export_chat_verbatim", lambda p, f: "exported")
+
+    async def boom(exported):
+        raise RuntimeError("palace down")
+
+    monkeypatch.setattr(chat_sync, "sync_to_palace", boom)
+    msg = FakeMessage()
+    await ch.cmd_sync_palace(msg)
+    assert msg.answers[0][0] == "🔄 Синхронизирую с MemPalace (verbatim)..."
+    assert msg.edits[-1][0] == "❌ Ошибка синхронизации: palace down"
 
 
 @pytest.mark.asyncio
@@ -844,7 +901,7 @@ async def test_cmd_export_no_md(monkeypatch, tmp_path):
 async def test_cmd_export_success(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     ch.user_sessions[4242] = "ch_1.json"
-    p = _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
+    _write_chat(d, "ch_1.json", [{"role": "user", "content": "hi"}])
     msg = FakeMessage()
     await ch.cmd_export(msg)
     assert msg.sent_document is not None

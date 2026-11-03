@@ -408,7 +408,7 @@ async def run_analysis(uid: int, ptype: str, msg: types.Message):
     # 1. ЕДИНЫЙ ЦИКЛ ИЗВЛЕЧЕНИЯ ТЕКСТА
     for name, path in files:
         try:
-            txt, method = await extract_pdf_async(path)
+            txt, _method = await extract_pdf_async(path)
             if txt:
                 combined_text += f"\n\n📄 [{name}]\n{txt}"
         except Exception as e:

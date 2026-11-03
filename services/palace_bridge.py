@@ -11,6 +11,7 @@ import os
 import shutil
 import sys
 from datetime import datetime
+from typing import Literal, overload
 
 from config import DATA_DIR
 from services.circuit_breaker import (
@@ -33,59 +34,86 @@ def _get_palace_env() -> dict:
     return env
 
 
-async def search_palace_context(
+def _format_sources_block(sources: list[dict]) -> str:
+    """Форматирует сноски с источниками; пустой список — пустая строка."""
+    if not sources:
+        return ""
+
+    lines = ["--- ИСТОЧНИКИ ---"]
+    for s in sources:
+        loc = f"{s['wing']}/{s['room']}" if s["wing"] or s["room"] else s["file"]
+        lines.append(f"[{s['id']}] {loc} (score: {s['score']:.3f})")
+    lines.append("--- КОНЕЦ ИСТОЧНИКОВ ---")
+    return "\n".join(lines) + "\n"
+
+
+def _format_context(text: str, sources: list[dict]) -> str:
+    """Оборачивает текст поиска в блок личных записей со сносками."""
+    sources_block = _format_sources_block(sources)
+    if sources_block:
+        text = f"{text}\n\n{sources_block}"
+    return (
+        "\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n"
+        f"{text}\n--- КОНЕЦ ЛИЧНЫХ ЗАПИСЕЙ ---\n"
+    )
+
+
+@overload
+async def _search_palace(
     query: str, limit: int = 5, wing: str = "", room: str = "",
-) -> str:
-    """Поиск по базе MemPalace. Возвращает блок для контекста ИИ."""
+    *, with_sources: Literal[False] = False,
+) -> str: ...
+
+
+@overload
+async def _search_palace(
+    query: str, limit: int = 5, wing: str = "", room: str = "",
+    *, with_sources: Literal[True],
+) -> tuple[str, list]: ...
+
+
+async def _search_palace(
+    query: str, limit: int = 5, wing: str = "", room: str = "",
+    *, with_sources: bool = False,
+) -> str | tuple[str, list]:
+    """Единая реализация поиска по MemPalace с circuit breaker.
+
+    ``with_sources=False`` возвращает готовый контекст для ИИ со сносками,
+    ``True`` — сырой текст и список источников для UI.
+    """
     cb = get_palace_circuit_breaker()
     try:
         result = await cb.call(_search_palace_context_impl, query, limit, wing, room)
     except CircuitBreakerOpenError as e:
         logger.warning(f"[PALACE] Circuit breaker OPEN: {e}")
-        return ""
+        return ("", []) if with_sources else ""
     except Exception as e:
         logger.error(f"Error searching MemPalace: {e}", exc_info=True)
-        return ""
+        return ("", []) if with_sources else ""
 
     text = result.get("text", "")
     sources = result.get("sources", [])
 
     if not text:
-        return ""
+        return ("", []) if with_sources else ""
 
-    # Добавляем сноски с источниками
-    if sources:
-        source_lines = ["\n--- ИСТОЧНИКИ ---"]
-        for s in sources:
-            loc = f"{s['wing']}/{s['room']}" if s["wing"] or s["room"] else s["file"]
-            source_lines.append(f"[{s['id']}] {loc} (score: {s['score']:.3f})")
-        source_lines.append("--- КОНЕЦ ИСТОЧНИКОВ ---\n")
-        text += "\n" + "\n".join(source_lines)
+    if with_sources:
+        return text, sources
+    return _format_context(text, sources)
 
-    return f"\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n{text}\n--- КОНЕЦ ЛИЧНЫХ ЗАПИСЕЙ ---\n"  # noqa: E501
+
+async def search_palace_context(
+    query: str, limit: int = 5, wing: str = "", room: str = "",
+) -> str:
+    """Поиск по базе MemPalace. Возвращает блок для контекста ИИ."""
+    return await _search_palace(query, limit, wing, room)
 
 
 async def search_palace_with_sources(
     query: str, limit: int = 5, wing: str = "", room: str = "",
 ) -> tuple[str, list]:
     """Поиск по базе MemPalace. Возвращает (text, sources) для пользовательского показа."""
-    cb = get_palace_circuit_breaker()
-    try:
-        result = await cb.call(_search_palace_context_impl, query, limit, wing, room)
-    except CircuitBreakerOpenError as e:
-        logger.warning(f"[PALACE] Circuit breaker OPEN: {e}")
-        return "", []
-    except Exception as e:
-        logger.error(f"Error searching MemPalace: {e}", exc_info=True)
-        return "", []
-
-    text = result.get("text", "")
-    sources = result.get("sources", [])
-
-    if not text:
-        return "", []
-
-    return text, sources
+    return await _search_palace(query, limit, wing, room, with_sources=True)
 
 
 async def _search_palace_context_impl(
@@ -96,8 +124,6 @@ async def _search_palace_context_impl(
         return {"text": "", "sources": []}
 
     safe_query = query.strip().replace('"', "'")[:200]
-    if not safe_query:
-        return {"text": "", "sources": []}
 
     # Try direct API first (structured results with scores)
     result = await _search_via_api(safe_query, limit, wing, room)
@@ -161,8 +187,8 @@ async def _search_via_api(
 ) -> dict:
     """Search via mempalace.searcher (structured results with scores)."""
     try:
-        from mempalace.searcher import search_memories
         from mempalace.config import MempalaceConfig
+        from mempalace.searcher import search_memories
     except ImportError:
         return {"text": "", "sources": []}
 
@@ -226,7 +252,7 @@ async def _search_via_api(
 
     except Exception as e:
         logger.warning(f"[PALACE_SEARCH] API error: {e}", exc_info=True)
-        return {"text": "", "sources": []}
+        return {"text": "", "sources": [], "error": True}
 
 
 async def _search_via_cli(
@@ -261,7 +287,7 @@ async def _search_via_cli(
         if proc.returncode != 0:
             err = stderr.decode().strip()
             logger.warning(f"MemPalace search error: {err}")
-            return {"text": "", "sources": []}
+            return {"text": "", "sources": [], "error": True}
 
         result = stdout.decode("utf-8").strip()
         if not result or "No results found" in result or "Ничего не найдено" in result:
@@ -281,7 +307,7 @@ async def _search_via_cli(
         return result
     except Exception as e:
         logger.error(f"Error searching MemPalace via CLI: {e}", exc_info=True)
-        return {"text": "", "sources": []}
+        return {"text": "", "sources": [], "error": True}
 
 
 async def _search_connected_rooms(
@@ -323,10 +349,13 @@ async def _search_connected_rooms(
                             if label:
                                 tag += f" ({label})"
                             blocks.append(f"{tag}\n{conn['text']}")
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    "[PALACE_TUNNELS] Ошибка поиска связи %s/%s: %s", cw, cr, e,
+                )
                 continue
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[PALACE_TUNNELS] Ошибка поиска туннелей: %s", e, exc_info=True)
     if blocks:
         return (
             "\n\n--- СВЯЗИ ПО ТУННЕЛЯМ ---\n"
@@ -336,24 +365,35 @@ async def _search_connected_rooms(
     return ""
 
 
-async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
-    """Комбинированный поиск: текст + Knowledge Graph + туннели."""
-    result = await _search_palace_context_impl(query, limit, wing)
+async def search_with_kg_status(
+    query: str, limit: int = 5, wing: str = "",
+) -> tuple[str, bool]:
+    """Комбинированный поиск: текст + Knowledge Graph + туннели.
+
+    Возвращает ``(text, available)``. ``available=False`` означает отказ
+    backend'а (API/CLI), а пустой ``text`` при ``available=True`` — штатное
+    «ничего не найдено».
+    """
+    try:
+        result = await _search_palace_context_impl(query, limit, wing)
+    except Exception as e:
+        logger.error(f"[PALACE_SEARCH] Unexpected search error: {e}", exc_info=True)
+        return "", False
+
     text = result.get("text", "")
     sources = result.get("sources", [])
+    available = not result.get("error", False)
 
     if not text:
-        return ""
+        return "", available
 
-    source_lines = ["\n--- ИСТОЧНИКИ ---"]
-    for s in sources:
-        loc = f"{s['wing']}/{s['room']}" if s["wing"] or s["room"] else s["file"]
-        source_lines.append(f"[{s['id']}] {loc} (score: {s['score']:.3f})")
-    source_lines.append("--- КОНЕЦ ИСТОЧНИКОВ ---\n")
     text_block = (
-        f"\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n{text}\n"
-        + "\n".join(source_lines)
+        "\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n"
+        f"{text}"
     )
+    sources_block = _format_sources_block(sources)
+    if sources_block:
+        text_block += f"\n\n{sources_block}"
 
     kg_block = ""
     try:
@@ -387,8 +427,8 @@ async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
             kg_block = "\n".join(lines) + "\n--- КОНЕЦ KG ---\n"
     except CircuitBreakerOpenError:
         logger.warning("[PALACE_KG] Circuit breaker OPEN, skipping KG search")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[PALACE_KG] Ошибка поиска KG: %s", e, exc_info=True)
 
     tunnel_block = await _search_connected_rooms(query, sources)
 
@@ -398,7 +438,13 @@ async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
     if tunnel_block:
         combined += "\n" + tunnel_block
 
-    return combined
+    return combined, True
+
+
+async def search_with_kg(query: str, limit: int = 5, wing: str = "") -> str:
+    """Совместимая обёртка: возвращает только текст результата."""
+    text, _available = await search_with_kg_status(query, limit, wing)
+    return text
 
 
 def export_chat_verbatim(chat_path: str, chat_name: str) -> str | None:
@@ -439,6 +485,7 @@ async def _run_mempalace(args: list[str]) -> str:
         logger.warning(f"[PALACE] Circuit breaker OPEN: {e}")
         return "❌ Сервис дворца временно недоступен. Попробуйте позже."
     except Exception as e:
+        logger.error("[PALACE] Ошибка run_mempalace: %s", e, exc_info=True)
         return f"❌ Ошибка: {e}"
 
 
@@ -554,6 +601,7 @@ async def sync_to_palace(target_path: str | None = None) -> str:
         logger.warning(f"[PALACE] Circuit breaker OPEN during sync: {e}")
         return "❌ Синхронизация временно недоступна."
     except Exception as e:
+        logger.error("[PALACE] Ошибка синхронизации: %s", e, exc_info=True)
         return f"❌ Ошибка синхронизации: {e}"
 
 
@@ -580,7 +628,7 @@ async def _sync_to_palace_impl(target_path: str | None = None) -> str:
             cwd=DATA_DIR,
             env=_get_palace_env(),
         )
-        stdout, stderr = await proc.communicate()
+        _stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
             err = stderr.decode().strip()
             return (
@@ -595,4 +643,5 @@ async def _sync_to_palace_impl(target_path: str | None = None) -> str:
                     os.remove(fp)
         return "✅ Синхронизация с MemPalace завершена. Данные добавлены в базу (verbatim)."
     except Exception as e:
+        logger.error("[PALACE] Ошибка вызова mine: %s", e, exc_info=True)
         return f"❌ Ошибка вызова mine: {e}"

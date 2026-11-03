@@ -56,18 +56,21 @@ class DegradationManager:
 
     def _recalculate(self):
         old = self.level
+        palace_ok = self.health.palace_mcp or self.health.palace_search
+        data_ok = palace_ok or self.health.memory_store
+
         if (
             self.health.palace_mcp
             and self.health.palace_search
             and self.health.memory_store
         ):
             self.level = DegradationLevel.FULL
-        elif (
-            self.health.memory_store
-            or self.health.palace_mcp
-            or self.health.palace_search
-        ):
+        elif data_ok:
             self.level = DegradationLevel.MEDIUM
+        elif not self.health.whisper:
+            # Все внешние компоненты недоступны, включая голос: остаётся
+            # только аварийный текстовый ответ.
+            self.level = DegradationLevel.EMERGENCY
         else:
             self.level = DegradationLevel.BASIC
 
@@ -77,10 +80,17 @@ class DegradationManager:
             )
 
     def should_use_palace(self) -> bool:
+        """Разрешает попытку поиска, пока дворец не отключён полностью.
+
+        ``health.palace_search`` может быть False после сбоя, но попытки
+        нужны для восстановления: успешный поиск вернёт уровень в FULL.
+        Пустой результат — это «нет данных», а не отказ.
+        """
         return self.level in (DegradationLevel.FULL, DegradationLevel.MEDIUM)
 
     def should_use_memory(self) -> bool:
-        return self.level in (DegradationLevel.FULL, DegradationLevel.MEDIUM)
+        """Память доступна только при живом memory_store, независимо от level."""
+        return self.health.memory_store
 
     def should_use_whisper(self) -> bool:
         return self.health.whisper

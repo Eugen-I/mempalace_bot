@@ -1,7 +1,6 @@
 """Unit tests for handlers.settings."""
 
 import json
-import os
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +19,7 @@ class FakeMessage:
         self.text = text
         self.answers = []
         self.edits = []
+        self.documents = []
 
     async def answer(self, text, parse_mode=None, reply_markup=None):
         self.answers.append((text, parse_mode, reply_markup))
@@ -27,6 +27,11 @@ class FakeMessage:
         status.edit_text = _make_edit(status)
         self.status = status
         return status
+
+    async def answer_document(self, document, caption=None, parse_mode=None,
+                              reply_markup=None):
+        self.documents.append((document, caption, parse_mode))
+        return SimpleNamespace(document=document)
 
     async def _edit(self, text, parse_mode=None):
         pass
@@ -66,7 +71,12 @@ def _enable(monkeypatch, tmp_path):
     ai_file.write_text("", encoding="utf-8")
     models = tmp_path / "models.json"
     models.write_text(
-        json.dumps({"ollama": [{"tag": "qwen", "name": "Qwen"}, {"tag": "llava", "name": "Llava"}]}),
+        json.dumps({
+            "ollama": [
+                {"tag": "qwen", "name": "Qwen"},
+                {"tag": "llava", "name": "Llava"},
+            ],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(st, "CONFIG_AI_FILE", str(ai_file))
@@ -93,6 +103,14 @@ def test_build_settings_kb_default(monkeypatch, tmp_path):
     assert "🤖 Агент: ВЫКЛ" in texts
 
 
+def test_build_settings_kb_missing_ai_file(monkeypatch, tmp_path, caplog):
+    _enable(monkeypatch, tmp_path)
+    (tmp_path / "ai.txt").unlink()
+    _markup, curr = st.build_settings_kb(4242)
+    assert curr == "gemini-flash-latest"
+    assert "Не удалось прочитать текущую модель AI" in caplog.text
+
+
 def test_build_settings_kb_agent_enabled(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     monkeypatch.setattr(st, "get_agent_enabled", lambda uid: True)
@@ -103,7 +121,7 @@ def test_build_settings_kb_agent_enabled(monkeypatch, tmp_path):
 def test_build_settings_kb_current_model_from_file(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     (tmp_path / "ai.txt").write_text("qwen", encoding="utf-8")
-    markup, curr = st.build_settings_kb(4242)
+    _markup, curr = st.build_settings_kb(4242)
     assert curr == "qwen"
 
 
@@ -206,8 +224,8 @@ async def test_cmd_callback_analyze_photo_success(monkeypatch, tmp_path):
     monkeypatch.setattr("services.text_formatter.safe_html_format", lambda t: t)
     monkeypatch.setattr("services.text_formatter.split_message", lambda t: [t])
 
-    async def fake_to_thread(fn):
-        return fn()
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
 
     import asyncio
 
@@ -258,7 +276,7 @@ async def test_cmd_callback_analyze_photo_whitespace_part(monkeypatch, tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_cmd_callback_analyze_photo_html_fallback(monkeypatch, tmp_path):
+async def test_cmd_callback_analyze_photo_html_fallback(monkeypatch, tmp_path, caplog):
     _enable(monkeypatch, tmp_path)
     photos = tmp_path / "photos4"
     photos.mkdir()
@@ -283,6 +301,7 @@ async def test_cmd_callback_analyze_photo_html_fallback(monkeypatch, tmp_path):
     await st.cmd_callback_handler(cb)
     bodies = [a[0] for a in cb.message.answers]
     assert any("<b>x</b>" in b for b in bodies)
+    assert "HTML-отправка анализа фото не удалась" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -297,7 +316,8 @@ async def test_cmd_callback_analyze_photo_ai_error(monkeypatch, tmp_path):
     monkeypatch.setattr("services.multimodal.check_capability", lambda m, f: True)
     monkeypatch.setattr("services.multimodal.encode_image_to_base64", lambda p: "Zm9v")
     monkeypatch.setattr(
-        "services.ai_engine._sync_ai_call", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+        "services.ai_engine._sync_ai_call",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     cb = FakeCb(4242, data="cmd:analyze_photo")
     await st.cmd_callback_handler(cb)
@@ -327,35 +347,540 @@ def test_build_settings_kb_ai_file_missing(monkeypatch, tmp_path):
     assert curr == "gemini-flash-latest"
 
 
-async def test_cmd_callback_history(monkeypatch, tmp_path):
+def _chats_dir(tmp_path, messages, fname="chat_4242.json"):
+    chats = tmp_path / "chats"
+    chats.mkdir(exist_ok=True)
+    (chats / fname).write_text(
+        json.dumps({"summary": "", "messages": messages}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return chats
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_shows_real_messages(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [
+        {"role": "user", "content": "привет"},
+        {"role": "assistant", "content": "здравствуйте"},
+    ])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
     cb = FakeCb(4242, data="cmd:history")
     await st.cmd_callback_handler(cb)
-    assert "историю" in cb.message.answers[0][0]
+    text, parse_mode, _ = cb.message.answers[0]
+    assert "👤 Вы: привет" in text
+    assert "🤖 Бот: здравствуйте" in text
+    assert parse_mode == "HTML"
 
 
 @pytest.mark.asyncio
-async def test_cmd_callback_export(monkeypatch, tmp_path):
+async def test_cmd_callback_history_html_send_falls_back_to_plain(
+    monkeypatch, tmp_path, caplog,
+):
     _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [
+        {"role": "user", "content": "привет"},
+    ])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    parse_modes = []
+
+    async def flaky_answer(text, parse_mode=None, reply_markup=None):
+        parse_modes.append(parse_mode)
+        if parse_mode == "HTML":
+            raise RuntimeError("can't parse entities")
+
+    monkeypatch.setattr(cb.message, "answer", flaky_answer)
+
+    await st.cmd_callback_handler(cb)
+
+    assert parse_modes == ["HTML", None]
+    assert "HTML-разметка истории не принята Telegram" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_no_active_chat(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.delitem(user_sessions, 4242, raising=False)
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    assert "Нет активного чата" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_empty_chat(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    assert "Чат пуст" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_missing_file(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = tmp_path / "empty_chats"
+    chats.mkdir()
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    assert "Чат пуст" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_long_message_truncated(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [{"role": "user", "content": "а" * 200}])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert ("а" * st.HISTORY_PREVIEW_CHARS + "…") in text
+    assert ("а" * (st.HISTORY_PREVIEW_CHARS + 1)) not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_limit_20(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    messages = [
+        {"role": "user", "content": f"m{i:02d}"} for i in range(1, 26)
+    ]
+    chats = _chats_dir(tmp_path, messages)
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "Последние 20 сообщений" in text
+    assert "m05" not in text
+    assert "m06" in text
+    assert "m25" in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_escapes_html(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [
+        {"role": "user", "content": '<b>&"тег"</b>'},
+    ])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "&lt;b&gt;&amp;&quot;тег&quot;&lt;/b&gt;" in text
+    assert "<b>&" not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_history_does_not_leak_other_chats(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    monkeypatch.setitem(user_sessions, 9999, "chat_9999.json")
+    chats = _chats_dir(tmp_path, [{"role": "user", "content": "секрет А"}])
+    (chats / "chat_9999.json").write_text(
+        json.dumps({
+            "summary": "",
+            "messages": [{"role": "user", "content": "секрет Б"}],
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:history")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "секрет А" in text
+    assert "секрет Б" not in text
+
+
+def test_format_chat_history_custom_limit_and_unknown_role():
+    text = st.format_chat_history(
+        [
+            {"role": "system", "content": "служебное"},
+            {"role": "tool", "content": "результат"},
+            "не-словарь",
+        ],
+        limit=3,
+    )
+    assert "Последние 2 сообщений" in text
+    assert "⚙️ Система: служебное" in text
+    assert "❔ tool: результат" in text
+    assert "не-словарь" not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_export_success(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [
+        {"role": "user", "content": "привет"},
+        {"role": "assistant", "content": "ответ"},
+    ])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    monkeypatch.setattr("handlers.chat.CHATS_DIR", str(chats))
     cb = FakeCb(4242, data="cmd:export")
     await st.cmd_callback_handler(cb)
-    assert "Экспортирую" in cb.message.answers[0][0]
+
+    assert len(cb.message.documents) == 1
+    document, caption, parse_mode = cb.message.documents[0]
+    md_path = chats / "exports" / "chat_4242.md"
+    assert str(document.path) == str(md_path)
+    assert md_path.exists()
+    content = md_path.read_text(encoding="utf-8")
+    assert "# 💬 Диалог: chat_4242" in content
+    assert "👤 Вы\nпривет" in content
+    assert "🤖 ИИ\nответ" in content
+    assert "chat_4242.md" in caption
+    assert parse_mode is None
 
 
 @pytest.mark.asyncio
-async def test_cmd_callback_insights(monkeypatch, tmp_path):
+async def test_cmd_callback_export_no_active_chat(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.delitem(user_sessions, 4242, raising=False)
+    cb = FakeCb(4242, data="cmd:export")
+    await st.cmd_callback_handler(cb)
+    assert "Нет активного чата" in cb.message.answers[0][0]
+    assert cb.message.documents == []
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_export_empty_chat(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:export")
+    await st.cmd_callback_handler(cb)
+    assert "Чат пуст" in cb.message.answers[0][0]
+    assert cb.message.documents == []
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_export_missing_file(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = tmp_path / "no_chats"
+    chats.mkdir()
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    cb = FakeCb(4242, data="cmd:export")
+    await st.cmd_callback_handler(cb)
+    assert "Чат пуст или файл не найден" in cb.message.answers[0][0]
+    assert cb.message.documents == []
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_export_write_error(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [{"role": "user", "content": "привет"}])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+
+    def broken_export(path):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("handlers.chat.export_chat_to_md", broken_export)
+    cb = FakeCb(4242, data="cmd:export")
+    await st.cmd_callback_handler(cb)
+    assert "Не удалось экспортировать" in cb.message.answers[0][0]
+    assert cb.message.documents == []
+    assert not (chats / "exports").exists()
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_export_send_error(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.chat import user_sessions
+
+    monkeypatch.setitem(user_sessions, 4242, "chat_4242.json")
+    chats = _chats_dir(tmp_path, [{"role": "user", "content": "привет"}])
+    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    monkeypatch.setattr("handlers.chat.CHATS_DIR", str(chats))
+
+    async def broken_send(self, document, caption=None, parse_mode=None,
+                          reply_markup=None):
+        raise RuntimeError("telegram down")
+
+    monkeypatch.setattr(FakeMessage, "answer_document", broken_send)
+    cb = FakeCb(4242, data="cmd:export")
+    await st.cmd_callback_handler(cb)
+    assert "Не удалось отправить файл экспорта" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_lists_files(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    import os
+    from datetime import datetime
+
+    insights = tmp_path / "insights"
+    insights.mkdir()
+    (insights / "a.txt").write_text("short", encoding="utf-8")
+    os.utime(insights / "a.txt", (1_700_000_000, 1_700_000_000))
+    (insights / "b.txt").write_text("x" * 2048, encoding="utf-8")
+    os.utime(insights / "b.txt", (1_700_000_100, 1_700_000_100))
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+
     cb = FakeCb(4242, data="cmd:insights")
     await st.cmd_callback_handler(cb)
-    assert "insights" in cb.message.answers[0][0]
+    text, parse_mode, _ = cb.message.answers[0]
+    assert parse_mode == "HTML"
+    assert "📌 <b>Последние инсайты:</b>" in text
+    assert text.index("b.txt") < text.index("a.txt")
+    assert "2.0 КБ" in text
+    assert "5 Б" in text
+    expected_dt = datetime.fromtimestamp(1_700_000_100).strftime("%d.%m.%Y %H:%M")
+    assert expected_dt in text
 
 
 @pytest.mark.asyncio
-async def test_cmd_callback_research(monkeypatch, tmp_path):
+async def test_cmd_callback_insights_empty_dir(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
+    insights = tmp_path / "insights_empty"
+    insights.mkdir()
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    assert "Папка пуста" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_missing_dir(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(tmp_path / "no_insights"))
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    assert "Папка пуста" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_escapes_names(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    insights = tmp_path / "insights_html"
+    insights.mkdir()
+    (insights / '<b>&"x".txt').write_text("data", encoding="utf-8")
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "&lt;b&gt;&amp;&quot;x&quot;.txt" in text
+    assert '<b>&"x".txt' not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_access_error(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+
+    def broken_scandir(path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(st.os, "scandir", broken_scandir)
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    assert "Не удалось прочитать папку" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_entry_stat_error(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+
+    class BadEntry:
+        name = "bad.txt"
+
+        def is_file(self, follow_symlinks=False):
+            return True
+
+        def stat(self, follow_symlinks=False):
+            raise OSError("stat failed")
+
+    class FakeScandir:
+        def __enter__(self):
+            return [BadEntry()]
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(st.os, "scandir", lambda path: FakeScandir())
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    assert "Папка пуста" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_limit_10(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    import os
+
+    insights = tmp_path / "insights_many"
+    insights.mkdir()
+    for i in range(1, 13):
+        path = insights / f"note{i:02d}.txt"
+        path.write_text("x", encoding="utf-8")
+        os.utime(path, (1_700_000_000 + i, 1_700_000_000 + i))
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "note12.txt" in text
+    assert "note03.txt" in text
+    assert "note02.txt" not in text
+    assert "note01.txt" not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_insights_skips_dirs_hidden_and_symlinks(
+    monkeypatch, tmp_path,
+):
+    _enable(monkeypatch, tmp_path)
+    import os
+
+    insights = tmp_path / "insights_mixed"
+    insights.mkdir()
+    (insights / "real.txt").write_text("data", encoding="utf-8")
+    (insights / "subdir").mkdir()
+    (insights / ".hiddenfile").write_text("data", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("data", encoding="utf-8")
+    os.symlink(outside, insights / "link.txt")
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+    cb = FakeCb(4242, data="cmd:insights")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "real.txt" in text
+    assert "subdir" not in text
+    assert "hiddenfile" not in text
+    assert "link.txt" not in text
+
+
+def test_format_size_boundaries():
+    assert st._format_size(0) == "0 Б"
+    assert st._format_size(1023) == "1023 Б"
+    assert st._format_size(1024) == "1.0 КБ"
+    assert st._format_size(1024 * 1024 - 1) == "1024.0 КБ"
+    assert st._format_size(1024 * 1024) == "1.0 МБ"
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_research_lists_files(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    research = tmp_path / "research"
+    research.mkdir()
+    (research / "res_a.txt").write_text("data", encoding="utf-8")
+    insights = tmp_path / "insights"
+    insights.mkdir()
+    (insights / "ins_a.txt").write_text("data", encoding="utf-8")
+    monkeypatch.setattr("config.RESEARCH_DIR", str(research))
+    monkeypatch.setattr("config.INSIGHTS_DIR", str(insights))
+
     cb = FakeCb(4242, data="cmd:research")
     await st.cmd_callback_handler(cb)
-    assert "research" in cb.message.answers[0][0]
+    text, parse_mode, _ = cb.message.answers[0]
+    assert parse_mode == "HTML"
+    assert "📌 <b>Последние исследования:</b>" in text
+    assert "res_a.txt" in text
+    assert "ins_a.txt" not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_research_empty_dir(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    research = tmp_path / "research_empty"
+    research.mkdir()
+    monkeypatch.setattr("config.RESEARCH_DIR", str(research))
+    cb = FakeCb(4242, data="cmd:research")
+    await st.cmd_callback_handler(cb)
+    assert "Папка пуста" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_research_missing_dir(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    monkeypatch.setattr("config.RESEARCH_DIR", str(tmp_path / "no_research"))
+    cb = FakeCb(4242, data="cmd:research")
+    await st.cmd_callback_handler(cb)
+    assert "Папка пуста" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_research_escapes_names(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    research = tmp_path / "research_html"
+    research.mkdir()
+    (research / '<b>&"r".txt').write_text("data", encoding="utf-8")
+    monkeypatch.setattr("config.RESEARCH_DIR", str(research))
+    cb = FakeCb(4242, data="cmd:research")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "&lt;b&gt;&amp;&quot;r&quot;.txt" in text
+    assert '<b>&"r".txt' not in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_research_access_error(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+
+    def broken_scandir(path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(st.os, "scandir", broken_scandir)
+    cb = FakeCb(4242, data="cmd:research")
+    await st.cmd_callback_handler(cb)
+    assert "Не удалось прочитать папку" in cb.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_callback_research_limit_10(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    import os
+
+    research = tmp_path / "research_many"
+    research.mkdir()
+    for i in range(1, 13):
+        path = research / f"paper{i:02d}.txt"
+        path.write_text("x", encoding="utf-8")
+        os.utime(path, (1_700_000_000 + i, 1_700_000_000 + i))
+    monkeypatch.setattr("config.RESEARCH_DIR", str(research))
+    cb = FakeCb(4242, data="cmd:research")
+    await st.cmd_callback_handler(cb)
+    text = cb.message.answers[0][0]
+    assert "paper12.txt" in text
+    assert "paper03.txt" in text
+    assert "paper02.txt" not in text
+    assert "paper01.txt" not in text
 
 
 @pytest.mark.asyncio
@@ -377,8 +902,8 @@ async def test_cmd_callback_sync_empty_chat(monkeypatch, tmp_path):
     monkeypatch.setitem(user_sessions, 4242, "chat_4242.md")
     chats = tmp_path / "chats"
     chats.mkdir()
-    monkeypatch.setattr("config.CHATS_DIR", str(chats))
-    monkeypatch.setattr("services.palace_bridge.export_chat_verbatim", lambda p, f: None)
+    monkeypatch.setattr("services.chat_sync.CHATS_DIR", str(chats))
+    monkeypatch.setattr("services.chat_sync.export_chat_verbatim", lambda p, f: None)
     cb = FakeCb(4242, data="cmd:sync")
     await st.cmd_callback_handler(cb)
     assert "Чат пуст или не найден" in cb.message.answers[1][0]
@@ -393,12 +918,15 @@ async def test_cmd_callback_sync_success(monkeypatch, tmp_path):
     chats = tmp_path / "chats"
     chats.mkdir()
     (chats / "chat_4242.md").write_text("данные", encoding="utf-8")
-    monkeypatch.setattr("config.CHATS_DIR", str(chats))
+    monkeypatch.setattr("services.chat_sync.CHATS_DIR", str(chats))
     monkeypatch.setattr(
-        "services.palace_bridge.export_chat_verbatim",
+        "services.chat_sync.export_chat_verbatim",
         lambda p, f: {"text": "экспорт"},
     )
-    monkeypatch.setattr("services.palace_bridge.sync_to_palace", _async_result("✅ Синхронизировано"))
+    monkeypatch.setattr(
+        "services.chat_sync.sync_to_palace",
+        _async_result("✅ Синхронизировано"),
+    )
     cb = FakeCb(4242, data="cmd:sync")
     await st.cmd_callback_handler(cb)
     assert any("Синхронизировано" in a[0] for a in cb.message.answers)
@@ -445,12 +973,23 @@ async def test_render_ollama_list(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_render_ollama_list_broken_models_file(monkeypatch, tmp_path):
+async def test_render_ollama_list_broken_models_file(monkeypatch, tmp_path, caplog):
     _enable(monkeypatch, tmp_path)
     (tmp_path / "models.json").write_text("{broken", encoding="utf-8")
     cb = FakeCb(4242, data="list_ollama")
     await st.render_ollama_list(cb)
     assert "Активная модель" in cb.message.edits[0][0]
+    assert "Не удалось прочитать конфиг моделей" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_render_ollama_list_missing_ai_file(monkeypatch, tmp_path, caplog):
+    _enable(monkeypatch, tmp_path)
+    (tmp_path / "ai.txt").unlink()
+    cb = FakeCb(4242, data="list_ollama")
+    await st.render_ollama_list(cb)
+    assert "Активная модель" in cb.message.edits[0][0]
+    assert "Не удалось прочитать текущую модель AI" in caplog.text
 
 
 # ---------- cmd_settings ----------
@@ -514,7 +1053,11 @@ async def test_cb_agent_toggle_disables(monkeypatch, tmp_path):
 async def test_cb_voice_toggle_cycles_modes(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     states = {"mode": "text", "speed": 160}
-    monkeypatch.setattr(st, "get_voice_settings", lambda uid: {"mode": "text", "speed": 160, **states})
+    monkeypatch.setattr(
+        st,
+        "get_voice_settings",
+        lambda uid: {"mode": "text", "speed": 160, **states},
+    )
     monkeypatch.setattr(st, "set_voice_setting", lambda uid, k, v: states.update({k: v}))
 
     for expected in ("voice", "both", "text"):
@@ -597,10 +1140,44 @@ async def test_cb_set_ai_success(monkeypatch, tmp_path):
     _enable(monkeypatch, tmp_path)
     invalidated = []
     monkeypatch.setattr(st, "invalidate_ai_cache", lambda: invalidated.append(1))
+    monkeypatch.setattr(st, "get_current_ai", lambda: ("gemini", "old-model"))
+    semantic_models = []
+
+    class FakeSemanticCache:
+        def invalidate_model(self, model):
+            semantic_models.append(model)
+
+    monkeypatch.setattr(st, "get_cache", lambda: FakeSemanticCache())
     cb = FakeCb(4242, data="set_ai:qwen")
     await st.cb_set_ai(cb)
     assert (tmp_path / "ai.txt").read_text(encoding="utf-8") == "qwen"
     assert invalidated == [1]
+    assert semantic_models == ["old-model"]
+    assert cb.answered == [("✅ Выбрана: qwen", True)]
+
+
+@pytest.mark.asyncio
+async def test_cb_set_ai_previous_model_error_skips_cache_invalidation(
+    monkeypatch, tmp_path, caplog,
+):
+    _enable(monkeypatch, tmp_path)
+
+    def broken_current_ai():
+        raise RuntimeError("no active model")
+
+    monkeypatch.setattr(st, "get_current_ai", broken_current_ai)
+    invalidated = []
+    monkeypatch.setattr(st, "invalidate_ai_cache", lambda: invalidated.append(1))
+    semantic_cache_calls = []
+    monkeypatch.setattr(st, "get_cache", lambda: semantic_cache_calls.append(1))
+
+    cb = FakeCb(4242, data="set_ai:qwen")
+    await st.cb_set_ai(cb)
+
+    assert (tmp_path / "ai.txt").read_text(encoding="utf-8") == "qwen"
+    assert invalidated == [1]
+    assert semantic_cache_calls == []
+    assert "Не удалось определить предыдущую модель AI" in caplog.text
     assert cb.answered == [("✅ Выбрана: qwen", True)]
 
 
@@ -610,9 +1187,14 @@ async def test_cb_set_ai_write_error(monkeypatch, tmp_path):
     monkeypatch.setattr(st, "CONFIG_AI_FILE", str(tmp_path / "no_dir" / "ai.txt"))
     invalidated = []
     monkeypatch.setattr(st, "invalidate_ai_cache", lambda: invalidated.append(1))
+    semantic_cache_calls = []
+    monkeypatch.setattr(
+        st, "get_cache", lambda: semantic_cache_calls.append(1),
+    )
     cb = FakeCb(4242, data="set_ai:qwen")
     await st.cb_set_ai(cb)
     assert invalidated == []
+    assert semantic_cache_calls == []
     assert cb.answered == [("✅ Выбрана: qwen", True)]
 
 

@@ -9,15 +9,18 @@ from services import interpreter
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
+from .hints import _get_full_text_from_chroma
 from .shared import (
-    router,
-    _pending_mcp_input, _kg_page_data, _kg_search_data, _kg_add_state,
-    KG_PAGE_SIZE, KG_PREDICATES,
+    KG_PAGE_SIZE,
+    KG_PREDICATES,
+    _kg_add_state,
+    _kg_page_data,
+    _kg_search_data,
+    _pending_mcp_input,
     _read_state,
     _send_kg_page,
+    router,
 )
-from .hints import _get_full_text_from_chroma
-
 
 # ─── KNOWLEDGE GRAPH ───
 
@@ -298,10 +301,10 @@ async def cb_kg_read_search(cb: types.CallbackQuery):
     await cb.answer()
     uid = cb.from_user.id
     entity = cb.data[len("p_kgrs:"):]
-    await _kg_search_and_show(uid, cb.message.edit_text, entity, cb.message)
+    await _kg_search_and_show(uid, cb.message.edit_text, entity)
 
 
-async def _kg_search_and_show(uid: int, edit_func, entity: str, original_msg):
+async def _kg_search_and_show(uid: int, edit_func, entity: str):
     mcp = get_mcp()
     try:
         search_raw = await mcp.call_tool("mempalace_search", {"query": entity, "limit": 10})

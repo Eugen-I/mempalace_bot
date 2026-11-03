@@ -143,9 +143,13 @@ def test_describe_unknown_tool_fallback():
 
 
 def test_describe_escapes_html():
-    text = na._describe_action("notes_create", {"title": "<b>X</b>", "text": "<i>Y</i>"})
-    assert "<b>X</b>" not in text
-    assert "&lt;b&gt;X&lt;/b&gt;" in text
+    text = na._describe_action(
+        "notes_create", {"title": "<script>X</script>", "text": "<i>Y</i>"}
+    )
+    assert "<script>" not in text
+    assert "&lt;script&gt;X&lt;/script&gt;" in text
+    # Разрешённое форматирование сохраняется по контракту safe_html_format.
+    assert "<i>Y</i>" in text
 
 
 # ─── _note_title: best-effort поиск названия по ID ───
@@ -384,7 +388,9 @@ async def test_run_notes_agent_wiring(monkeypatch):
     monkeypatch.setattr(action_bar, "finalize_answer", fake_finalize)
 
     status = FakeStatus()
-    await na._run_notes_agent_reply(4242, status, "найди про фудзи")
+    result = await na._run_notes_agent_reply(4242, status, "найди про фудзи")
+    assert result.ok is True
+    assert result.final_answer == "Вот ваша заметка"
     assert calls[0]["allowed_categories"] == (na.CAT_NOTES,)
     assert calls[0]["include_write"] is True
     assert callable(calls[0]["confirm_write"])
@@ -399,7 +405,10 @@ async def test_run_notes_agent_engine_error(monkeypatch):
 
     monkeypatch.setattr(na.ae, "run_agent", boom)
     status = FakeStatus()
-    await na._run_notes_agent_reply(4242, status, "вопрос")
+    result = await na._run_notes_agent_reply(4242, status, "вопрос")
+    assert result.ok is False
+    assert result.final_answer == ""
+    assert "только с Ollama" in (result.error or "")
     assert "только с Ollama" in status.edits[-1]
 
 
@@ -409,7 +418,10 @@ async def test_run_notes_agent_unexpected_error(monkeypatch):
 
     monkeypatch.setattr(na.ae, "run_agent", boom)
     status = FakeStatus()
-    await na._run_notes_agent_reply(4242, status, "вопрос")
+    result = await na._run_notes_agent_reply(4242, status, "вопрос")
+    assert result.ok is False
+    assert result.final_answer == ""
+    assert result.error == "Ошибка агента: поломка"
     assert "поломка" in status.edits[-1]
 
 
@@ -421,7 +433,9 @@ async def test_run_notes_agent_error_result(monkeypatch):
 
     monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
     status = FakeStatus()
-    await na._run_notes_agent_reply(4242, status, "вопрос")
+    result = await na._run_notes_agent_reply(4242, status, "вопрос")
+    assert result.ok is False
+    assert result.error == "Модель вернула пустой ответ."
     assert "Модель вернула пустой ответ" in status.edits[-1]
 
 
@@ -434,7 +448,9 @@ async def test_run_notes_agent_max_iterations(monkeypatch):
 
     monkeypatch.setattr(na.ae, "run_agent", fake_run_agent)
     status = FakeStatus()
-    await na._run_notes_agent_reply(4242, status, "вопрос")
+    result = await na._run_notes_agent_reply(4242, status, "вопрос")
+    assert result.ok is False
+    assert result.finished_reason == "max_iterations"
     assert "лимит итераций" in status.edits[-1]
 
 
@@ -475,8 +491,8 @@ def _fake_coro(value):
 
 
 async def test_run_surreal_storm_happy(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -517,8 +533,8 @@ async def test_run_surreal_storm_empty_topic(monkeypatch):
 
 
 async def test_run_surreal_storm_ai_error(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -538,8 +554,8 @@ async def test_run_surreal_storm_ai_error(monkeypatch):
 
 async def test_run_surreal_storm_retries_malformed_json(monkeypatch):
     """Первый ответ модели без массива ideas → ретрай → карточки показаны."""
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -572,8 +588,8 @@ async def test_run_surreal_storm_retries_malformed_json(monkeypatch):
 
 async def test_run_surreal_storm_retry_fails_shows_error(monkeypatch):
     """Сырой ответ без ideas, ретрай тоже без ideas → ошибка пользователю."""
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -596,8 +612,8 @@ async def test_run_surreal_storm_retry_fails_shows_error(monkeypatch):
 
 
 async def test_run_surreal_storm_rejects_ideas_without_camera_setup(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -617,8 +633,8 @@ async def test_run_surreal_storm_rejects_ideas_without_camera_setup(monkeypatch)
 
 
 async def test_run_surreal_storm_edit_failure_tolerated(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -646,8 +662,8 @@ async def test_run_surreal_storm_edit_failure_tolerated(monkeypatch):
 
 
 async def test_run_notes_agent_routes_to_surreal_storm(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -1045,8 +1061,8 @@ async def test_cb_notes_view_split_long_body(monkeypatch):
 
 
 async def test_run_notes_agent_discusses_opened_note(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     monkeypatch.setattr(
         bs, "collect_context",
@@ -1396,8 +1412,8 @@ async def test_cb_notes_discuss_bad_index():
 
 
 async def test_cb_notes_storm_happy(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     na._notes_list_store[4242] = {
         "items": [{"id": "AAA", "name": "Ночные сны", "folder": ""}], "text": "",
@@ -1426,8 +1442,8 @@ async def test_cb_notes_storm_happy(monkeypatch):
 
 
 async def test_cb_notes_storm_injects_note_text_as_context(monkeypatch):
-    from services import brainstorm as bs
     from services import ai_engine
+    from services import brainstorm as bs
 
     na._notes_list_store[4242] = {
         "items": [{"id": "AAA", "name": "Фудзи", "folder": ""}], "text": "",

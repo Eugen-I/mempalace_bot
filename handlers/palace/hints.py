@@ -10,11 +10,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import allowed_callback
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
-
 from services.ttl_dict import TtlDict
-from .shared import router
-from .navigation import _show_drawers_page
 
+from .navigation import _show_drawers_page
+from .shared import router
 
 # ─── TUNNEL HINTS ───
 

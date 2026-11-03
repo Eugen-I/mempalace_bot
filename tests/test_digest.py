@@ -258,13 +258,17 @@ def test_build_digest_text_all_blocks():
 def test_build_digest_text_escapes_html():
     now = time.time()
     text = dg.build_digest_text(
-        [{"remind_at": _ts(9, 0, 0, now), "text": "позвонить <b>маме</b>"}],
+        [{
+            "remind_at": _ts(9, 0, 0, now),
+            "text": "позвонить <b>маме</b> <script>alert(1)</script>",
+        }],
         [],
         {},
         now,
     )
-    assert "<b>маме</b>" not in text
-    assert "&lt;b&gt;маме&lt;/b&gt;" in text
+    assert "<b>маме</b>" in text
+    assert "<script>" not in text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in text
 
 
 def test_build_digest_text_empty():

@@ -1,38 +1,70 @@
 """CLI Commands - all command handler functions extracted from chat_loop"""
+import asyncio
+import json
 import os
 import re
-import json
-import asyncio
 from datetime import datetime
+
 from rich.console import Console
 from rich.syntax import Syntax
 
-from config import (
-    NOTES_DIR, INSIGHTS_DIR, RESEARCH_DIR, PHOTOS_DIR,
-    MODELS_CONFIG_PATH, CONFIG_AI_FILE,
+from cli.utils import (
+    C,
+    export_chat_to_md,
+    format_for_terminal,
+    generate_summary_if_needed,
+    get_cli_voice,
+    save_chat,
+    set_cli_voice,
+    speak_text,
 )
+from cli_extras import (
+    cli_kgadd,
+    cli_pdfs,
+    cli_remind,
+    cli_transkript,
+    cli_tunnels,
+    cli_yt,
+)
+from config import (
+    CONFIG_AI_FILE,
+    INSIGHTS_DIR,
+    MODELS_CONFIG_PATH,
+    NOTES_DIR,
+    PHOTOS_DIR,
+    RESEARCH_DIR,
+)
+from services.ai_engine import (
+    get_ai_response_async,
+    get_current_ai,
+    invalidate_ai_cache,
+)
+from services.file_index import (
+    build_embeddings,
+    delete_file,
+    file_stats,
+    index_directory,
+    search_files,
+)
+from services.kg_enricher import enrich_all_notes
+from services.memory import extract_and_store_facts, get_memory_context
+from services.multimodal import check_capability, encode_image_to_base64, list_photos
+from services.note_linker import link_note_async
 from services.palace_bridge import (
-    search_palace_context, sync_to_palace, palace_status, palace_mcp,
-    palace_wake_up, palace_repair, palace_compact, palace_compress,
-    search_with_kg, export_chat_verbatim
+    export_chat_verbatim,
+    palace_compact,
+    palace_compress,
+    palace_mcp,
+    palace_repair,
+    palace_status,
+    palace_wake_up,
+    search_palace_context,
+    search_with_kg,
+    sync_to_palace,
 )
 from services.palace_mcp import get_mcp
-from services.ai_engine import get_ai_response_async, get_current_ai, invalidate_ai_cache
-from services.memory import extract_and_store_facts, get_memory_context
-from services.wing_classifier import classify_wing
-from services.note_linker import link_note_async
-from services.multimodal import list_photos, encode_image_to_base64, check_capability
 from services.prompts import get_smart_prompt
-from services.kg_enricher import enrich_all_notes
-from services.file_index import (
-    index_directory, search_files, file_stats, delete_file,
-    build_embeddings,
-)
-from cli.utils import (
-    C, format_for_terminal, speak_text, save_chat, get_cli_voice,
-    set_cli_voice, generate_summary_if_needed, export_chat_to_md,
-)
-from cli_extras import cli_yt, cli_pdfs, cli_remind, cli_tunnels, cli_kgadd, cli_transkript
+from services.wing_classifier import classify_wing
 
 
 async def cmd_photos():
@@ -538,7 +570,7 @@ async def cmd_settings(messages, data, chat_path):
             with open(CONFIG_AI_FILE, "w") as f:
                 f.write(all_m[ch - 1][1])
             invalidate_ai_cache()
-            engine, model = get_current_ai()
+            _engine, model = get_current_ai()
             print(f"{C.GREEN}Модель: {model}{C.END}")
     except ValueError:
         print(f"{C.RED}Неверный ввод.{C.END}")
@@ -635,7 +667,10 @@ async def process_ai_query(clean_q, messages, data, chat_path, engine, model):
     latest_summary = data.get("summaries", [])[-1] if data.get("summaries") else ""
 
     from services.code_mode import (
-        is_coding_context, ensure_project_dir, load_coding_prompt, read_project_files,
+        ensure_project_dir,
+        is_coding_context,
+        load_coding_prompt,
+        read_project_files,
     )
     is_code = is_coding_context(clean_q, messages)
     if is_code and not data.get("is_coding_mode"):
@@ -733,46 +768,6 @@ async def process_ai_query(clean_q, messages, data, chat_path, engine, model):
         save_chat(chat_path, data)
 
         return answer
-
-        # 🌐 SEARCH pattern: если ИИ запросил поиск, выполняем и переспрашиваем
-        search_match = re.search(
-            r"(?:SEARCH|ПОИСК|SEARCH_WEB):\s*(.+)", answer, re.IGNORECASE,
-        )
-        if search_match:
-            search_query = search_match.group(1).strip()
-            print(f"{C.YELLOW}🌐 ИИ запросил поиск: {search_query}{C.END}")
-            from services.web_search import search_web
-            web_results = await search_web(search_query)
-            print(f"{C.CYAN}{web_results}{C.END}")
-            context_msgs.append({"role": "assistant", "content": answer})
-            context_msgs.append({
-                "role": "user",
-                "content": (
-                    f"Вот результаты поиска по запросу «{search_query}»:\n\n"
-                    f"{web_results}\n\n"
-                    "Ответь на мой исходный вопрос с учётом этой информации."
-                ),
-            })
-            answer2 = await get_ai_response_async(engine, model, context_msgs, context="")
-            console2 = Console()
-            if "```" in answer2:
-                parts2 = answer2.split("```")
-                for i, part2 in enumerate(parts2):
-                    if i % 2 == 0:
-                        if part2.strip():
-                            print(f"{C.GREEN}AI: {format_for_terminal(part2)}{C.END}")
-                    else:
-                        lines2 = part2.split('\n')
-                        lang2 = lines2[0].strip() if lines2 else ""
-                        code2 = '\n'.join(lines2[1:]) if len(lines2) > 1 else part2
-                        syntax2 = Syntax(
-                            code2, lang2 or "python", theme="monokai", line_numbers=True,
-                        )
-                        console2.print(syntax2)
-            else:
-                print(f"{C.GREEN}AI: {format_for_terminal(answer2)}{C.END}")
-            messages.append({"role": "assistant", "content": answer2})
-            answer = answer2
 
     except Exception as e:
         print(f"{C.RED}Ошибка ИИ: {e}{C.END}")

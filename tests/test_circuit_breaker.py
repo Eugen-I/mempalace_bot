@@ -66,6 +66,73 @@ class TestCircuitBreaker:
             await cb.call(_failure)
         assert cb.state == CircuitState.OPEN
 
+    async def test_success_resets_failure_count_in_closed(self):
+        cb = CircuitBreaker("test", failure_threshold=3, recovery_timeout=60)
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+        assert cb.state == CircuitState.CLOSED
+        assert cb.failure_count == 2
+
+        assert await cb.call(_success) == "ok"
+
+        assert cb.state == CircuitState.CLOSED
+        assert cb.failure_count == 0
+
+    async def test_success_prevents_old_failures_from_opening(self):
+        cb = CircuitBreaker("test", failure_threshold=3, recovery_timeout=60)
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+        await cb.call(_success)
+
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+
+        assert cb.state == CircuitState.CLOSED
+        assert cb.failure_count == 2
+
+    async def test_failures_can_reopen_closed_breaker_after_success(self):
+        cb = CircuitBreaker("test", failure_threshold=2, recovery_timeout=60)
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+        await cb.call(_success)
+
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+
+        assert cb.state == CircuitState.OPEN
+        assert cb.failure_count == 2
+
+    async def test_success_resets_counter_after_closed_open_half_open_cycle(
+        self, monkeypatch,
+    ):
+        fake_now = [1000.0]
+        monkeypatch.setattr(
+            "services.circuit_breaker.time.time", lambda: fake_now[0],
+        )
+        cb = CircuitBreaker("test", failure_threshold=1, recovery_timeout=30.0)
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+        assert cb.state == CircuitState.OPEN
+        assert cb.failure_count == 1
+
+        fake_now[0] = 1030.0
+        assert await cb.call(_success) == "ok"
+        assert cb.state == CircuitState.CLOSED
+        assert cb.failure_count == 0
+        assert cb.half_open_retries == 0
+
+        with pytest.raises(ValueError):
+            await cb.call(_failure)
+        assert cb.state == CircuitState.OPEN
+
     async def test_open_circuit_reaches_half_open_after_timeout(self):
         cb = CircuitBreaker("test", failure_threshold=1, recovery_timeout=0.01)
         with pytest.raises(ValueError):

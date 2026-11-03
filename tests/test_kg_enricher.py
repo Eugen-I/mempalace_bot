@@ -6,8 +6,6 @@ add_kg_facts, enrich_all_notes (мок MCP).
 import asyncio
 import json
 
-import pytest
-
 import services.kg_enricher as enricher
 
 

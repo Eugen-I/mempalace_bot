@@ -4,7 +4,6 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-
 from aiogram.enums import ContentType
 
 from handlers import voice
@@ -41,7 +40,6 @@ class FakeMessage:
         self.bot = FakeBot()
         self.voice = type("V", (), {"file_id": "file_abc"})()
         self.status = None
-        from config import ALLOWED_IDS
 
         self.from_user = type("U", (), {"id": user_id})()
         self.chat = type("C", (), {"id": user_id})()
@@ -197,7 +195,6 @@ async def test_handle_voice_status_edit_fails_ignored(monkeypatch, tmp_path):
         if not boom:
             raise RuntimeError("edit dead")
 
-    original_edit = msg.status.edit_text if msg.status else None
     msg = FakeMessage(4242)
     msg.status = FakeStatus("x")
     obj = msg.status
@@ -224,7 +221,6 @@ async def test_handle_voice_bot_download_fails(monkeypatch, tmp_path):
     msg.bot.get_file = boom_get_file
     msg.bot.download_file = boom_download
 
-    import io
 
     async def ok_get_file(file_id):
         return _FileInfo("p")
@@ -235,7 +231,6 @@ async def test_handle_voice_bot_download_fails(monkeypatch, tmp_path):
     msg.bot.get_file = ok_get_file
     msg.bot.download_file = ok_download
     await voice.handle_voice(msg)
-    log_errors = [e for e in msg.status.edits if "Ошибка обработки" in e[0]]
     assert any("Ошибка обработки" in e[0] for e in msg.status.edits)
     assert msg.status.deleted
 

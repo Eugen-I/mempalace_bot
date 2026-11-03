@@ -3,7 +3,7 @@
 import asyncio
 import base64
 import json
-from types import SimpleNamespace
+import time
 
 import pytest
 
@@ -530,8 +530,11 @@ def test_cb_cross_ai_article_success(monkeypatch):
         ]}),
     ])
     monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
-    monkeypatch.setattr(nav, "_sync_ai_call_wrapper",
-                        lambda *a, **k: "готовая статья")
+
+    async def fake_ai(*a, **k):
+        return "готовая статья"
+
+    monkeypatch.setattr(nav, "call_ai_async", fake_ai)
     captured = {}
 
     async def fake_finalize(uid, edit_func, text, **kwargs):
@@ -546,6 +549,87 @@ def test_cb_cross_ai_article_success(monkeypatch):
     assert captured["ctx"]["parent_cb"] == "p_rdb"
 
 
+@pytest.mark.parametrize(
+    ("engine", "model"),
+    [("openai", "gpt-4o"), ("gemini", "gemini-2.5-pro")],
+)
+def test_cb_cross_ai_article_uses_configured_model(monkeypatch, engine, model):
+    from handlers.palace import shared as sh
+
+    _enable(monkeypatch)
+    sh.fsm.update_data(4242, _room_session={"wing": "w", "room": "r"})
+    mcp = FakeMCPSeq([
+        json.dumps({"drawers": [{"content_preview": "превью"}]}),
+    ])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+    monkeypatch.setattr(nav, "get_current_ai", lambda: (engine, model))
+    calls = []
+
+    async def fake_ai(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "статья"
+
+    monkeypatch.setattr(nav, "call_ai_async", fake_ai)
+
+    async def fake_finalize(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "handlers.palace.action_bar.finalize_answer", fake_finalize,
+    )
+    asyncio.run(nav.cb_cross_ai_article(FakeCb(data="p_cr_ai")))
+
+    assert calls[0][0][:2] == (engine, model)
+
+
+def test_cb_cross_ai_article_missing_model_shows_error(monkeypatch):
+    from handlers.palace import shared as sh
+
+    _enable(monkeypatch)
+    sh.fsm.update_data(4242, _room_session={"wing": "w", "room": "r"})
+    mcp = FakeMCPSeq([
+        json.dumps({"drawers": [{"content_preview": "превью"}]}),
+    ])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+    monkeypatch.setattr(nav, "get_current_ai", lambda: ("", ""))
+
+    async def must_not_call(*args, **kwargs):
+        pytest.fail("AI call must not happen without a configured model")
+
+    monkeypatch.setattr(nav, "call_ai_async", must_not_call)
+    cb = FakeCb(data="p_cr_ai")
+    asyncio.run(nav.cb_cross_ai_article(cb))
+
+    assert "Модель ИИ не настроена" in cb.message.edits[-1][0]
+    assert "/settings" in cb.message.edits[-1][0]
+
+
+def test_cb_cross_ai_article_model_resolution_error_shows_error(monkeypatch):
+    from handlers.palace import shared as sh
+
+    _enable(monkeypatch)
+    sh.fsm.update_data(4242, _room_session={"wing": "w", "room": "r"})
+    mcp = FakeMCPSeq([
+        json.dumps({"drawers": [{"content_preview": "превью"}]}),
+    ])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+
+    def broken_model():
+        raise RuntimeError("config broken")
+
+    monkeypatch.setattr(nav, "get_current_ai", broken_model)
+
+    async def must_not_call(*args, **kwargs):
+        pytest.fail("AI call must not happen without a configured model")
+
+    monkeypatch.setattr(nav, "call_ai_async", must_not_call)
+    cb = FakeCb(data="p_cr_ai")
+    asyncio.run(nav.cb_cross_ai_article(cb))
+
+    assert "Не удалось определить модель ИИ" in cb.message.edits[-1][0]
+    assert "/settings" in cb.message.edits[-1][0]
+
+
 def test_cb_cross_ai_article_error(monkeypatch):
     from handlers.palace import shared as sh
 
@@ -556,6 +640,23 @@ def test_cb_cross_ai_article_error(monkeypatch):
     cb = FakeCb(data="p_cr_ai")
     asyncio.run(nav.cb_cross_ai_article(cb))
     assert cb.message.edits[-1][0] == "❌ Ошибка: boom"
+
+
+def test_cb_cross_ai_article_ai_error_is_shown(monkeypatch):
+    from handlers.palace import shared as sh
+
+    _enable(monkeypatch)
+    sh.fsm.update_data(4242, _room_session={"wing": "w", "room": "r"})
+    mcp = FakeMCPSeq([json.dumps({"drawers": [{"content_preview": "п"}]})])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+
+    async def failing_ai(*a, **k):
+        raise RuntimeError("ai down")
+
+    monkeypatch.setattr(nav, "call_ai_async", failing_ai)
+    cb = FakeCb(data="p_cr_ai")
+    asyncio.run(nav.cb_cross_ai_article(cb))
+    assert cb.message.edits[-1][0] == "❌ Ошибка: ai down"
 
 
 # ---------- cb_continue_read ----------
@@ -1412,6 +1513,122 @@ def test_answer_room_ai_with_web_no_summary(monkeypatch):
     assert captured["text"] == "ответ"
 
 
+def test_answer_room_ai_keeps_event_loop_responsive(monkeypatch, heartbeat):
+    _enable(monkeypatch)
+    mcp = FakeMCPSeq([
+        json.dumps({"drawers": [{"closet_name": "з1", "drawer_id": "d1"}]}),
+        json.dumps({"content": "контент"}),
+    ])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+    monkeypatch.setattr(nav, "get_current_ai", lambda: ("ollama", "qwen"))
+
+    def slow_sync(*a, **k):
+        time.sleep(0.03)
+        return "ответ"
+
+    monkeypatch.setattr("services.ai_engine._sync_ai_call", slow_sync)
+    _capture_finalize(monkeypatch, {})
+    msg = FakeMessage()
+
+    async def scenario():
+        async with heartbeat(interval=0.005) as hb:
+            await nav._answer_room_ai(msg, 4242, "w", "r", "вопрос")
+        return hb.ticks
+
+    ticks = asyncio.run(scenario())
+    assert ticks >= 1
+
+
+def test_answer_room_ai_timeout_replaces_status(monkeypatch):
+    _enable(monkeypatch)
+    mcp = FakeMCPSeq([
+        json.dumps({"drawers": [{"closet_name": "з1", "drawer_id": "d1"}]}),
+        json.dumps({"content": "контент"}),
+    ])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+    monkeypatch.setattr(nav, "get_current_ai", lambda: ("ollama", "qwen"))
+
+    async def timed_out(*a, **k):
+        raise nav.AITimeoutError("too slow")
+
+    monkeypatch.setattr("services.summary_service.call_ai_async", timed_out)
+    captured = {}
+    _capture_finalize(monkeypatch, captured)
+    msg = FakeMessage()
+    asyncio.run(nav._answer_room_ai(msg, 4242, "w", "r", "вопрос"))
+    assert msg.edits[-1][0] == "⏱️ ИИ не ответил вовремя. Попробуйте ещё раз."
+    assert "text" not in captured
+
+
+def test_answer_room_ai_error_replaces_status(monkeypatch):
+    _enable(monkeypatch)
+    mcp = FakeMCPSeq([
+        json.dumps({"drawers": [{"closet_name": "з1", "drawer_id": "d1"}]}),
+        json.dumps({"content": "контент"}),
+    ])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+    monkeypatch.setattr(nav, "get_current_ai", lambda: ("ollama", "qwen"))
+
+    async def failing_ai(*a, **k):
+        raise RuntimeError("ai down")
+
+    monkeypatch.setattr("services.summary_service.call_ai_async", failing_ai)
+    captured = {}
+    _capture_finalize(monkeypatch, captured)
+    msg = FakeMessage()
+    asyncio.run(nav._answer_room_ai(msg, 4242, "w", "r", "вопрос"))
+    assert msg.edits[-1][0] == "❌ Ошибка ИИ: ai down"
+    assert "text" not in captured
+
+
+def test_answer_room_ai_step2_error_replaces_analysis_status(monkeypatch):
+    _enable(monkeypatch)
+    mcp = FakeMCPSeq([
+        json.dumps({"drawers": [{"closet_name": "з1", "drawer_id": "d1"}]}),
+        json.dumps({"content": "контент"}),
+    ])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+    monkeypatch.setattr(nav, "get_current_ai", lambda: ("ollama", "qwen"))
+
+    async def fake_summary(*a, **k):
+        return "саммари"
+
+    async def failing_ai(*a, **k):
+        raise RuntimeError("second call down")
+
+    monkeypatch.setattr("services.summary_service.call_ai_async", fake_summary)
+    monkeypatch.setattr(nav, "call_ai_async", failing_ai)
+    captured = {}
+    _capture_finalize(monkeypatch, captured)
+    msg = FakeMessage()
+    asyncio.run(nav._answer_room_ai(msg, 4242, "w", "r", "вопрос"))
+    assert msg.edits[-1][0] == "❌ Ошибка ИИ: second call down"
+    assert "text" not in captured
+
+
+def test_answer_room_ai_with_web_error_replaces_web_status(monkeypatch):
+    from handlers.palace import shared as sh
+
+    _enable(monkeypatch)
+    sh.fsm.update_data(4242, _user_context={"_room_summary": "готовая саммари"})
+
+    async def fake_search(query, **kwargs):
+        return ["веб-результат"]
+
+    async def timed_out(*a, **k):
+        raise nav.AITimeoutError("too slow")
+
+    monkeypatch.setattr("services.web_search.search_web", fake_search)
+    monkeypatch.setattr(nav, "get_current_ai", lambda: ("ollama", "qwen"))
+    monkeypatch.setattr(nav, "call_ai_async", timed_out)
+    captured = {}
+    _capture_finalize(monkeypatch, captured)
+    msg = FakeMessage()
+    asyncio.run(nav._answer_room_ai(msg, 4242, "w", "r", "вопрос", with_web=True))
+    assert msg.edits[-1][0] == "⏱️ ИИ не ответил вовремя. Попробуйте ещё раз."
+    assert "text" not in captured
+
+
 # ---------- cb_room_ai_web ----------
 
 
@@ -1681,8 +1898,11 @@ def test_cb_tunnels_ai_success(monkeypatch):
     mcp = FakeMCPSeq([json.dumps({"tunnels": [_tunnel("t1")]})])
     monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
     monkeypatch.setattr(nav, "get_current_ai", lambda: ("ollama", "qwen"))
-    monkeypatch.setattr(nav, "_sync_ai_call_wrapper",
-                        lambda *a, **k: "анализ туннелей")
+
+    async def fake_ai(*a, **k):
+        return "анализ туннелей"
+
+    monkeypatch.setattr(nav, "call_ai_async", fake_ai)
     cb = FakeCb(data="p_tun_ai")
     asyncio.run(nav.cb_tunnels_ai(cb))
     assert cb.message.edits[-1][0] == "анализ туннелей"
@@ -1704,6 +1924,21 @@ def test_cb_tunnels_ai_error(monkeypatch):
     cb = FakeCb(data="p_tun_ai")
     asyncio.run(nav.cb_tunnels_ai(cb))
     assert cb.message.edits[-1][0] == "❌ Ошибка: boom"
+
+
+def test_cb_tunnels_ai_ai_error_is_shown(monkeypatch):
+    _enable(monkeypatch)
+    mcp = FakeMCPSeq([json.dumps({"tunnels": [_tunnel("t1")]})])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+    monkeypatch.setattr(nav, "get_current_ai", lambda: ("ollama", "qwen"))
+
+    async def failing_ai(*a, **k):
+        raise RuntimeError("ai down")
+
+    monkeypatch.setattr(nav, "call_ai_async", failing_ai)
+    cb = FakeCb(data="p_tun_ai")
+    asyncio.run(nav.cb_tunnels_ai(cb))
+    assert cb.message.edits[-1][0] == "❌ Ошибка: ai down"
 
 
 # ---------- cb_tunnel_detail ----------
@@ -1937,8 +2172,11 @@ def test_cross_ai_article_edit_func_called(monkeypatch):
         {"content_preview": "превью"},
     ]})])
     monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
-    monkeypatch.setattr(nav, "_sync_ai_call_wrapper",
-                        lambda *a, **k: "статья")
+
+    async def fake_ai(*a, **k):
+        return "статья"
+
+    monkeypatch.setattr(nav, "call_ai_async", fake_ai)
     called = []
 
     async def fake_finalize(uid, edit_func, text, **kwargs):

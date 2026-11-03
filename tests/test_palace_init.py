@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+
 from services.agent_context import AgentContextStore
 
 # Module-level imports that execute code
@@ -227,6 +228,86 @@ def test_process_mcp_text_input_no_action(monkeypatch):
     assert msg.edits == []
 
 
+def test_process_mcp_text_input_button_agent_error_is_safe(monkeypatch):
+    from handlers import agent as agent_handler
+
+    class FakeCtxStore:
+        def __init__(self):
+            self.history = []
+
+        def has_active_button_session(self, uid):
+            return "button-sid"
+
+        def append_button_context(self, session_id, role, content):
+            self.history.append({"role": role, "content": content})
+
+        def get_button_context(self, session_id):
+            return list(self.history)
+
+        def end_button_session(self, session_id):
+            return None
+
+        def unbind_button_session_from_uid(self, uid):
+            return None
+
+    store = FakeCtxStore()
+    monkeypatch.setattr(
+        "services.agent_context.get_agent_context_store", lambda: store,
+    )
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("поломка агента")
+
+    monkeypatch.setattr(agent_handler.ae, "run_agent", boom)
+    msg = FakeAnswerMsg()
+
+    result = asyncio.run(palace.process_mcp_text_input(
+        4242, "привет", FakeAnswerFactory(msg),
+    ))
+
+    assert result is True
+    assert store.history == [{"role": "user", "content": "привет"}]
+    assert any("поломка агента" in text for text, _ in msg.edits)
+
+
+def test_process_mcp_text_input_button_followup_before_assistant_reply(
+    monkeypatch, tmp_path,
+):
+    from handlers import agent as agent_handler
+    from services import agent_context as ac
+    from services import agent_engine as ae
+    from services.kv_store import KVStore
+
+    kv = KVStore(db_path=str(tmp_path / "agent_context.sqlite"))
+    monkeypatch.setattr(ac, "get_kv_store", lambda: kv)
+    store = ac.AgentContextStore()
+    session_id = store.create_button_session()
+    store.bind_button_session_to_uid(4242, session_id)
+    monkeypatch.setattr(
+        "services.agent_context.get_agent_context_store", lambda: store,
+    )
+    seen = {}
+
+    async def fake_run_agent(
+        uid, status, system_prompt, question, ctx=None, conversation_history=None,
+    ):
+        seen["history"] = conversation_history
+        return ae.AgentResult(final_answer="готово")
+
+    monkeypatch.setattr(agent_handler, "_run_agent_reply", fake_run_agent)
+    try:
+        result, _msg, _ = _run_process(monkeypatch, 4242, "продолжай")
+    finally:
+        kv.close()
+
+    assert result is True
+    assert seen["history"] == [{"role": "user", "content": "продолжай"}]
+    assert store.get_button_context(session_id) == [
+        {"role": "user", "content": "продолжай"},
+        {"role": "assistant", "content": "готово"},
+    ]
+
+
 # ---------- list_rooms: "*" ----------
 
 
@@ -400,7 +481,7 @@ def test_save_new_wing(monkeypatch):
     assert called == [(msg.edit_text, 4242)]
 
 
-def test_save_new_wing_subprocess_error(monkeypatch):
+def test_save_new_wing_subprocess_error(monkeypatch, caplog):
     _enable(monkeypatch)
 
     async def boom(*a, **k):
@@ -417,6 +498,7 @@ def test_save_new_wing_subprocess_error(monkeypatch):
         4242, "крыло", FakeAnswerFactory(msg),
     ))
     assert result is True
+    assert "Не удалось инициализировать крыло" in caplog.text
 
 
 # ---------- save_new_room ----------

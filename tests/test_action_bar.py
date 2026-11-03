@@ -22,6 +22,13 @@ SID = "a1b2c3d4"
 TEST_UID = 424242
 
 
+def _async_ai(fn):
+    async def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 @pytest.fixture(autouse=True)
 def _allow_test_user(monkeypatch):
     import config
@@ -122,10 +129,11 @@ def test_paginate_over_limit_1501():
 
 
 def test_render_page_escapes_raw_text():
-    answer = Answer(sid=SID, text="<b>не html</b>", pages=["<b>не html</b>"])
+    raw = "<script>alert(1)</script>"
+    answer = Answer(sid=SID, text=raw, pages=[raw])
     rendered = _render_page(answer, 0)
-    assert "&lt;b&gt;" in rendered
-    assert "<b>не html</b>" not in rendered
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered
 
 
 def test_render_page_html_mode_keeps_tags():
@@ -431,7 +439,9 @@ def test_cb_ab_ai_run_mode_answer(monkeypatch):
     import handlers.palace.action_bar as ab
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "Анализ готов")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "Анализ готов"),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"])
     answer_store[SID] = answer
@@ -445,7 +455,9 @@ def test_cb_ab_ai_run_mode_context_with_summary(monkeypatch):
     import handlers.palace.action_bar as ab
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "Контекстный анализ")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "Контекстный анализ"),
+    )
 
     answer = Answer(
         sid=SID, text="текст", pages=["текст"],
@@ -486,7 +498,9 @@ def test_cb_ab_web_generates_query(monkeypatch):
     import handlers.palace.action_bar as ab
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: '"тестовый запрос"')
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: '"тестовый запрос"'),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"])
     answer_store[SID] = answer
@@ -501,7 +515,9 @@ def test_cb_ab_web_empty_query_error(monkeypatch):
     import handlers.palace.action_bar as ab
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "   ")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "   "),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"])
     answer_store[SID] = answer
@@ -521,7 +537,9 @@ def test_cb_ab_web_go_runs_search(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "Ответ с поиском")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "Ответ с поиском"),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"], ctx={})
     answer.ctx["web_query"] = "запрос"
@@ -566,7 +584,9 @@ def test_run_web_search_with_query(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "Поиск с ручным запросом")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "Поиск с ручным запросом"),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"])
     answer_store[SID] = answer
@@ -593,7 +613,9 @@ def test_run_web_search_title_truncated_to_80(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "Ответ")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "Ответ"),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"])
     answer_store[SID] = answer
@@ -782,8 +804,9 @@ def test_build_ai_context_mcp_empty(monkeypatch):
 
 
 def test_finalize_answer_extra_rows_rendered_and_kept_on_page_flip():
-    import handlers.palace.action_bar as ab
     from aiogram import types
+
+    import handlers.palace.action_bar as ab
 
     msg = FakeMessage()
     extra = [
@@ -1198,7 +1221,7 @@ def test_run_web_search_finalize_success(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
 
     answer = Answer(sid=SID, text="контекст ответа", pages=["к"], ctx={"k": "v"})
     answer_store[SID] = answer
@@ -1235,7 +1258,7 @@ def test_run_web_search_finalize_context_truncated_6000(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
 
     answer = Answer(
         sid=SID, text="к" * 6000 + "УНИКАЛЬНЫЙ-ХВОСТ", pages=["к"],
@@ -1258,7 +1281,9 @@ def test_run_web_search_finalize_empty_result_fallback(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: ""),
+    )
 
     answer = Answer(sid=SID, text="т", pages=["т"], ctx={})
     answer_store[SID] = answer
@@ -1286,7 +1311,7 @@ def test_run_web_search_finalize_sets_origin_sid(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
     monkeypatch.setattr(ab, "finalize_answer", fake_finalize)
 
     answer = Answer(sid=SID, text="т", pages=["т"], ctx={"k": "v"})
@@ -1315,7 +1340,7 @@ def test_run_web_search_finalize_title_truncated_80(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
     monkeypatch.setattr(ab, "finalize_answer", fake_finalize)
 
     query = "q" * 80 + "УНИКАЛЬНЫЙ-ХВОСТ"
@@ -1383,8 +1408,9 @@ def test_finalize_answer_sid_length_8():
 
 
 def test_finalize_answer_preserves_ctx_and_extra_rows():
-    import handlers.palace.action_bar as ab
     from aiogram import types
+
+    import handlers.palace.action_bar as ab
 
     msg = FakeMessage()
 
@@ -1590,8 +1616,7 @@ def test_finalize_answer_single_page_first_markup_has_no_nav():
         return msg
 
     asyncio.run(ab.finalize_answer(1, edit_func, "текст"))
-    kb = msg.markups[0].inline_keyboard
-    labels = [b.text for row in kb for b in row]
+    assert msg.markups[0].inline_keyboard
 
 
 def test_finalize_answer_first_markup_uses_page_zero():

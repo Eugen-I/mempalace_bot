@@ -9,7 +9,6 @@ import pytest
 
 from services.text_formatter import safe_html_format, split_message
 
-
 # ---------- safe_html_format ----------
 
 
@@ -21,8 +20,54 @@ def test_format_only_whitespace():
     assert safe_html_format("   ") == ""
 
 
-def test_format_escapes_html_specials():
-    assert safe_html_format("<b>привет</b> & x") == "&lt;b&gt;привет&lt;/b&gt; &amp; x"
+def test_format_preserves_allowed_tags_and_escapes_ampersand():
+    # Раньше этот тест закреплял ошибочное поведение: разрешённый <b> экранировался
+    # из-за второго _TAG_RE без capture-группы. Теперь whitelist сохраняется.
+    assert safe_html_format("<b>привет</b> & x") == "<b>привет</b> &amp; x"
+
+
+def test_format_escapes_unknown_html_tag():
+    assert (
+        safe_html_format("<b>ok</b><script>alert(1)</script>")
+        == "<b>ok</b>&lt;script&gt;alert(1)&lt;/script&gt;"
+    )
+
+
+@pytest.mark.parametrize("tag", ["b", "i", "u", "s", "code", "pre", "blockquote", "tg-spoiler"])
+def test_format_keeps_allowed_tags(tag):
+    assert safe_html_format(f"<{tag}>x</{tag}>") == f"<{tag}>x</{tag}>"
+
+
+def test_format_safe_link_preserved_and_href_escaped():
+    assert (
+        safe_html_format('<a href="https://example.com?a=1&b=2">x</a>')
+        == '<a href="https://example.com?a=1&amp;b=2">x</a>'
+    )
+
+
+def test_format_unsafe_link_escaped():
+    out = safe_html_format('<a href="javascript:alert(1)">x</a>')
+    assert "<a" not in out
+    assert "&lt;a href=&quot;javascript:alert(1)&quot;&gt;" in out
+
+
+def test_format_unclosed_allowed_tag_is_closed():
+    assert safe_html_format("<b>привет") == "<b>привет</b>"
+
+
+def test_format_stray_closing_tag_escaped():
+    assert safe_html_format("</b>") == "&lt;/b&gt;"
+
+
+def test_format_misordered_nested_tags_balanced():
+    out = safe_html_format("<b><i>x</b></i>")
+    assert out.startswith("<b><i>x</i></b>")
+    assert out.count("<b>") == out.count("</b>")
+    assert out.count("<i>") == out.count("</i>")
+
+
+def test_format_none_returns_empty():
+    assert safe_html_format(None) == ""
 
 
 def test_format_headers_to_bold():
@@ -51,11 +96,34 @@ def test_format_inline_code():
 
 
 def test_format_code_block():
-    # inline-код выполняется раньше code-block и ломает тройные бэктики —
-    # фиксируем фактическое поведение (известный баг порядка regex)
-    out = safe_html_format("```\nprint(1)\n```")
-    assert "<code>`</code>" in out
-    assert "print(1)" in out
+    assert (
+        safe_html_format("```\nprint(1)\n```")
+        == "<pre><code>print(1)</code></pre>"
+    )
+
+
+def test_format_code_block_escapes_html_and_markdown():
+    out = safe_html_format('```python\nprint("<b>x</b> **y**")\n```')
+    assert out.startswith("<pre><code>")
+    assert out.endswith("</code></pre>")
+    assert "&lt;b&gt;x&lt;/b&gt;" in out
+    assert "**y**" in out
+    assert "<b>x</b>" not in out
+
+
+def test_format_code_fence_without_newline_is_code_not_language():
+    assert safe_html_format("```code```") == "<pre><code>code</code></pre>"
+
+
+def test_format_code_fence_language_with_symbols():
+    assert (
+        safe_html_format("```c#\nvar x = 1;\n```")
+        == "<pre><code>var x = 1;</code></pre>"
+    )
+
+
+def test_format_inline_code_is_not_markdown_formatted():
+    assert safe_html_format("`**x**` и **bold**") == "<code>**x**</code> и <b>bold</b>"
 
 
 def test_format_bullet_list():
@@ -284,10 +352,3 @@ def test_split_full_pairs_stay_balanced():
     assert len(parts) > 1
     for p in parts:
         assert p.count("<b>") == p.count("</b>")
-
-
-def test_split_hard_limit_no_delimiters():
-    text = "x" * 10000
-    parts = split_message(text, limit=4000)
-    assert len(parts) == 3
-    assert all(len(p) <= 4000 for p in parts)

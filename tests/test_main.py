@@ -8,6 +8,7 @@ import pytest
 
 import config
 import main
+from services import chat_sync
 
 
 @pytest.fixture(autouse=True)
@@ -57,7 +58,7 @@ class FakeCallback:
 # ─── _safe_include ───
 
 
-def test_import_guard_exits_on_bad_config(monkeypatch):
+def test_import_guard_exits_on_bad_config(monkeypatch, capsys):
     monkeypatch.setattr(config, "API_TOKEN", "your_telegram_bot_token")
     monkeypatch.setattr(config, "ADMIN_ID", 0)
     exits = []
@@ -70,6 +71,26 @@ def test_import_guard_exits_on_bad_config(monkeypatch):
     with pytest.raises(SystemExit):
         importlib.reload(importlib.import_module("main"))
     assert exits == [1]
+    assert "TELEGRAM_BOT_TOKEN" in capsys.readouterr().out
+
+
+def test_import_guard_exits_on_missing_token(monkeypatch, capsys):
+    monkeypatch.setattr(config, "API_TOKEN", "")
+    monkeypatch.setattr(config, "ADMIN_ID", 4242)
+    exits = []
+
+    def fake_exit(code=0):
+        exits.append(code)
+        raise SystemExit(code)
+
+    monkeypatch.setattr(sys, "exit", fake_exit)
+    with pytest.raises(SystemExit):
+        importlib.reload(importlib.import_module("main"))
+    assert exits == [1]
+    output = capsys.readouterr().out
+    assert "TELEGRAM_BOT_TOKEN" in output
+    assert config.PROJECT_ENV_PATH in output
+    assert config.LEGACY_ENV_PATH in output
 
 
 def test_safe_include_success(monkeypatch):
@@ -130,7 +151,7 @@ def test_cmd_sync_button_no_active_chat(monkeypatch):
 
 def test_cmd_sync_button_empty_chat(monkeypatch):
     monkeypatch.setitem(main.user_sessions, 4242, "chat.json")
-    monkeypatch.setattr(main, "export_chat_verbatim", lambda path, fname: None)
+    monkeypatch.setattr(chat_sync, "export_chat_verbatim", lambda path, fname: None)
     msg = FakeMessage()
     asyncio.run(main.cmd_sync_button(msg))
     assert msg.answers[0][0] == "ℹ️ Чат пуст или не найден."
@@ -138,12 +159,12 @@ def test_cmd_sync_button_empty_chat(monkeypatch):
 
 def test_cmd_sync_button_success(monkeypatch):
     monkeypatch.setitem(main.user_sessions, 4242, "chat.json")
-    monkeypatch.setattr(main, "export_chat_verbatim", lambda path, fname: "exported")
+    monkeypatch.setattr(chat_sync, "export_chat_verbatim", lambda path, fname: "exported")
 
     async def fake_sync(exported):
         return "✅ Синхронизировано"
 
-    monkeypatch.setattr(main, "sync_to_palace", fake_sync)
+    monkeypatch.setattr(chat_sync, "sync_to_palace", fake_sync)
     msg = FakeMessage()
     asyncio.run(main.cmd_sync_button(msg))
     assert msg.answers[0][0] == "🔄 Синхронизирую с MemPalace (verbatim)..."

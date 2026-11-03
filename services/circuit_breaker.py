@@ -54,8 +54,11 @@ class CircuitBreaker:
             if self.state == CircuitState.HALF_OPEN:
                 logger.info(f"[{self.name}] HALF_OPEN → CLOSED (success)")
                 self.state = CircuitState.CLOSED
-                self.failure_count = 0
                 self.half_open_retries = 0
+
+            # Успешный вызов в CLOSED тоже обнуляет накопленные ошибки:
+            # старые сбои не должны приближать breaker к открытию.
+            self.failure_count = 0
 
             return result
 

@@ -1,16 +1,16 @@
 from services.prompts import (
-    get_smart_prompt,
-    get_summary_prompt,
     BASE_RULES,
     FOCUS_CODE_TECH,
     FOCUS_DREAMS_JUNG,
+    FOCUS_GENERAL_EXPERT,
     FOCUS_MEDICINE,
+    FOCUS_PHILOSIPHY,
     FOCUS_PHOTO_ART,
     FOCUS_PSYCHOLOGY,
-    FOCUS_PHILOSIPHY,
-    FOCUS_GENERAL_EXPERT,
     PDF_CHUNK_PROMPT,
     PDF_COMBINE_PROMPT,
+    get_smart_prompt,
+    get_summary_prompt,
 )
 
 

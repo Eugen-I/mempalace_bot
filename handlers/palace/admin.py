@@ -6,8 +6,13 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import allowed_callback
 from services.palace_bridge import (
-    palace_compact, palace_compress, palace_instructions,
-    palace_mcp, palace_repair, palace_status, palace_wake_up,
+    palace_compact,
+    palace_compress,
+    palace_instructions,
+    palace_mcp,
+    palace_repair,
+    palace_status,
+    palace_wake_up,
 )
 
 from .shared import router

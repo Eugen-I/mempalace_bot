@@ -2,34 +2,55 @@
    Message handlers extracted to handlers/messages.py"""
 
 import asyncio
-import os
 import sys
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import API_TOKEN, ADMIN_ID, CHATS_DIR, DATA_DIR, allowed_only, allowed_callback
+from config import (
+    DATA_DIR,
+    allowed_callback,
+    allowed_only,
+    validate_config,
+)
 from handlers.chat import user_sessions
-from services.palace_bridge import export_chat_verbatim, sync_to_palace
-from services.palace_mcp import get_mcp
+from services.chat_sync import ChatSyncStatus, sync_active_chat
 from services.logging_setup import setup_logging
+from services.palace_mcp import get_mcp
 
-from services.bot_setup import bot, dp, init_bot
-
-if API_TOKEN == "your_telegram_bot_token" or ADMIN_ID == 0:
-    print("❌ Заполните TELEGRAM_BOT_TOKEN и ADMIN_ID в файле .env")
+try:
+    validate_config()
+except RuntimeError as e:
+    print(f"❌ {e}")
     print("📄 Скопируйте .env.example → .env и отредактируйте")
     sys.exit(1)
+
+from services.bot_setup import bot, dp, init_bot
 
 logger = setup_logging(DATA_DIR)
 init_bot(logger)
 
 from handlers import (  # noqa: E402
-    agent, brainstorm, chat, digest, notes, notes_agent, palace, pdf,
-    personal_note, reminder, settings, search,
+    agent,
+    brainstorm,
+    chat,
+    digest,
+    notes,
+    notes_agent,
+    palace,
+    pdf,
+    personal_note,
+    photos,
+    reactions,
+    reminder,
+    search,
+    settings,
+    transkript,
+    voice,
+    web_search_btn,
+    youtube_ui,
 )
-from handlers import photos, reactions, transkript, voice, web_search_btn, youtube_ui  # noqa: E402
 from handlers.messages import process_user_message  # noqa: E402
 
 
@@ -121,16 +142,11 @@ async def cmd_notes_agent_button(message: types.Message):
 @fallback_router.message(F.text == "🔄 Синхронизация")
 @allowed_only
 async def cmd_sync_button(message: types.Message):
-    fname = user_sessions.get(message.from_user.id)
-    if not fname:
-        return await message.answer("⚠️ Нет активного чата для синхронизации.")
-    fpath = os.path.join(CHATS_DIR, fname)
-    exported = export_chat_verbatim(fpath, fname)
-    if not exported:
-        return await message.answer("ℹ️ Чат пуст или не найден.")
+    result = await sync_active_chat(message.from_user.id, user_sessions)
+    if result.status is not ChatSyncStatus.RESULT:
+        return await message.answer(result.message)
     status = await message.answer("🔄 Синхронизирую с MemPalace (verbatim)...")
-    result = await sync_to_palace(exported)
-    await status.edit_text(result)
+    await status.edit_text(result.message)
 
 
 @fallback_router.message(F.text == "🔍 Поиск")
@@ -235,7 +251,7 @@ async def main():
 if __name__ == "__main__":
     import signal
 
-    def _on_term(signum, frame):
+    def _on_term(_signum, _frame):
         raise SystemExit("SIGTERM received")
 
     signal.signal(signal.SIGTERM, _on_term)

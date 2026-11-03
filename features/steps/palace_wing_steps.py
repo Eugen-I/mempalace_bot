@@ -1,6 +1,5 @@
 """Шаги BDD для features/palace_wing_select.feature."""
 import json
-from urllib.parse import parse_qs
 
 from behave import given, then, when
 

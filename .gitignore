@@ -1,5 +1,7 @@
 # Секреты и ключи
 .env
+.env.*
+!.env.example
 *.key
 
 # Кеш Python
@@ -32,6 +34,10 @@ nohup.out
 coverage.xml
 bot.pid
 *.py,cover
+
+# Сгенерированные артефакты
+exports/
+mempalace_bot.egg-info/
 
 # Логи
 *.log

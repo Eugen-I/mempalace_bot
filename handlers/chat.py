@@ -3,11 +3,9 @@
 ИСПРАВЛЕНО: Полноценное саммари через ИИ по запросу (~), кнопка развертывания.
 """
 
-import json
 import logging
 import os
 import secrets
-import tempfile
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
@@ -15,12 +13,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import CHATS_DIR, allowed_callback, allowed_only
 from services.ai_cache import cache_ai_response
-from services.ai_engine import get_ai_response_async, get_current_ai
-from services.palace_bridge import (
-    export_chat_verbatim,
-    sync_to_palace,
-)
-from services.prompts import get_summary_prompt
+from services.ai_engine import get_current_ai
+from services.chat_store import list_chat_files, load_chat, save_chat
+from services.chat_sync import ChatSyncStatus, sync_active_chat
+from services.summary_service import SummaryMode, generate_summary
 from services.text_formatter import safe_html_format, split_message
 from services.ttl_dict import TtlDict
 
@@ -30,6 +26,7 @@ router = Router()
 user_sessions: dict = {}
 waiting_for_name: dict = {}
 _chat_callback_cache: TtlDict[str, str] = TtlDict(ttl=1800)
+_CHAT_LIST_LIMIT = 10
 
 
 def _short_id(fname: str) -> str:
@@ -38,27 +35,21 @@ def _short_id(fname: str) -> str:
     return sid
 
 
-def load_chat(filepath: str) -> dict:
-    if not os.path.exists(filepath):
-        return {"summary": "", "messages": []}
-    with open(filepath, encoding="utf-8") as f:
-        data = json.load(f)
-    if isinstance(data, list):
-        data = {"summary": "", "messages": data}
-        save_chat(filepath, data)
-    return data
+def _chat_display_name(fname: str) -> str:
+    return fname.replace("ch_", "").replace(".json", "").replace("_", " ")[:25]
 
 
-def save_chat(filepath: str, data: dict):
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w", dir=os.path.dirname(filepath), delete=False, encoding="utf-8",
-        ) as tmp:
-            json.dump(data, tmp, ensure_ascii=False, indent=2)
-            tmp_path = tmp.name
-        os.replace(tmp_path, filepath)
-    except Exception as e:
-        print(f"❌ Ошибка сохранения чата {filepath}: {e}")
+def _chat_list_keyboard(files: list[str]) -> InlineKeyboardBuilder:
+    kb = InlineKeyboardBuilder()
+    for fname in files:
+        sid = _short_id(fname)
+        kb.row(
+            types.InlineKeyboardButton(
+                text=f"💬 {_chat_display_name(fname)}", callback_data=f"sel:{sid}",
+            ),
+            types.InlineKeyboardButton(text="🗑️", callback_data=f"del:{sid}"),
+        )
+    return kb
 
 
 def save_summary_file(chat_name: str, summary: str):
@@ -106,25 +97,11 @@ async def cmd_new_chat(message: types.Message):
 @router.message(F.text == "📂 Список чатов")
 @allowed_only
 async def cmd_list_chats(message: types.Message):
-    files = sorted(
-        [f for f in os.listdir(CHATS_DIR) if f.endswith(".json")],
-        key=lambda x: os.path.getmtime(os.path.join(CHATS_DIR, x)),
-        reverse=True,
-    )[:10]
+    files = list_chat_files(CHATS_DIR, limit=_CHAT_LIST_LIMIT)
     if not files:
         return await message.answer("📁 Чатов нет.")
 
-    kb = InlineKeyboardBuilder()
-    for f in files:
-        sid = _short_id(f)
-        display_name = f.replace("ch_", "").replace(".json", "").replace("_", " ")[:25]
-        kb.row(
-            types.InlineKeyboardButton(
-                text=f"💬 {display_name}", callback_data=f"sel:{sid}",
-            ),
-            types.InlineKeyboardButton(text="🗑️", callback_data=f"del:{sid}"),
-        )
-
+    kb = _chat_list_keyboard(files)
     await message.answer("📅 Выберите чат:", reply_markup=kb.as_markup())
 
 
@@ -202,33 +179,20 @@ async def cb_delete_chat(callback: types.CallbackQuery):
     if user_sessions.get(callback.from_user.id) == fname:
         del user_sessions[callback.from_user.id]
 
-    files = sorted(
-        [f for f in os.listdir(CHATS_DIR) if f.endswith(".json")],
-        key=lambda x: os.path.getmtime(os.path.join(CHATS_DIR, x)),
-        reverse=True,
-    )[:10]
+    files = list_chat_files(CHATS_DIR, limit=_CHAT_LIST_LIMIT)
 
     try:
         if not files:
             await callback.message.edit_text("📁 Чатов больше нет.", reply_markup=None)
         else:
-            kb = InlineKeyboardBuilder()
-            for f in files:
-                sid2 = _short_id(f)
-                display_name = (
-                    f.replace("ch_", "").replace(".json", "").replace("_", " ")[:25]
-                )
-                kb.row(
-                    types.InlineKeyboardButton(
-                        text=f"💬 {display_name}", callback_data=f"sel:{sid2}",
-                    ),
-                    types.InlineKeyboardButton(text="🗑️", callback_data=f"del:{sid2}"),
-                )
+            kb = _chat_list_keyboard(files)
             await callback.message.edit_text(
                 "📅 Выберите чат:", reply_markup=kb.as_markup(),
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(
+            "Не удалось обновить список чатов после удаления %s: %s", fname, e,
+        )
 
     await callback.answer(f"🗑️ Удален: {fname}", show_alert=True)
 
@@ -239,64 +203,17 @@ async def generate_fresh_summary(messages: list, existing_summary: str = "") -> 
         return "Чат пуст."
 
     engine, model = get_current_ai()
-
-    # Берем последние 20 сообщений для контекста
-    dialog_slice = "\n".join([f"{m['role']}: {m['content']}" for m in messages[-20:]])
-
-    # Если есть старое саммари, добавляем его в контекст, чтобы сохранить нить
-    context_prefix = ""
-    if existing_summary and len(existing_summary.strip()) > 10:
-        context_prefix = f"ПРЕДЫДУЩЕЕ САММАРИ:\n{existing_summary}\n\nТЕКУЩИЙ ДИАЛОГ:\n"
-
-    prompt = get_summary_prompt(
-        dialog_slice=dialog_slice, context_prefix=context_prefix,
-    )
-
     try:
-        summary = await get_ai_response_async(
-            engine, model, [{"role": "system", "content": prompt}], context="",
+        return await generate_summary(
+            SummaryMode.CHAT,
+            engine=engine,
+            model=model,
+            messages=messages,
+            existing_summary=existing_summary,
         )
-
-        # Принудительная обрезка, если модель все равно болтлива
-        words = summary.split()
-        if len(words) > 50:
-            summary = " ".join(words[:50]) + "..."
-        return summary.strip()
-
     except Exception as e:
         logger.error(f"Ошибка генерации саммари: {e}")
         return "Не удалось сгенерировать саммари."
-
-
-async def update_summary_if_needed(user_id: int, filepath: str, messages: list):
-    """Генерирует саммари каждые 5 сообщений и сохраняет его."""
-    if len(messages) >= 5 and len(messages) % 5 == 0:
-        engine, model = get_current_ai()
-        # Берем последние 10 сообщений для контекста саммари
-        dialog_slice = "\n".join(
-            [f"{m['role']}: {m['content']}" for m in messages[-15:]],
-        )
-
-        prompt = get_summary_prompt(dialog_slice=dialog_slice, context_prefix="")
-
-        try:
-            summary = await get_ai_response_async(
-                engine, model, [{"role": "user", "content": prompt}], context="",
-            )
-
-            # Принудительная обрезка, если модель все равно болтлива
-            words = summary.split()
-            if len(words) > 40:
-                summary = " ".join(words[:40]) + "..."
-
-            data = load_chat(filepath)
-            data["summary"] = summary
-            save_chat(filepath, data)
-            save_summary_file(os.path.basename(filepath), summary)
-            return summary
-        except Exception as e:
-            logger.error(f"Ошибка генерации саммари: {e}")
-    return None
 
 
 @router.message(F.text.in_(["~", "#ctx"]))
@@ -388,8 +305,10 @@ async def cb_show_summary(callback: types.CallbackQuery):
             if i == 0:
                 first_msg = msg
             last_msg = msg
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "Не удалось отправить часть саммари %d/%d: %s", i + 1, len(parts), e,
+            )
     target = last_msg or first_msg
     if target:
         cache_ai_response(target.chat.id, target.message_id, text)
@@ -431,8 +350,10 @@ async def cb_show_full_chat(callback: types.CallbackQuery):
                 await send_text_only(callback.message, p)
             else:
                 await callback.message.answer(p, parse_mode="HTML")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "Не удалось отправить часть истории %d/%d: %s", i + 1, len(parts), e,
+            )
     await callback.answer()
 
 
@@ -484,38 +405,12 @@ async def cb_refresh_summary(callback: types.CallbackQuery):
 @allowed_only
 async def cmd_sync_palace(message: types.Message):
     """Ручная синхронизация текущего чата с MemPalace."""
-    fname = user_sessions.get(message.from_user.id)
-    if not fname:
-        return await message.answer("⚠️ Нет активного чата для синхронизации.")
-
-    fpath = os.path.join(CHATS_DIR, fname)
-    exported = export_chat_verbatim(fpath, fname)
-    if not exported:
-        return await message.answer("ℹ️ Чат пуст или не найден.")
+    result = await sync_active_chat(message.from_user.id, user_sessions)
+    if result.status is not ChatSyncStatus.RESULT:
+        return await message.answer(result.message)
 
     status = await message.answer("🔄 Синхронизирую с MemPalace (verbatim)...")
-    result = await sync_to_palace(exported)
-    await status.edit_text(result)
-
-
-async def get_ai_context(user_id: int) -> tuple:
-    """Возвращает (summary, recent_messages) для текущего активного чата пользователя.
-    Используется в main.py для формирования контекста ИИ.
-    """
-    fname = user_sessions.get(user_id)
-    if not fname:
-        return "", []
-
-    fpath = os.path.join(CHATS_DIR, fname)
-    data = load_chat(fpath)
-    msgs = data.get("messages", [])
-
-    # Берем последние 6 сообщений для контекста
-    recent = msgs[-6:] if len(msgs) > 6 else msgs
-
-    summary = data.get("summary", "")
-
-    return summary, recent
+    await status.edit_text(result.message)
 
 
 # 📜 Команда /history - показать историю текущего чата

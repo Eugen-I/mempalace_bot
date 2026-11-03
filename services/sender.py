@@ -29,8 +29,8 @@ async def _add_web_search_button(sent_msg: types.Message) -> None:
                 types.InlineKeyboardButton(text="🌐 В интернет", callback_data="web_search"),
             )
             await sent_msg.edit_reply_markup(reply_markup=kb.as_markup())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Не удалось добавить кнопки к сообщению: %s", e)
 
 
 async def send_response_with_mode(message: types.Message, text: str, voice_mode: str):
@@ -46,8 +46,10 @@ async def send_response_with_mode(message: types.Message, text: str, voice_mode:
                     msg = await message.answer(p, parse_mode="HTML")
                     if i == 0:
                         first_msg = msg
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(
+                        "Не удалось отправить часть ответа %d/%d: %s", i + 1, len(parts), e,
+                    )
 
     if is_voice_enabled:
         try:
@@ -59,13 +61,15 @@ async def send_response_with_mode(message: types.Message, text: str, voice_mode:
                     for ogg in ogg_files:
                         try:
                             await message.answer_voice(types.FSInputFile(ogg))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning("Не удалось отправить голосовое: %s", e)
                         finally:
                             try:
                                 os.remove(ogg)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(
+                                    "Не удалось удалить временный ogg %s: %s", ogg, e,
+                                )
         except Exception as e:
             logger.error(f"Ошибка генерации голоса: {e}")
 
@@ -82,7 +86,7 @@ async def send_text_only(message: types.Message, text: str):
         if p and p.strip():
             try:
                 last_msg = await message.answer(p, parse_mode="HTML")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Не удалось отправить текст: %s", e)
     if last_msg:
         await _add_web_search_button(last_msg)

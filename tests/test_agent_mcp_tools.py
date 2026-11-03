@@ -6,9 +6,9 @@ get_mcp() замокан: проверяется маршрутизация ар
 
 import pytest
 
+from services import agent_engine as ae
 from services import agent_mcp_tools as amt
 from services import agent_tools as at
-from services import agent_engine as ae
 
 
 class FakeMCP:

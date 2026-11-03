@@ -1,15 +1,4 @@
 """handlers/palace/__init__.py — All palace handlers"""
-from . import admin, navigation, kg, save, tunnels, hints, action_bar  # noqa: F401
-from ._utils import (  # noqa: F401
-    safe_edit_text,
-    safe_answer,
-    safe_delete,
-    safe_answer_voice,
-    safe_send,
-    set_error_logging,
-    sanitize_wing_name,
-)
-
 import asyncio
 import json
 import logging
@@ -20,19 +9,35 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import DATA_DIR, allowed_callback, allowed_only
-from services.ai_engine import get_current_ai
+from services.ai_engine import call_ai_async, get_current_ai
+from services.conversation_fsm import ConversationState
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
-from .save import _show_save_wings, _show_save_rooms, _save_confirm  # noqa: F401
+from . import action_bar, admin, hints, kg, navigation, save, tunnels  # noqa: F401
+from ._utils import (  # noqa: F401
+    safe_answer_voice,
+    safe_delete,
+    safe_edit_text,
+    safe_send,
+    sanitize_wing_name,
+    set_error_logging,
+)
 from .hints import suggest_tunnel_hint  # noqa: F401
-
-from services.conversation_fsm import ConversationState
+from .save import _save_confirm, _show_save_rooms, _show_save_wings
 from .shared import (
-    router, fsm,
-    _pending_mcp_input, _kg_page_data, _kg_add_state,
-    _save_state, KG_PREDICATES, _create_tunnel_state,
-    _normalize_query, _send_kg_page, _wing_cache, _user_context,
+    KG_PREDICATES,
+    _create_tunnel_state,
+    _kg_add_state,
+    _kg_page_data,
+    _normalize_query,
+    _pending_mcp_input,
+    _save_state,
+    _send_kg_page,
+    _user_context,
+    _wing_cache,
+    fsm,
+    router,
 )
 
 router.include_router(action_bar.router)
@@ -104,8 +109,8 @@ async def cb_palace_main_menu(cb: types.CallbackQuery):
 
 async def process_mcp_text_input(uid: int, text: str, answer_func):
     # Check for active button-mode agent session first
+    from handlers.agent import AGENT_SYSTEM_PROMPT, _run_agent_reply
     from services.agent_context import get_agent_context_store
-    from handlers.agent import _run_agent_reply, AGENT_SYSTEM_PROMPT
 
     ctx_store = get_agent_context_store()
     session_id = ctx_store.has_active_button_session(uid)
@@ -119,13 +124,15 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             AGENT_SYSTEM_PROMPT
             + "\n\nПродолжай диалог с пользователем на основе истории выше."
         )
-        result = await _run_agent_reply(
+        agent_result = await _run_agent_reply(
             uid, status, prompt, text, ctx={}, conversation_history=history
         )
 
-        # Save assistant response to button session
-        if result.final_answer:
-            ctx_store.append_button_context(session_id, "assistant", result.final_answer)
+        # Save only a successful assistant response to button session
+        if agent_result.ok and agent_result.final_answer:
+            ctx_store.append_button_context(
+                session_id, "assistant", agent_result.final_answer,
+            )
 
         # Check for end dialog keywords
         end_keywords = ("закончить", "stop", "end", "выход", "завершить")
@@ -291,8 +298,10 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                     cwd=DATA_DIR,
                 )
                 await proc.communicate()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(
+                    "Не удалось инициализировать крыло %s: %s", wing, e, exc_info=True,
+                )
             await _show_save_rooms(msg.edit_text, uid)
             return True
 
@@ -570,9 +579,12 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                         "mempalace_read_drawer", {"wing": wing, "room": room},
                     )
                     ctx_parts.append(f"[{wing}/{room}]\n{r.strip()}")
-                except Exception:
+                except Exception as e:
+                    logger.warning(
+                        "[PALACE_TUNNEL] Не удалось прочитать %s/%s: %s",
+                        wing, room, e,
+                    )
                     ctx_parts.append(f"[{wing}/{room}]\n(не удалось прочитать)")
-            from services.ai_engine import _sync_ai_call
             engine, model = get_current_ai()
             system = (
                 "Ты анализируешь связь между двумя комнатами знаний. "
@@ -586,7 +598,7 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             system += "\n\n" + "\n\n".join(ctx_parts)
             prompt = f"Вопрос пользователя: {text}\n\nПроанализируй связь между этими комнатами."
             try:
-                result = _sync_ai_call(engine, model, [
+                result = await call_ai_async(engine, model, [
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
                 ])
@@ -601,8 +613,10 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                     ),
                 )
             except Exception as ai_e:
+                logger.error("[PALACE_TUNNEL] Ошибка ИИ: %s", ai_e, exc_info=True)
                 await msg.edit_text(f"❌ Ошибка ИИ: {ai_e}")
 
     except Exception as e:
+        logger.error("[PALACE_TUNNEL] Ошибка анализа: %s", e, exc_info=True)
         await msg.edit_text(f"❌ Ошибка: {e}")
     return True

@@ -8,8 +8,6 @@ whisper, and _compress_video.
 import asyncio
 import os
 
-import pytest
-
 import services.youtube as yt
 
 

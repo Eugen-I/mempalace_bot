@@ -154,7 +154,7 @@ def seed_known_pairs() -> int:
     Источники: KG_PREDICATES (EN-предикат + RU-лейбл), предикаты БД
     (DB_STYLE_PREDICATES) и _LOCALE_ALIASES (RU-крыло → EN-крыло).
     """
-    from handlers.palace.shared import KG_PREDICATES, _LOCALE_ALIASES
+    from handlers.palace.shared import _LOCALE_ALIASES, KG_PREDICATES
 
     pairs: list[tuple[str, str]] = list(DB_STYLE_PREDICATES)
     for pred, label in KG_PREDICATES:

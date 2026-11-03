@@ -18,10 +18,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+# Регистрация инструментов дворца, заметок и write-инструментов (side-effect imports).
+from services import (  # noqa: F401
+    agent_mcp_tools,
+    agent_notes_tools,
+    agent_notes_write_tools,
+)
 from services import agent_tools as atools
-from services import agent_mcp_tools  # noqa: F401 — регистрация инструментов дворца
-from services import agent_notes_tools  # noqa: F401 — регистрация инструментов заметок
-from services import agent_notes_write_tools  # noqa: F401 — write-инструменты заметок
 from services.ai_engine import (
     _OLLAMA_UNREACHABLE_MSG,
     _is_ollama_unavailable,
@@ -64,6 +67,16 @@ class AgentResult:
     iterations: int = 0
     finished_reason: str = "answer"  # answer | max_iterations | error
     error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """True только для обычного завершения с ответом."""
+        return self.finished_reason == "answer"
+
+    @classmethod
+    def failure(cls, error: str, *, finished_reason: str = "error") -> "AgentResult":
+        """Безопасный результат для ошибок: final_answer всегда строка."""
+        return cls(final_answer="", finished_reason=finished_reason, error=error)
 
 
 def _qwen_tool_call(model: str, messages: list[dict], tools: list[dict]) -> dict:
@@ -188,7 +201,7 @@ async def run_agent(
     for i in range(1, max_iterations + 1):
         try:
             resp = await asyncio.to_thread(_qwen_tool_call, model, messages, openai_tools)
-        except Exception as exc:  # noqa: BLE001 — агрегируем в AgentResult
+        except Exception as exc:
             if _is_ollama_unavailable(exc):
                 return AgentResult(
                     final_answer="",
@@ -287,7 +300,7 @@ async def run_agent(
                     "name": name, "ok": False,
                     "output": f"Превышен таймаут инструмента ({tool_timeout:g}с).",
                 })
-            except Exception as exc:  # noqa: BLE001 — результат ошибки видит модель
+            except Exception as exc:
                 logger.error("[AGENT] tool %s failed: %s", name, exc, exc_info=True)
                 step.results.append({
                     "name": name, "ok": False,

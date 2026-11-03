@@ -133,7 +133,7 @@ class TestEventBusMutants:
 
 class TestUnsubscribeNoSubscribers:
     async def test_unsubscribe_unknown_event_noop(self):
-        from services.event_bus import EventBus, Event
+        from services.event_bus import Event, EventBus
 
         bus = EventBus()
 

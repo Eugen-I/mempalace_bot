@@ -1,10 +1,6 @@
-import html
-import json
-import logging
-import time
-import uuid
-from pathlib import Path
 import asyncio
+import html
+import logging
 
 import httpx
 
@@ -12,8 +8,8 @@ from config import (
     BING_SEARCH_API_KEY,
     GOOGLE_CSE_API_KEY,
     GOOGLE_CSE_ID,
-    DATA_DIR,
 )
+from services.web_search_cache import save_web_search
 
 logger = logging.getLogger("WebSearch")
 
@@ -24,46 +20,6 @@ DDG_LITE_URL = "https://lite.duckduckgo.com/lite/"
 GOOGLE_CSE_URL = "https://www.googleapis.com/customsearch/v1"
 BING_SEARCH_URL = "https://api.bing.microsoft.com/v7.0/search"
 YAHOO_SEARCH_URL = "https://search.yahoo.com/search"
-
-
-# --- Кэш результатов поиска ---
-WEB_SEARCH_CACHE_DIR = Path(DATA_DIR) / "web_search_cache"
-WEB_SEARCH_CACHE_DIR.mkdir(exist_ok=True)
-CACHE_TTL = 24 * 60 * 60
-
-
-def save_web_search(query: str, sources: list[dict], ai_summary: str = "") -> str:
-    search_id = uuid.uuid4().hex[:12]
-    cache_file = WEB_SEARCH_CACHE_DIR / f"{search_id}.json"
-    data = {
-        "id": search_id,
-        "query": query,
-        "sources": [{"text": s["text"], "url": s["url"]} for s in sources],
-        "ai_summary": ai_summary,
-        "timestamp": time.time(),
-    }
-    cache_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return search_id
-
-
-def load_web_search(search_id: str) -> dict | None:
-    cache_file = WEB_SEARCH_CACHE_DIR / f"{search_id}.json"
-    if not cache_file.exists():
-        return None
-    try:
-        return json.loads(cache_file.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def cleanup_old_cache():
-    now = time.time()
-    for f in WEB_SEARCH_CACHE_DIR.glob("*.json"):
-        try:
-            if now - f.stat().st_mtime > CACHE_TTL:
-                f.unlink()
-        except Exception:
-            pass
 
 
 # --- Парсинг HTML ---
@@ -124,7 +80,7 @@ async def _bing_search(client: httpx.AsyncClient, query: str, max_results: int) 
     try:
         headers = {"Ocp-Apim-Subscription-Key": BING_SEARCH_API_KEY}
         resp = await client.get(
-            "https://api.bing.microsoft.com/v7.0/search",
+            BING_SEARCH_URL,
             params={"q": query, "count": max_results, "mkt": "ru-RU", "safeSearch": "Off"},
             headers=headers,
             timeout=15.0,
@@ -159,13 +115,13 @@ async def _yahoo_search(client: httpx.AsyncClient, query: str, max_results: int)
 async def _ddg_search(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict]:
     try:
         resp = await client.get(
-            "https://api.duckduckgo.com/",
+            DDG_API_URL,
             params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
         )
         if resp.status_code == 202:
             await asyncio.sleep(0.5)
             resp = await client.get(
-                "https://api.duckduckgo.com/",
+                DDG_API_URL,
                 params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
                 timeout=15.0,
             )
@@ -217,7 +173,7 @@ async def search_web(query: str, max_results: int = 5) -> str:
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
-                "https://api.duckduckgo.com/",
+                DDG_API_URL,
                 params={
                     "q": query,
                     "format": "json",
@@ -229,7 +185,7 @@ async def search_web(query: str, max_results: int = 5) -> str:
             if resp.status_code == 202:
                 await asyncio.sleep(0.5)
                 resp = await client.get(
-                    "https://api.duckduckgo.com/",
+                    DDG_API_URL,
                     params={
                         "q": query,
                         "format": "json",
@@ -291,7 +247,7 @@ async def search_web(query: str, max_results: int = 5) -> str:
         logger.info(f"[WebSearch] Instant Answer пустой, пробуем Lite для: {query}")
         async with httpx.AsyncClient(timeout=15.0) as client:
             html_resp = await client.post(
-                "https://lite.duckduckgo.com/lite/",
+                DDG_LITE_URL,
                 data={"q": query},
                 headers={"User-Agent": "Mozilla/5.0"},
             )
@@ -308,7 +264,7 @@ async def search_web(query: str, max_results: int = 5) -> str:
         logger.info(f"[WebSearch] Lite пустой, пробуем полный HTML для: {query}")
         async with httpx.AsyncClient(timeout=15.0) as client:
             html_resp = await client.post(
-                "https://html.duckduckgo.com/html/",
+                DDG_HTML_URL,
                 data={"q": query},
                 headers={"User-Agent": "Mozilla/5.0"},
             )

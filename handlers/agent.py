@@ -58,7 +58,11 @@ async def _run_agent_reply(
     include_write: bool = False,
     conversation_history: list[dict] | None = None,
 ) -> ae.AgentResult:
-    """Общая логика: статус → run_agent (со статус-колбэком) → finalize_answer."""
+    """Общая логика: статус → run_agent → finalize_answer.
+
+    Всегда возвращает AgentResult: ошибки представлены безопасным
+    результатом с ``ok=False``, ``final_answer=""`` и текстом в ``error``.
+    """
     from handlers.palace.action_bar import finalize_answer
 
     async def status_cb(text: str):
@@ -73,15 +77,16 @@ async def _run_agent_reply(
         )
     except ae.AgentEngineError as exc:
         await _status_edit(status_msg, f"⚠️ {exc}")
-        return
-    except Exception as exc:  # noqa: BLE001
+        return ae.AgentResult.failure(str(exc))
+    except Exception as exc:
         logger.error("[AGENT] run failed: %s", exc, exc_info=True)
-        await _status_edit(status_msg, f"❌ Ошибка агента: {exc}")
-        return
+        message = f"Ошибка агента: {exc}"
+        await _status_edit(status_msg, f"❌ {message}")
+        return ae.AgentResult.failure(message)
 
     if result.finished_reason == "error":
         await _status_edit(status_msg, f"❌ {result.error or 'Неизвестная ошибка'}")
-        return
+        return result
     if result.finished_reason == "max_iterations":
         await _status_edit(status_msg, f"⚠️ {result.error or 'Лимит итераций'}")
         return result
@@ -152,7 +157,7 @@ async def cb_ab_agent(cb: types.CallbackQuery):
 
     # Create button-mode session
     ctx_store = get_agent_context_store()
-    session_id = ctx_store.create_button_session(answer.sid)
+    session_id = ctx_store.create_button_session()
     ctx_store.bind_button_session_to_uid(cb.from_user.id, session_id)
 
     # Store session_id in answer.ctx for follow-up routing
@@ -176,8 +181,8 @@ async def cb_ab_agent(cb: types.CallbackQuery):
         cb.from_user.id, status, prompt, question, ctx=ctx, conversation_history=[]
     )
 
-    # Save agent response to button session history
-    if result.final_answer:
+    # Save only a successful agent response to button session history
+    if result.ok and result.final_answer:
         ctx_store.append_button_context(session_id, "assistant", result.final_answer)
 
 

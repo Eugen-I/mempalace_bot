@@ -121,8 +121,6 @@ async def test_go_main_menu_cmd_start_fails(monkeypatch):
     mod.cmd_start = boom
     monkeypatch.setitem(sys.modules, "main", mod)
 
-    orig = menu.logger
-
     class FakeLogger:
         def error(self, msg, exc_info=False):
             pass

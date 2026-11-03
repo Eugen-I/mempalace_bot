@@ -9,18 +9,18 @@ import pytest
 
 import config
 import handlers.messages as messages
-from services.bot_setup import (
-    pending_web_search as _pending_web_search,
-    pending_wing_search as _pending_wing_search,
-    sync_counter as _sync_counter,
-    sync_in_progress as _sync_in_progress,
-    yt_audio_cache as _yt_audio_cache,
-    yt_quality_url as _yt_quality_url,
-    yt_waiting_url as _yt_waiting_url,
-)
 from handlers.chat import user_sessions, waiting_for_name
 from handlers.palace.shared import _user_context
+from services.ai_engine import AIStreamEvent
+from services.bot_setup import pending_web_search as _pending_web_search
+from services.bot_setup import pending_wing_search as _pending_wing_search
+from services.bot_setup import sync_counter as _sync_counter
+from services.bot_setup import sync_in_progress as _sync_in_progress
+from services.bot_setup import yt_audio_cache as _yt_audio_cache
+from services.bot_setup import yt_quality_url as _yt_quality_url
+from services.bot_setup import yt_waiting_url as _yt_waiting_url
 from services.reflection import REFLECTION_NS
+from services.wing_registry import WING_DISPLAY_NAMES
 
 
 class FakeUser:
@@ -100,13 +100,17 @@ class FakeDeg:
 class FakeCache:
     def __init__(self, cached=None):
         self.cached = cached
+        self.gets = []
         self.sets = []
+        self.contexts = []
 
-    def get(self, query):
+    def get(self, query, **context):
+        self.gets.append((query, context))
         return self.cached
 
-    def set(self, query, answer):
+    def set(self, query, answer, **context):
         self.sets.append((query, answer))
+        self.contexts.append(context)
 
 
 class FakeBot:
@@ -134,7 +138,10 @@ async def _async_none(*a, **k):
 def _agen(chunks):
     async def g():
         for c in chunks:
-            yield c
+            if isinstance(c, AIStreamEvent):
+                yield c
+            else:
+                yield AIStreamEvent(ok=True, text=c)
     return g()
 
 
@@ -156,13 +163,13 @@ def _enable(monkeypatch, tmp_path=None):
     monkeypatch.setattr(messages, "is_coding_context", lambda q, msgs: False)
     monkeypatch.setattr(messages, "get_smart_prompt", lambda **kw: "SYSTEM-PROMPT")
     monkeypatch.setattr(messages, "get_voice_settings", lambda uid: {"mode": "text"})
-    monkeypatch.setattr(messages, "save_chat", lambda *a, **k: None)
+    monkeypatch.setattr(messages, "save_chat", lambda *a, **k: True)
     monkeypatch.setattr(messages, "get_cache", lambda: FakeCache())
     monkeypatch.setattr(messages, "schedule_linking", lambda *a, **k: None)
     monkeypatch.setattr(messages, "extract_and_store_facts", _async_none)
     monkeypatch.setattr(messages, "cache_ai_response", lambda *a, **k: None)
     monkeypatch.setattr(messages, "auto_sync_chat", _async_none)
-    monkeypatch.setattr(messages, "search_with_kg", _async(""))
+    monkeypatch.setattr(messages, "search_with_kg_status", _async(("", True)))
     monkeypatch.setattr(messages, "get_memory_context", lambda q, uid: "memory-ctx")
     monkeypatch.setattr(messages, "report_failure", lambda *a: None)
     monkeypatch.setattr(messages, "report_success", lambda *a: None)
@@ -170,7 +177,7 @@ def _enable(monkeypatch, tmp_path=None):
     monkeypatch.setattr(messages, "load_chat", lambda path: {
         "messages": [], "summary": "", "summaries": [],
     })
-    monkeypatch.setattr(messages, "stream_ai_response_async", _stream_factory(["ответ"]))
+    monkeypatch.setattr(messages, "stream_ai_events_async", _stream_factory(["ответ"]))
 
     async def fake_send(msg, answer, mode):
         return SimpleNamespace(message_id=1)
@@ -252,7 +259,19 @@ def test_on_ai_sent_error_answer(monkeypatch):
     cache_called = []
     monkeypatch.setattr(messages, "cache_ai_response", lambda *a: cache_called.append(a))
     asyncio.run(messages._on_ai_sent(
-        answer="❌ ошибка", clean_q="q", uid=7, sent_msg=SimpleNamespace(message_id=1),
+        answer="\n❌ ошибка", clean_q="q", uid=7,
+        sent_msg=SimpleNamespace(message_id=1),
+    ))
+    assert cache_called == []
+    assert 7 not in messages._last_user_query
+
+
+def test_on_ai_sent_ollama_error_answer(monkeypatch):
+    cache_called = []
+    monkeypatch.setattr(messages, "cache_ai_response", lambda *a: cache_called.append(a))
+    asyncio.run(messages._on_ai_sent(
+        answer="\n🧠 Не удалось подключиться к Ollama. Запустите ollama serve.",
+        clean_q="q", uid=7, sent_msg=SimpleNamespace(message_id=1),
     ))
     assert cache_called == []
     assert 7 not in messages._last_user_query
@@ -316,29 +335,6 @@ def test_auto_sync_wrapper_exception(monkeypatch):
     with pytest.raises(RuntimeError):
         asyncio.run(messages._auto_sync_wrapper(6, "f", "p"))
     assert _sync_in_progress.get(6) is False
-
-
-# ---------- get_ai_response_sync_wrapper ----------
-
-
-def test_get_ai_response_sync_wrapper(monkeypatch):
-    captured = {}
-
-    def fake_sync(engine, model, msgs, context="", user_query="", has_images=False, **kw):
-        captured["engine"] = engine
-        captured["model"] = model
-        captured["msgs"] = msgs
-        captured["kw"] = kw
-        return "sum"
-
-    monkeypatch.setattr(messages, "_sync_ai_call", fake_sync)
-    result = messages.get_ai_response_sync_wrapper(
-        "e", "m", [{"role": "user", "content": "x"}], extra=1,
-    )
-    assert result == "sum"
-    assert captured["engine"] == "e"
-    assert captured["model"] == "m"
-    assert captured["kw"] == {"extra": 1}
 
 
 # ---------- non-text message ----------
@@ -472,6 +468,72 @@ def test_agent_mode_scoped_by_user_context(monkeypatch):
     assert calls[0]["ctx"]["wing"] == "Философия"
 
 
+# ---------- always-on history persistence ----------
+
+
+class FakeAlwaysOnStore:
+    def __init__(self, history=None):
+        self.history = list(history or [])
+        self.appended = []
+
+    def get_always_on_context(self, uid):
+        return list(self.history)
+
+    def append_always_on(self, uid, role, content):
+        self.appended.append((uid, role, content))
+
+
+def test_agent_mode_persists_successful_reply(monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(
+        "services.agent_settings.get_agent_enabled", lambda uid: True,
+    )
+    from services import agent_engine as ae
+
+    store = FakeAlwaysOnStore([{"role": "user", "content": "раньше"}])
+    monkeypatch.setattr(
+        "services.agent_context.get_agent_context_store", lambda: store,
+    )
+    seen = {}
+
+    async def fake_run(
+        uid, status, prompt, question, ctx=None, include_write=False,
+        conversation_history=None,
+    ):
+        seen["history"] = conversation_history
+        return ae.AgentResult(final_answer="ответ агента")
+
+    monkeypatch.setattr("handlers.agent._run_agent_reply", fake_run)
+    msg = FakeMessage(text="новый вопрос")
+
+    result = asyncio.run(messages.process_user_message(msg))
+
+    assert result is None
+    assert seen["history"] == [{"role": "user", "content": "раньше"}]
+    assert store.appended == [(4242, "assistant", "ответ агента")]
+
+
+def test_agent_mode_does_not_persist_failed_reply(monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(
+        "services.agent_settings.get_agent_enabled", lambda uid: True,
+    )
+    from services import agent_engine as ae
+
+    store = FakeAlwaysOnStore()
+    monkeypatch.setattr(
+        "services.agent_context.get_agent_context_store", lambda: store,
+    )
+
+    async def fake_run(*args, **kwargs):
+        return ae.AgentResult.failure("ошибка модели")
+
+    monkeypatch.setattr("handlers.agent._run_agent_reply", fake_run)
+    asyncio.run(messages.process_user_message(FakeMessage(text="вопрос")))
+
+    assert store.appended == []
+
+
 # ---------- YouTube: video mode ----------
 
 
@@ -483,7 +545,7 @@ def test_yt_waiting_video_quality(monkeypatch):
     assert result is not None
     assert 4242 not in _yt_waiting_url
     assert _yt_quality_url[4242] == "https://youtu.be/abc"
-    text, pm, markup = msg.answers[-1]
+    text, _pm, markup = msg.answers[-1]
     assert text == "🎥 Выберите качество:"
     data = [b.callback_data for row in markup.inline_keyboard for b in row]
     assert data == ["yt_q:480", "yt_q:720"]
@@ -522,7 +584,7 @@ def test_yt_audio_success(monkeypatch, tmp_path):
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
     assert msg.audios[0][0].path == path
-    text, pm, markup = msg.answers[-1]
+    text, _pm, markup = msg.answers[-1]
     assert "Транскрибировать" in text
     sid = markup.inline_keyboard[0][0].callback_data.split(":")[1]
     assert sid in _yt_audio_cache
@@ -680,7 +742,7 @@ def test_wing_search_success(monkeypatch, tmp_path):
     assert result is None
     assert 4242 not in _pending_wing_search
     assert "Ищу в MemPalace (крыло: dreams)..." in msg.answers[0][0]
-    text, pm, markup = msg.edits[-1]
+    text, _pm, markup = msg.edits[-1]
     assert text == "результат поиска"
     data = [b.callback_data for row in markup.inline_keyboard for b in row]
     assert data == ["p_src:s1", "search:wing"]
@@ -938,6 +1000,18 @@ def test_waiting_for_name_save_error(monkeypatch, tmp_path):
     result = asyncio.run(messages.process_user_message(msg))
     assert result is not None
     assert "❌ Ошибка создания чата." in result.text
+    assert 4242 not in user_sessions
+
+
+def test_waiting_for_name_save_returns_false(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    waiting_for_name[4242] = True
+    monkeypatch.setattr(messages, "save_chat", lambda path, data: False)
+    msg = FakeMessage(text="Чат")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is not None
+    assert "❌ Ошибка создания чата." in result.text
+    assert 4242 not in user_sessions
 
 
 # ---------- auto chat activation ----------
@@ -965,6 +1039,16 @@ def test_auto_create_chat(monkeypatch, tmp_path):
     asyncio.run(messages.process_user_message(msg))
     assert user_sessions[999].startswith("ch_auto_")
     assert any("🆕 Создан чат" in a[0] for a in msg.answers)
+
+
+def test_auto_create_chat_save_failure(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    monkeypatch.setattr(messages, "save_chat", lambda path, data: False)
+    msg = FakeMessage(uid=999, text="привет")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is not None
+    assert "❌ Ошибка создания чата." in result.text
+    assert 999 not in user_sessions
 
 
 # ---------- chat load error ----------
@@ -998,7 +1082,11 @@ def _prefix_setup(monkeypatch, tmp_path, msgs=None):
         "summary": "", "summaries": [],
     }
     monkeypatch.setattr(messages, "load_chat", lambda path: data)
-    monkeypatch.setattr(messages, "get_ai_response_sync_wrapper", lambda *a, **k: "суммари")
+
+    async def fake_summary(*args, **kwargs):
+        return "суммари"
+
+    monkeypatch.setattr("services.summary_service.call_ai_async", fake_summary)
     return data
 
 
@@ -1037,10 +1125,10 @@ def test_prefix_no_clean_query(monkeypatch, tmp_path):
 def test_prefix_ai_error(monkeypatch, tmp_path):
     _prefix_setup(monkeypatch, tmp_path)
 
-    def boom(*a, **k):
+    async def boom(*a, **k):
         raise RuntimeError("ai down")
 
-    monkeypatch.setattr(messages, "get_ai_response_sync_wrapper", boom)
+    monkeypatch.setattr("services.summary_service.call_ai_async", boom)
     msg = FakeMessage(text="!! что тут важного")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
@@ -1120,7 +1208,12 @@ def _ai_setup(
         data.update(data_extra)
     monkeypatch.setattr(messages, "load_chat", lambda path: data)
     saves = []
-    monkeypatch.setattr(messages, "save_chat", lambda path, d: saves.append((path, d)))
+
+    def fake_save(path, d):
+        saves.append((path, d))
+        return True
+
+    monkeypatch.setattr(messages, "save_chat", fake_save)
     calls = {}
     bot = FakeBot()
     monkeypatch.setattr(messages, "bot", bot)
@@ -1130,7 +1223,7 @@ def _ai_setup(
         calls["messages"] = a[2]
         return _agen(list(stream_chunks))
 
-    monkeypatch.setattr(messages, "stream_ai_response_async", stream_factory)
+    monkeypatch.setattr(messages, "stream_ai_events_async", stream_factory)
     return data, saves, calls, bot
 
 
@@ -1138,7 +1231,7 @@ def _ai_setup(
 
 
 def test_fast_note_empty_falls_to_ai(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
     msg = FakeMessage(text="!")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
@@ -1169,8 +1262,42 @@ def test_ai_basic_flow(monkeypatch, tmp_path):
     assert bot.deleted == [(100, 2), (100, 1)]
 
 
+def test_ai_cache_scope_uses_chat_wing_model_and_prompt(monkeypatch, tmp_path):
+    _data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+    monkeypatch.setattr(messages, "classify_wing", lambda q: "dreams")
+    msg = FakeMessage(text="привет", chat_id=777)
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert len(cache.gets) == 1
+    assert len(cache.contexts) == 1
+    get_context = cache.gets[0][1]
+    set_context = cache.contexts[0]
+    assert get_context == set_context
+    assert get_context["chat_id"] == 777
+    assert get_context["wing"] == "dreams"
+    assert get_context["model"] == "test-model"
+    assert get_context["prompt_version"].startswith(
+        messages.SEMANTIC_CACHE_PROMPT_VERSION + ":",
+    )
+    assert get_context["mode"] == "chat"
+
+
+def test_ai_cache_scope_includes_user_context(monkeypatch, tmp_path):
+    _data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+    _set_user_context(wing="projects", room="alpha", drawer="d1")
+    monkeypatch.setattr(messages, "_get_mcp", lambda: FakeMCPSeq(["запись"]))
+    msg = FakeMessage(text="о чём запись?")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert cache.contexts[0]["wing"] == "global|projects/alpha/d1"
+
+
 def test_ai_no_flush_short_chunks(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=("a", "b"))
+    data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=("a", "b"))
     monkeypatch.setattr(messages.time, "time", FakeTime())
     msg = FakeMessage(text="привет")
     result = asyncio.run(messages.process_user_message(msg))
@@ -1179,7 +1306,7 @@ def test_ai_no_flush_short_chunks(monkeypatch, tmp_path):
 
 
 def test_ai_cached_answer(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
     cache = FakeCache("кэш-ответ")
     monkeypatch.setattr(messages, "get_cache", lambda: cache)
     msg = FakeMessage(text="привет")
@@ -1190,28 +1317,105 @@ def test_ai_cached_answer(monkeypatch, tmp_path):
     assert data["messages"][-1]["content"] == "кэш-ответ"
 
 
+def test_ai_legacy_error_cache_ignored(monkeypatch, tmp_path):
+    data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
+    cache = FakeCache("❌ старая внутренняя ошибка")
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+    msg = FakeMessage(text="привет")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert calls["stream_kwargs"]["user_query"] == "привет"
+    assert data["messages"][-1]["content"] == "x" * 40 + "y" * 40
+    assert all("❌" not in m["content"] for m in data["messages"])
+    assert cache.sets == [("привет", "x" * 40 + "y" * 40)]
+
+
 def test_ai_error_answer(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=("❌ ИИ сломан",))
+    error = AIStreamEvent(
+        ok=False, error_code="stream_error", error_message="backend down",
+    )
+    data, saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=(error,))
     cache = FakeCache()
     monkeypatch.setattr(messages, "get_cache", lambda: cache)
     msg = FakeMessage(text="привет")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
     assert cache.sets == []
-    assert "❌ ИИ вернул ошибку" in msg.answers[-1][0]
-    assert "❌ ИИ сломан" in msg.answers[-1][0]
+    assert saves == []
+    assert data["messages"] == [
+        {"role": "user", "content": "первый"},
+        {"role": "assistant", "content": "второй"},
+    ]
+    assert "❌ Не удалось получить ответ ИИ" in msg.answers[-1][0]
+    assert "backend down" not in msg.answers[-1][0]
 
 
-def test_ai_empty_answer(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=("",))
+def test_ai_ollama_error_is_user_friendly(monkeypatch, tmp_path):
+    error = AIStreamEvent(
+        ok=False,
+        error_code="ollama_unavailable",
+        error_message="connect failed: <internal details>",
+    )
+    _data, saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=(error,))
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
     msg = FakeMessage(text="привет")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
-    assert data["messages"][-1]["content"] == "❌ Пустой ответ от ИИ."
+    assert "Не удалось подключиться к Ollama" in msg.answers[-1][0]
+    assert "internal details" not in msg.answers[-1][0]
+    assert cache.sets == []
+    assert saves == []
+
+
+def test_ai_partial_stream_saves_only_received_text(monkeypatch, tmp_path):
+    error = AIStreamEvent(
+        ok=False, error_code="stream_error", error_message="backend down",
+    )
+    data, saves, _calls, _bot = _ai_setup(
+        monkeypatch, tmp_path, stream_chunks=("частичный ответ", error),
+    )
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+    sent = []
+
+    async def capture(msg, answer, mode):
+        sent.append(answer)
+        return SimpleNamespace(message_id=1)
+
+    monkeypatch.setattr(messages, "send_response_with_mode", capture)
+    msg = FakeMessage(text="привет")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert sent == ["частичный ответ"]
+    assert data["messages"][-2] == {"role": "user", "content": "привет"}
+    assert data["messages"][-1] == {
+        "role": "assistant", "content": "частичный ответ",
+    }
+    assert all("❌" not in m["content"] for m in data["messages"])
+    assert len(saves) == 1
+    assert cache.sets == []
+    assert msg.answers[-1][0].startswith("⚠️")
+
+
+def test_ai_empty_answer(monkeypatch, tmp_path):
+    data, saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=())
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+    msg = FakeMessage(text="привет")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert cache.sets == []
+    assert saves == []
+    assert data["messages"] == [
+        {"role": "user", "content": "первый"},
+        {"role": "assistant", "content": "второй"},
+    ]
+    assert "❌ Пустой ответ от ИИ." in msg.answers[-1][0]
 
 
 def test_ai_send_failure(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
 
     def boom(msg, answer, mode):
         raise RuntimeError("send down")
@@ -1224,7 +1428,7 @@ def test_ai_send_failure(monkeypatch, tmp_path):
 
 
 def test_ai_top_level_error(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, _calls, bot = _ai_setup(monkeypatch, tmp_path)
 
     def boom(**kw):
         raise RuntimeError("prompt builder fail")
@@ -1239,7 +1443,7 @@ def test_ai_top_level_error(monkeypatch, tmp_path):
 
 
 def test_ai_finally_delete_fail(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
 
     class BoomBot:
         async def delete_message(self, chat_id, message_id):
@@ -1254,26 +1458,37 @@ def test_ai_finally_delete_fail(monkeypatch, tmp_path):
 # ---------- wings ----------
 
 
-def test_ai_explicit_wing(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
-    msg = FakeMessage(text="/dreams: расскажи о снах")
+@pytest.mark.parametrize(("wing", "display_name"), WING_DISPLAY_NAMES.items())
+def test_ai_explicit_wing(monkeypatch, tmp_path, wing, display_name):
+    data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
+    msg = FakeMessage(text=f"/{wing}: расскажи о снах")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
     assert data["messages"][-2] == {"role": "user", "content": "расскажи о снах"}
-    assert any("Крыло: 🌙 Сны" in e[0] for e in msg.edits)
+    assert any(f"Крыло: {display_name}" in e[0] for e in msg.edits)
 
 
-def test_ai_explicit_wing_status_edit_fail(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+def test_ai_explicit_wing_normalizes_case(monkeypatch, tmp_path):
+    data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
+    msg = FakeMessage(text="/PROJECTS: вопрос")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert data["messages"][-2] == {"role": "user", "content": "вопрос"}
+    assert any("Крыло: 💻 Проекты" in e[0] for e in msg.edits)
+
+
+def test_ai_explicit_wing_status_edit_fail(monkeypatch, tmp_path, caplog):
+    data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
     msg = FakeMessage(text="/dreams: вопрос")
     msg.fail_status_edits = True
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
     assert data["messages"][-1]["content"] == "x" * 40 + "y" * 40
+    assert "[MSG] Не удалось обновить статус" in caplog.text
 
 
 def test_ai_unknown_wing_then_auto(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "classify_wing", lambda q: "psychology")
     msg = FakeMessage(text="/foo: вопрос")
     result = asyncio.run(messages.process_user_message(msg))
@@ -1293,7 +1508,7 @@ def _set_user_context(wing="w", room="r", drawer=None):
 
 
 def test_ai_context_with_drawer(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     _set_user_context(drawer="d1")
     mcp = FakeMCPSeq(["текст записи"])
     monkeypatch.setattr(messages, "_get_mcp", lambda: mcp)
@@ -1305,7 +1520,7 @@ def test_ai_context_with_drawer(monkeypatch, tmp_path):
 
 
 def test_ai_context_room_drawers(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     _set_user_context(drawer=None)
     mcp = FakeMCPSeq([json.dumps({
         "drawers": [
@@ -1326,7 +1541,7 @@ def test_ai_context_room_drawers(monkeypatch, tmp_path):
 
 
 def test_ai_context_empty_drawers(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     _set_user_context(drawer=None)
     mcp = FakeMCPSeq([json.dumps({"drawers": []})])
     monkeypatch.setattr(messages, "_get_mcp", lambda: mcp)
@@ -1337,7 +1552,7 @@ def test_ai_context_empty_drawers(monkeypatch, tmp_path):
 
 
 def test_ai_context_mcp_error(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     _set_user_context(drawer="d1")
     mcp = FakeMCPSeq([RuntimeError("mcp dead")])
     monkeypatch.setattr(messages, "_get_mcp", lambda: mcp)
@@ -1351,9 +1566,11 @@ def test_ai_context_mcp_error(monkeypatch, tmp_path):
 
 
 def test_ai_degrade_palace_found(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "get_degradation_manager", lambda: FakeDeg(palace=True))
-    monkeypatch.setattr(messages, "search_with_kg", _async("источники [1] текст"))
+    monkeypatch.setattr(
+        messages, "search_with_kg_status", _async(("источники [1] текст", True)),
+    )
     success = []
     monkeypatch.setattr(messages, "report_success", lambda *a: success.append(a))
     msg = FakeMessage(text="вопрос")
@@ -1364,8 +1581,23 @@ def test_ai_degrade_palace_found(monkeypatch, tmp_path):
 
 
 def test_ai_degrade_palace_empty(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "get_degradation_manager", lambda: FakeDeg(palace=True))
+    failure = []
+    success = []
+    monkeypatch.setattr(messages, "report_failure", lambda *a: failure.append(a))
+    monkeypatch.setattr(messages, "report_success", lambda *a: success.append(a))
+    msg = FakeMessage(text="вопрос")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert failure == []
+    assert success == [("palace_search",)]
+
+
+def test_ai_degrade_palace_unavailable(monkeypatch, tmp_path):
+    _data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(messages, "get_degradation_manager", lambda: FakeDeg(palace=True))
+    monkeypatch.setattr(messages, "search_with_kg_status", _async(("", False)))
     failure = []
     monkeypatch.setattr(messages, "report_failure", lambda *a: failure.append(a))
     msg = FakeMessage(text="вопрос")
@@ -1378,7 +1610,7 @@ def test_ai_degrade_palace_empty(monkeypatch, tmp_path):
 
 
 def test_ai_enters_coding_mode(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "is_coding_context", lambda q, msgs: True)
     monkeypatch.setattr(messages, "ensure_project_dir", lambda fname: "/tmp/proj")
     msg = FakeMessage(text="напиши функцию")
@@ -1389,7 +1621,7 @@ def test_ai_enters_coding_mode(monkeypatch, tmp_path):
 
 
 def test_ai_coding_mode_files(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(
+    _data, _saves, calls, _bot = _ai_setup(
         monkeypatch, tmp_path, data_extra={"is_coding_mode": True, "project_dir": "/p"},
     )
     monkeypatch.setattr(messages, "load_coding_prompt", lambda: "CODING-PROMPT")
@@ -1406,7 +1638,7 @@ def test_ai_coding_mode_files(monkeypatch, tmp_path):
 
 
 def test_ai_photo_analysis(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "AUTO_ATTACH_PHOTOS", True)
     prompts = {}
     monkeypatch.setattr(messages, "get_smart_prompt", lambda **kw: prompts.update(kw) or "P")
@@ -1424,7 +1656,7 @@ def test_ai_photo_analysis(monkeypatch, tmp_path):
 
 
 def test_ai_photo_no_capability(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     prompts = {}
     monkeypatch.setattr(messages, "get_smart_prompt", lambda **kw: prompts.update(kw) or "P")
     monkeypatch.setattr(messages, "check_capability", lambda m, c: False)
@@ -1436,7 +1668,7 @@ def test_ai_photo_no_capability(monkeypatch, tmp_path):
 
 
 def test_ai_photo_encode_none(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "check_capability", lambda m, c: True)
     monkeypatch.setattr(messages, "list_photos", lambda: ["a.jpg"])
     monkeypatch.setattr(messages, "encode_image_to_base64", lambda p: None)
@@ -1450,7 +1682,7 @@ def test_ai_photo_encode_none(monkeypatch, tmp_path):
 
 
 def test_ai_memory_context(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "get_degradation_manager", lambda: FakeDeg(memory=True))
     monkeypatch.setattr(messages, "get_memory_context", lambda q, uid: "ПАМЯТЬ: факт")
     msg = FakeMessage(text="вопрос")
@@ -1460,7 +1692,7 @@ def test_ai_memory_context(monkeypatch, tmp_path):
 
 
 def test_ai_memory_error(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "get_degradation_manager", lambda: FakeDeg(memory=True))
 
     def boom(q, uid):
@@ -1476,7 +1708,7 @@ def test_ai_memory_error(monkeypatch, tmp_path):
 
 
 def test_ai_active_summary(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path, data_extra={"summary": "СВОДКА"})
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path, data_extra={"summary": "СВОДКА"})
     msg = FakeMessage(text="вопрос")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
@@ -1484,7 +1716,7 @@ def test_ai_active_summary(monkeypatch, tmp_path):
 
 
 def test_ai_critical_context_instruction(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     _set_user_context(room="r")
     mcp = FakeMCPSeq(["запись"])
     monkeypatch.setattr(messages, "_get_mcp", lambda: mcp)
@@ -1498,7 +1730,7 @@ def test_ai_critical_context_instruction(monkeypatch, tmp_path):
 
 
 def test_ai_search_pattern(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(
+    _data, _saves, _calls, bot = _ai_setup(
         monkeypatch, tmp_path, stream_chunks=("x" * 40 + " SEARCH: запрос в веб",),
     )
     monkeypatch.setattr(messages.time, "time", FakeTime())
@@ -1518,7 +1750,7 @@ def test_ai_search_pattern(monkeypatch, tmp_path):
 
 
 def test_ai_search_pattern_error(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=("SEARCH: тест",))
+    data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path, stream_chunks=("SEARCH: тест",))
 
     async def boom(query):
         raise RuntimeError("web down")
@@ -1534,7 +1766,7 @@ def test_ai_search_pattern_error(monkeypatch, tmp_path):
 
 
 def test_ai_save_chat_failure(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
 
     def boom(path, d):
         raise OSError("disk full")
@@ -1543,6 +1775,20 @@ def test_ai_save_chat_failure(monkeypatch, tmp_path):
     msg = FakeMessage(text="привет")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
+    assert any(
+        "Не удалось сохранить ответ в историю чата" in a[0] for a in msg.answers
+    )
+
+
+def test_ai_save_chat_returns_false_warns(monkeypatch, tmp_path):
+    _data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(messages, "save_chat", lambda path, d: False)
+    msg = FakeMessage(text="привет")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert any(
+        "Не удалось сохранить ответ в историю чата" in a[0] for a in msg.answers
+    )
 
 
 # ---------- final branches ----------
@@ -1566,7 +1812,7 @@ def test_yt_audio_parts_cleanup_error(monkeypatch, tmp_path):
 
 
 def test_ai_context_list_drawers_error(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     _set_user_context(drawer=None)
     mcp = FakeMCPSeq([RuntimeError("list fail")])
     monkeypatch.setattr(messages, "_get_mcp", lambda: mcp)
@@ -1577,7 +1823,7 @@ def test_ai_context_list_drawers_error(monkeypatch, tmp_path):
 
 
 def test_ai_memory_empty(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "get_degradation_manager", lambda: FakeDeg(memory=True))
     monkeypatch.setattr(messages, "get_memory_context", lambda q, uid: "")
     msg = FakeMessage(text="вопрос")
@@ -1586,7 +1832,7 @@ def test_ai_memory_empty(monkeypatch, tmp_path):
 
 
 def test_ai_cached_status_edit_fail(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages, "get_cache", lambda: FakeCache("кэш-ответ"))
     msg = FakeMessage(text="привет", fail_status_edits=True)
     result = asyncio.run(messages.process_user_message(msg))
@@ -1595,7 +1841,7 @@ def test_ai_cached_status_edit_fail(monkeypatch, tmp_path):
 
 
 def test_ai_stream_flush_edit_fail(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
     monkeypatch.setattr(messages.time, "time", FakeTime())
     msg = FakeMessage(text="привет", fail_status_edits=True)
     result = asyncio.run(messages.process_user_message(msg))
@@ -1604,7 +1850,7 @@ def test_ai_stream_flush_edit_fail(monkeypatch, tmp_path):
 
 
 def test_ai_context_empty_drawer_raw(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     _set_user_context(drawer="d1")
     mcp = FakeMCPSeq([""])
     monkeypatch.setattr(messages, "_get_mcp", lambda: mcp)
@@ -1615,7 +1861,7 @@ def test_ai_context_empty_drawer_raw(monkeypatch, tmp_path):
 
 
 def test_ai_context_drawers_without_names(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
+    _data, _saves, calls, _bot = _ai_setup(monkeypatch, tmp_path)
     _set_user_context(drawer=None)
     mcp = FakeMCPSeq([json.dumps({"drawers": [
         {"content": "а"},
@@ -1629,7 +1875,7 @@ def test_ai_context_drawers_without_names(monkeypatch, tmp_path):
 
 
 def test_ai_search_delete_fail(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(
+    data, _saves, _calls, _bot = _ai_setup(
         monkeypatch, tmp_path, stream_chunks=("x" * 40 + " SEARCH: q",),
     )
     monkeypatch.setattr(messages.time, "time", FakeTime())
@@ -1651,13 +1897,18 @@ def test_ai_search_delete_fail(monkeypatch, tmp_path):
 
 
 def test_ai_search_error_answer(monkeypatch, tmp_path):
-    data, saves, calls, bot = _ai_setup(monkeypatch, tmp_path)
-    queued = [["SEARCH: q"], ["❌ второй поток упал"]]
+    data, saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
+    error = AIStreamEvent(
+        ok=False, error_code="stream_error", error_message="второй поток упал",
+    )
+    queued = [["SEARCH: q"], [error]]
 
     def q_factory(*a, **k):
         return _agen(queued.pop(0))
 
-    monkeypatch.setattr(messages, "stream_ai_response_async", q_factory)
+    monkeypatch.setattr(messages, "stream_ai_events_async", q_factory)
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
 
     async def fake_search(query):
         return "results"
@@ -1666,4 +1917,32 @@ def test_ai_search_error_answer(monkeypatch, tmp_path):
     msg = FakeMessage(text="вопрос")
     result = asyncio.run(messages.process_user_message(msg))
     assert result is None
-    assert "❌ ИИ вернул ошибку" in msg.answers[-1][0]
+    assert "❌ Не удалось получить ответ ИИ" in msg.answers[-1][0]
+    assert cache.sets == []
+    assert saves == []
+    assert all("❌" not in m["content"] for m in data["messages"])
+    assert all("SEARCH" not in m["content"] for m in data["messages"])
+
+
+def test_ai_search_success_caches_final_answer(monkeypatch, tmp_path):
+    data, _saves, _calls, _bot = _ai_setup(monkeypatch, tmp_path)
+    queued = [["SEARCH: q"], ["финальный ответ"]]
+
+    def q_factory(*a, **k):
+        return _agen(queued.pop(0))
+
+    monkeypatch.setattr(messages, "stream_ai_events_async", q_factory)
+    cache = FakeCache()
+    monkeypatch.setattr(messages, "get_cache", lambda: cache)
+
+    async def fake_search(query):
+        return "results"
+
+    monkeypatch.setattr("services.web_search.search_web", fake_search)
+    msg = FakeMessage(text="вопрос")
+    result = asyncio.run(messages.process_user_message(msg))
+    assert result is None
+    assert cache.sets == [("вопрос", "финальный ответ")]
+    assert data["messages"][-1] == {
+        "role": "assistant", "content": "финальный ответ",
+    }

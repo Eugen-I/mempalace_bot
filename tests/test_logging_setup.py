@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import tempfile
 
 from services.logging_setup import JSONFormatter, setup_logging
 

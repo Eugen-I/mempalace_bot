@@ -1,13 +1,17 @@
 """ttl_dict.py — TtlDict: a dict with time-to-live for each key."""
 import time
+from typing import Generic, TypeVar
+
+K = TypeVar("K")
+V = TypeVar("V")
 
 
-class TtlDict(dict):
+class TtlDict(dict[K, V], Generic[K, V]):
     __slots__ = ("_expires", "_ttl")
 
     def __init__(self, ttl: int = 86400):
         self._ttl = ttl
-        self._expires: dict = {}
+        self._expires: dict[K, float] = {}
         super().__init__()
 
     def _prune(self, key):

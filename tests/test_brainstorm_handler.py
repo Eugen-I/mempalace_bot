@@ -242,15 +242,16 @@ async def test_confirm_no_linked_block_empty_context():
 async def test_confirm_linked_html_escaped():
     await h.run_storm(4242, FakeStatus(), "Тема")
     h._storm_data[4242]["context"] = {
-        "notes": "- идея с тегом <b>сырым</b>",
+        "notes": "- <b>идея</b> с тегом <script>сырым</script>",
         "palace": "",
         "kg": "",
     }
     cb = FakeCb(data="bs_pick:1")
     await h.cb_pick_idea(cb)
     preview = cb.message.edits[-1]
-    assert "<b>сырым</b>" not in preview
-    assert "&lt;b&gt;сырым&lt;/b&gt;" in preview
+    assert "<b>идея</b>" in preview
+    assert "<script>" not in preview
+    assert "&lt;script&gt;сырым&lt;/script&gt;" in preview
 
 
 # ─── Сохранение (мост в save-флоу) ───

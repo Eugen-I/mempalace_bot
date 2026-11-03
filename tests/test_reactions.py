@@ -1,7 +1,6 @@
 """Unit tests for handlers.reactions (save AI replies via emoji reactions)."""
 
 import pytest
-
 from aiogram.types import ReactionTypeEmoji
 
 from handlers.reactions import handle_ai_reaction, router
@@ -50,7 +49,6 @@ def test_router_message_reaction_registered():
 @pytest.mark.asyncio
 async def test_not_allowed_user_ignored(allow, monkeypatch):
     allow._ai_msg_cache[999] = {1: "текст"}
-    ev = FakeEvent(FakeUser(), [], 1)  # user.id=111 ok, но проверяем другого юзера
     ev2 = FakeEvent(type("U", (), {"id": 5})(), [], 1)
     await handle_ai_reaction(ev2)
     # событие с неразрешённым юзером не сохраняет ничего
@@ -151,7 +149,6 @@ async def test_save_error_reports_to_user(allow, monkeypatch):
     allow._ai_msg_cache[111] = {1: "текст"}
     allow.NOTES_DIR = "/nonexistent/dir/xyz"
 
-    orig_open = open
     monkeypatch.setattr(allow.os, "makedirs", lambda *a, **k: None)
 
     ev = FakeEvent(FakeUser(), ["👍"], 1)

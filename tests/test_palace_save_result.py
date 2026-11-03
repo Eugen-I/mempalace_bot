@@ -63,10 +63,13 @@ def test_none_raw_returns_header_only():
 
 
 def test_html_injected_names_are_escaped():
-    text = _format_save_result('{"success": true, "drawer_id": "a<b>c"}', "<x>", "y&")
+    text = _format_save_result(
+        '{"success": true, "drawer_id": "a<script>c</script>"}', "<x>", "y&"
+    )
     assert "<x>" not in text
     assert "&lt;x&gt;" in text
-    assert "a&lt;b&gt;c" in text
+    assert "<script>" not in text
+    assert "a&lt;script&gt;c&lt;/script&gt;" in text
 
 
 def test_html_injected_error_detail_is_escaped():

@@ -5,10 +5,8 @@
 import asyncio
 
 import httpx
-import pytest
 
 import services.tavily_search as tavily
-
 
 # ─── search_tavily: валидация ───
 
