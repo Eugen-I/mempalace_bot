@@ -44,6 +44,12 @@ jobs:
         run: python -m mypy --explicit-package-bases handlers/ services/ main.py config.py
 
       - name: Tests (pytest + coverage)
+        env:
+          # CI не имеет локального .env: main.py валидирует конфиг при импорте.
+          # test-token разрешён только в тестовом окружении (см. config.py).
+          TELEGRAM_BOT_TOKEN: "123456789:CI_TEST_TOKEN"
+          ADMIN_ID: "4242"
+          MEMPALACE_ALLOW_TEST_TOKEN: "1"
         run: python -m pytest --cov=. --cov-report=term-missing --cov-report=xml --cov-fail-under=5
 
       - name: Security (bandit, tracked Python only)
