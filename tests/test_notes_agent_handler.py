@@ -74,6 +74,12 @@ def allow_user(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def mock_note_titles(monkeypatch):
+    """Keep confirmation tests off the real Apple Notes/JXA bridge."""
+    monkeypatch.setattr("services.apple_notes.list_notes", lambda: [])
+
+
+@pytest.fixture(autouse=True)
 def clear_pending():
     na._pending_confirm.clear()
     na._waiting_for_notes_input.clear()

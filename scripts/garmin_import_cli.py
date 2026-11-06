@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.garmin.config import get_config  # noqa: E402
 from services.garmin.db import init_db  # noqa: E402
-from services.garmin.importers.wellness_fit import import_wellness_path  # noqa: E402
+from services.garmin.importers import import_any_path  # noqa: E402
 from services.garmin.raw_store import RawStore  # noqa: E402
 
 
@@ -27,7 +27,7 @@ def _candidates(folder: Path) -> list[Path]:
     return sorted(
         path
         for path in folder.iterdir()
-        if path.is_file() and path.suffix.lower() in {".zip", ".fit"}
+        if path.is_file() and path.suffix.lower() in {".zip", ".fit", ".csv", ".json", ".tcx"}
     )
 
 
@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     results = []
     try:
         for path in paths:
-            result = import_wellness_path(
+            result = import_any_path(
                 path,
                 conn=conn,
                 raw_store=store,

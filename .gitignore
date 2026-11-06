@@ -21,6 +21,13 @@ venv/
 models.json
 models_V1.json
 mempalace/
+garmin_data/
+garmin/raw/
+garmin/import/
+garmin/reports/
+garmin/quarantine/
+garmin/tmp/
+garmin/charts/
 *.pdf
 *.app
 nohup.out

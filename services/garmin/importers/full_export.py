@@ -17,7 +17,7 @@ import json
 import os
 import tempfile
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET  # nosec B405
@@ -32,6 +32,7 @@ from ..repository import (
     record_raw_file,
     start_run,
     upsert_activity,
+    upsert_daily,
 )
 from ..zip_safety import ZipLimits, extract
 from .activities_csv import (
@@ -93,6 +94,18 @@ def _synthetic_id(
 
 
 def _iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        ts = float(value)
+        if ts > 1e11:
+            ts /= 1000.0
+        if 1e8 < ts < 2.5e10:
+            try:
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                return dt.replace(tzinfo=None, microsecond=0).isoformat()
+            except (ValueError, OverflowError, OSError):
+                return None
     if isinstance(value, datetime):
         if value.tzinfo is not None:
             value = value.replace(tzinfo=None)
@@ -107,6 +120,10 @@ def _type_value(value: Any) -> str:
 
 
 def _json_items(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+        first = data[0]
+        if any(key in first for key in _JSON_LIST_KEYS):
+            data = first
     if isinstance(data, dict):
         for key in _JSON_LIST_KEYS:
             value = data.get(key)
@@ -128,18 +145,48 @@ def _json_items(data: Any) -> list[dict[str, Any]]:
 
 
 def _from_json_item(item: dict[str, Any], user_id: int) -> dict[str, Any] | None:
-    start_time = _iso(
+    start_val = (
         item.get("startTimeLocal")
         or item.get("startTimeGmt")
         or item.get("startTime")
         or item.get("beginTimestamp")
     )
+    start_time = _iso(start_val)
     if start_time is None:
         return None
     activity_type = _type_value(item.get("activityType") or item.get("sport"))
-    duration_s = _float(item.get("duration") or item.get("elapsedDuration"))
-    duration_min = duration_s / 60.0 if duration_s is not None else None
-    distance_m = _float(item.get("distance"))
+
+    is_garmin_json_units = isinstance(start_val, (int, float)) or (
+        isinstance(item.get("beginTimestamp"), (int, float))
+    )
+
+    duration_raw = _float(item.get("duration") or item.get("elapsedDuration"))
+    if duration_raw is not None:
+        if is_garmin_json_units or duration_raw > 100000:
+            duration_min = duration_raw / 60000.0
+        else:
+            duration_min = duration_raw / 60.0
+    else:
+        duration_min = None
+
+    distance_raw = _float(item.get("distance"))
+    if distance_raw is not None:
+        if is_garmin_json_units:
+            distance_m = distance_raw / 100.0
+        else:
+            distance_m = distance_raw
+    else:
+        distance_m = None
+
+    elev_raw = _float(item.get("elevationGain") or item.get("totalAscent"))
+    if elev_raw is not None:
+        if is_garmin_json_units:
+            elevation_gain_m = elev_raw / 100.0
+        else:
+            elevation_gain_m = elev_raw
+    else:
+        elevation_gain_m = None
+
     activity_id = _clean_id(
         item.get("activityId")
         or item.get("activityIdStr")
@@ -169,9 +216,7 @@ def _from_json_item(item: dict[str, Any], user_id: int) -> dict[str, Any] | None
         "aerobic_te": _float(item.get("aerobicTrainingEffect")),
         "anaerobic_te": _float(item.get("anaerobicTrainingEffect")),
         "avg_pace_s_per_km": None,
-        "elevation_gain_m": _float(
-            item.get("elevationGain") or item.get("totalAscent")
-        ),
+        "elevation_gain_m": round(elevation_gain_m, 1) if elevation_gain_m is not None else None,
         "raw_json": json.dumps(item, ensure_ascii=False, sort_keys=True),
     }
 
@@ -374,6 +419,337 @@ def _store_activity(
         result.days.append(str(activity["start_time"])[:10])
 
 
+def _store_daily(
+    conn,
+    row: dict[str, Any],
+    result: ImportResult,
+    *,
+    file: str,
+) -> None:
+    result.rows_total += 1
+    try:
+        status = upsert_daily(conn, row, source=SOURCE)
+    except Exception as exc:  # noqa: BLE001 - one row must not stop the file
+        result.rows_failed += 1
+        result.issues.append(ImportIssue(file=file, error=str(exc)))
+        return
+    if status == "skipped":
+        result.rows_skipped += 1
+    else:
+        result.rows_ok += 1
+        result.days.append(str(row["date"])[:10])
+
+
+def _to_list_of_dicts(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        for val in data.values():
+            if isinstance(val, list):
+                items = [item for item in val if isinstance(item, dict)]
+                if items:
+                    return items
+    return []
+
+
+def _import_uds_file(
+    conn,
+    raw_store: RawStore,
+    *,
+    user_id: int,
+    path: Path,
+    result: ImportResult,
+    record_raw: bool,
+) -> None:
+    result.files_total += 1
+    try:
+        if record_raw:
+            _save_raw(conn, raw_store, user_id=user_id, path=path, result=result)
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        items = _to_list_of_dicts(data)
+        if not items:
+            raise GarminImportError("no UDS records in JSON")
+        for item in items:
+            date_str = str(item.get("calendarDate") or "")[:10]
+            if not date_str or len(date_str) < 10:
+                continue
+            row: dict[str, Any] = {
+                "user_id": user_id,
+                "date": date_str,
+                "steps": _int(item.get("totalSteps")),
+                "resting_hr": _float(item.get("restingHeartRate")),
+                "active_calories": _float(item.get("activeKilocalories")),
+                "total_calories": _float(item.get("totalKilocalories")),
+                "spo2_avg": _float(item.get("averageSpo2Value")),
+                "spo2_min": _float(item.get("lowestSpo2Value")),
+            }
+            stress_agg = (item.get("allDayStress") or {}).get("aggregatorList") or []
+            total_stress = next(
+                (a for a in stress_agg if a.get("type") == "TOTAL"), None
+            )
+            if total_stress:
+                row["stress_avg"] = _float(total_stress.get("averageStressLevel"))
+                row["stress_max"] = _float(total_stress.get("maxStressLevel"))
+                high_dur = _float(total_stress.get("highDuration"))
+                if high_dur is not None:
+                    row["stress_high_min"] = round(high_dur / 60.0, 1)
+
+            bb = item.get("bodyBattery") or {}
+            row["body_battery_charged"] = _int(bb.get("chargedValue"))
+            row["body_battery_spent"] = _int(bb.get("drainedValue"))
+            for stat in bb.get("bodyBatteryStatList") or []:
+                st_type = stat.get("bodyBatteryStatType")
+                if st_type == "STARTOFDAY":
+                    row["body_battery_morning"] = _int(stat.get("statsValue"))
+                elif st_type == "ENDOFDAY":
+                    row["body_battery_evening"] = _int(stat.get("statsValue"))
+
+            resp = item.get("respiration") or {}
+            row["respiration_avg"] = _float(resp.get("avgWakingRespirationValue"))
+            row["respiration_min"] = _float(resp.get("lowestRespirationValue"))
+            row["respiration_max"] = _float(resp.get("highestRespirationValue"))
+
+            _store_daily(conn, row, result, file=path.name)
+        result.files_ok += 1
+    except Exception as exc:  # noqa: BLE001
+        result.files_failed += 1
+        result.issues.append(ImportIssue(file=path.name, error=str(exc)))
+
+
+def _import_sleep_file(
+    conn,
+    raw_store: RawStore,
+    *,
+    user_id: int,
+    path: Path,
+    result: ImportResult,
+    record_raw: bool,
+) -> None:
+    result.files_total += 1
+    try:
+        if record_raw:
+            _save_raw(conn, raw_store, user_id=user_id, path=path, result=result)
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        items = _to_list_of_dicts(data)
+        if not items:
+            raise GarminImportError("no sleep records in JSON")
+        for item in items:
+            date_str = str(item.get("calendarDate") or "")[:10]
+            if not date_str or len(date_str) < 10:
+                ts = _iso(
+                    item.get("sleepStartTimestampGMT")
+                    or item.get("sleepEndTimestampGMT")
+                )
+                if ts:
+                    date_str = ts[:10]
+                else:
+                    continue
+            deep = _float(item.get("deepSleepSeconds")) or 0.0
+            light = _float(item.get("lightSleepSeconds")) or 0.0
+            rem = _float(item.get("remSleepSeconds")) or 0.0
+            awake = _float(item.get("awakeSleepSeconds")) or 0.0
+            total_s = deep + light + rem
+            scores = item.get("sleepScores") or {}
+            overall_score = _int(scores.get("overallScore"))
+            if total_s <= 0 and overall_score is None:
+                continue
+
+            row: dict[str, Any] = {
+                "user_id": user_id,
+                "date": date_str,
+            }
+            if total_s > 0:
+                row["sleep_hours"] = round(total_s / 3600.0, 2)
+                row["sleep_stages_json"] = json.dumps(
+                    {
+                        "deep": round(deep / 60.0, 1),
+                        "light": round(light / 60.0, 1),
+                        "rem": round(rem / 60.0, 1),
+                        "awake": round(awake / 60.0, 1),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            if overall_score is not None:
+                row["sleep_score"] = overall_score
+
+            _store_daily(conn, row, result, file=path.name)
+        result.files_ok += 1
+    except Exception as exc:  # noqa: BLE001
+        result.files_failed += 1
+        result.issues.append(ImportIssue(file=path.name, error=str(exc)))
+
+
+def _import_health_status_file(
+    conn,
+    raw_store: RawStore,
+    *,
+    user_id: int,
+    path: Path,
+    result: ImportResult,
+    record_raw: bool,
+) -> None:
+    result.files_total += 1
+    try:
+        if record_raw:
+            _save_raw(conn, raw_store, user_id=user_id, path=path, result=result)
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        items = _to_list_of_dicts(data)
+        if not items:
+            raise GarminImportError("no health status records in JSON")
+        for item in items:
+            date_str = str(item.get("calendarDate") or "")[:10]
+            if not date_str or len(date_str) < 10:
+                continue
+            row: dict[str, Any] = {
+                "user_id": user_id,
+                "date": date_str,
+            }
+            for m in item.get("metrics") or []:
+                m_type = m.get("type")
+                val = _float(m.get("value"))
+                if m_type == "HRV" and val is not None:
+                    row["hrv"] = round(val, 1)
+                    if m.get("status"):
+                        row["hrv_status"] = str(m["status"])
+                    upper = _float(m.get("baselineUpperLimit"))
+                    lower = _float(m.get("baselineLowerLimit"))
+                    if upper is not None and lower is not None:
+                        row["hrv_baseline_7d"] = round((upper + lower) / 2.0, 1)
+                elif m_type == "HR" and val is not None:
+                    row["resting_hr"] = round(val, 1)
+                elif m_type == "SPO2" and val is not None:
+                    row["spo2_avg"] = round(val, 1)
+                elif m_type == "RESPIRATION" and val is not None:
+                    row["respiration_avg"] = round(val, 1)
+
+            if len(row) > 2:
+                _store_daily(conn, row, result, file=path.name)
+        result.files_ok += 1
+    except Exception as exc:  # noqa: BLE001
+        result.files_failed += 1
+        result.issues.append(ImportIssue(file=path.name, error=str(exc)))
+
+
+def _import_training_readiness_file(
+    conn,
+    raw_store: RawStore,
+    *,
+    user_id: int,
+    path: Path,
+    result: ImportResult,
+    record_raw: bool,
+) -> None:
+    result.files_total += 1
+    try:
+        if record_raw:
+            _save_raw(conn, raw_store, user_id=user_id, path=path, result=result)
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        items = _to_list_of_dicts(data)
+        if not items:
+            raise GarminImportError("no training readiness records in JSON")
+        for item in items:
+            date_str = str(item.get("calendarDate") or "")[:10]
+            if not date_str or len(date_str) < 10:
+                continue
+            row: dict[str, Any] = {
+                "user_id": user_id,
+                "date": date_str,
+            }
+            if item.get("score") is not None:
+                row["readiness_score"] = _int(item["score"])
+            if item.get("level"):
+                row["readiness_level"] = str(item["level"])
+            recovery = _float(item.get("recoveryTime"))
+            if recovery is not None:
+                row["recovery_time_h"] = round(recovery, 1)
+            hrv_avg = _float(item.get("hrvWeeklyAverage"))
+            if hrv_avg is not None:
+                row["hrv_baseline_28d"] = round(hrv_avg, 1)
+
+            if len(row) > 2:
+                _store_daily(conn, row, result, file=path.name)
+        result.files_ok += 1
+    except Exception as exc:  # noqa: BLE001
+        result.files_failed += 1
+        result.issues.append(ImportIssue(file=path.name, error=str(exc)))
+
+
+def _import_biometrics_file(
+    conn,
+    raw_store: RawStore,
+    *,
+    user_id: int,
+    path: Path,
+    result: ImportResult,
+    record_raw: bool,
+) -> None:
+    result.files_total += 1
+    try:
+        if record_raw:
+            _save_raw(conn, raw_store, user_id=user_id, path=path, result=result)
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        items = _to_list_of_dicts(data)
+        if not items:
+            raise GarminImportError("no biometrics records in JSON")
+        for item in items:
+            meta = item.get("metaData") or {}
+            dt_str = str(meta.get("calendarDate") or "")
+            if not dt_str or len(dt_str) < 10:
+                continue
+            date_str = dt_str[:10]
+            w_raw = _float((item.get("weight") or {}).get("weight"))
+            if w_raw is not None:
+                weight_kg = round(w_raw / 1000.0 if w_raw > 1000 else w_raw, 2)
+                row = {
+                    "user_id": user_id,
+                    "date": date_str,
+                    "weight_kg": weight_kg,
+                }
+                _store_daily(conn, row, result, file=path.name)
+        result.files_ok += 1
+    except Exception as exc:  # noqa: BLE001
+        result.files_failed += 1
+        result.issues.append(ImportIssue(file=path.name, error=str(exc)))
+
+
+def _import_fitness_age_file(
+    conn,
+    raw_store: RawStore,
+    *,
+    user_id: int,
+    path: Path,
+    result: ImportResult,
+    record_raw: bool,
+) -> None:
+    result.files_total += 1
+    try:
+        if record_raw:
+            _save_raw(conn, raw_store, user_id=user_id, path=path, result=result)
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        items = _to_list_of_dicts(data)
+        if not items:
+            raise GarminImportError("no fitness age records in JSON")
+        for item in items:
+            date_str = str(item.get("calendarDate") or "")[:10]
+            if not date_str or len(date_str) < 10:
+                continue
+            row: dict[str, Any] = {
+                "user_id": user_id,
+                "date": date_str,
+            }
+            if item.get("fitnessAge") is not None:
+                row["fitness_age"] = _float(item["fitnessAge"])
+            if item.get("vo2Max") is not None:
+                row["vo2max"] = _float(item["vo2Max"])
+            if len(row) > 2:
+                _store_daily(conn, row, result, file=path.name)
+        result.files_ok += 1
+    except Exception as exc:  # noqa: BLE001
+        result.files_failed += 1
+        result.issues.append(ImportIssue(file=path.name, error=str(exc)))
+
+
 def _import_json_file(
     conn,
     raw_store: RawStore,
@@ -467,30 +843,46 @@ def _import_tcx_file(
         result.issues.append(ImportIssue(file=path.name, error=str(exc)))
 
 
-def _collect(root: Path) -> tuple[list[Path], list[Path], list[Path], list[Path]]:
-    csv_paths: list[Path] = []
-    json_paths: list[Path] = []
-    fit_paths: list[Path] = []
-    tcx_paths: list[Path] = []
+def _collect(root: Path) -> dict[str, list[Path]]:
+    files_by_type: dict[str, list[Path]] = {
+        "activities_csv": [],
+        "activities_json": [],
+        "fit": [],
+        "tcx": [],
+        "uds": [],
+        "sleep": [],
+        "health": [],
+        "readiness": [],
+        "biometrics": [],
+        "fitness_age": [],
+    }
     for current, _dirs, files in os.walk(root):
         for name in files:
             path = Path(current) / name
             lower = name.lower()
             suffix = path.suffix.lower()
             if suffix == ".csv" and lower.startswith("activities"):
-                csv_paths.append(path)
-            elif suffix == ".json" and "summarizedactivities" in lower:
-                json_paths.append(path)
+                files_by_type["activities_csv"].append(path)
+            elif suffix == ".json":
+                if "summarizedactivities" in lower:
+                    files_by_type["activities_json"].append(path)
+                elif "udsfile" in lower:
+                    files_by_type["uds"].append(path)
+                elif "sleepdata" in lower:
+                    files_by_type["sleep"].append(path)
+                elif "healthstatusdata" in lower:
+                    files_by_type["health"].append(path)
+                elif "trainingreadiness" in lower:
+                    files_by_type["readiness"].append(path)
+                elif "userbiometrics" in lower:
+                    files_by_type["biometrics"].append(path)
+                elif "fitnessagedata" in lower:
+                    files_by_type["fitness_age"].append(path)
             elif suffix == ".fit":
-                fit_paths.append(path)
+                files_by_type["fit"].append(path)
             elif suffix == ".tcx":
-                tcx_paths.append(path)
-    return (
-        sorted(csv_paths),
-        sorted(json_paths),
-        sorted(fit_paths),
-        sorted(tcx_paths),
-    )
+                files_by_type["tcx"].append(path)
+    return {k: sorted(v) for k, v in files_by_type.items()}
 
 
 def _import_tree(
@@ -502,13 +894,13 @@ def _import_tree(
     result: ImportResult,
     record_raw: bool,
 ) -> None:
-    csv_paths, json_paths, fit_paths, tcx_paths = _collect(root)
-    if not (csv_paths or json_paths or fit_paths or tcx_paths):
+    collected = _collect(root)
+    if not any(collected.values()):
         result.issues.append(
             ImportIssue(file=str(root), error="no activity files found")
         )
         return
-    for path in csv_paths:
+    for path in collected["activities_csv"]:
         import_csv_into(
             conn,
             raw_store,
@@ -518,7 +910,7 @@ def _import_tree(
             source="activities_csv",
             record_raw=record_raw,
         )
-    for path in json_paths:
+    for path in collected["activities_json"]:
         _import_json_file(
             conn,
             raw_store,
@@ -527,7 +919,7 @@ def _import_tree(
             result=result,
             record_raw=record_raw,
         )
-    for path in fit_paths:
+    for path in collected["fit"]:
         _import_fit_file(
             conn,
             raw_store,
@@ -537,8 +929,62 @@ def _import_tree(
             record_raw=record_raw,
             strict=False,
         )
-    for path in tcx_paths:
+    for path in collected["tcx"]:
         _import_tcx_file(
+            conn,
+            raw_store,
+            user_id=user_id,
+            path=path,
+            result=result,
+            record_raw=record_raw,
+        )
+    for path in collected["uds"]:
+        _import_uds_file(
+            conn,
+            raw_store,
+            user_id=user_id,
+            path=path,
+            result=result,
+            record_raw=record_raw,
+        )
+    for path in collected["sleep"]:
+        _import_sleep_file(
+            conn,
+            raw_store,
+            user_id=user_id,
+            path=path,
+            result=result,
+            record_raw=record_raw,
+        )
+    for path in collected["health"]:
+        _import_health_status_file(
+            conn,
+            raw_store,
+            user_id=user_id,
+            path=path,
+            result=result,
+            record_raw=record_raw,
+        )
+    for path in collected["readiness"]:
+        _import_training_readiness_file(
+            conn,
+            raw_store,
+            user_id=user_id,
+            path=path,
+            result=result,
+            record_raw=record_raw,
+        )
+    for path in collected["biometrics"]:
+        _import_biometrics_file(
+            conn,
+            raw_store,
+            user_id=user_id,
+            path=path,
+            result=result,
+            record_raw=record_raw,
+        )
+    for path in collected["fitness_age"]:
+        _import_fitness_age_file(
             conn,
             raw_store,
             user_id=user_id,
@@ -576,6 +1022,10 @@ def looks_like_full_export(path: str | Path) -> bool:
                         "di_connect" in lower
                         or "di-connect" in lower
                         or "summarizedactivities" in lower
+                        or "udsfile" in lower
+                        or "sleepdata" in lower
+                        or "healthstatusdata" in lower
+                        or "trainingreadiness" in lower
                         or base.startswith("activities")
                         or (base.endswith(".fit") and "activity" in base)
                     ):
@@ -590,9 +1040,12 @@ def looks_like_full_export(path: str | Path) -> bool:
                 return True
             for name in files:
                 lower = name.lower()
-                if lower.startswith("activities") and lower.endswith(".csv"):
-                    return True
-                if "summarizedactivities" in lower and lower.endswith(".json"):
+                if (
+                    (lower.startswith("activities") and lower.endswith(".csv"))
+                    or ("summarizedactivities" in lower and lower.endswith(".json"))
+                    or ("udsfile" in lower and lower.endswith(".json"))
+                    or ("sleepdata" in lower and lower.endswith(".json"))
+                ):
                     return True
     return False
 
@@ -651,14 +1104,70 @@ def import_full_export_path(
                 source=SOURCE,
             )
         elif suffix == ".json":
-            _import_json_file(
-                conn,
-                raw_store,
-                user_id=user_id,
-                path=source_path,
-                result=result,
-                record_raw=True,
-            )
+            lower = source_path.name.lower()
+            if "udsfile" in lower:
+                _import_uds_file(
+                    conn,
+                    raw_store,
+                    user_id=user_id,
+                    path=source_path,
+                    result=result,
+                    record_raw=True,
+                )
+            elif "sleepdata" in lower:
+                _import_sleep_file(
+                    conn,
+                    raw_store,
+                    user_id=user_id,
+                    path=source_path,
+                    result=result,
+                    record_raw=True,
+                )
+            elif "healthstatusdata" in lower:
+                _import_health_status_file(
+                    conn,
+                    raw_store,
+                    user_id=user_id,
+                    path=source_path,
+                    result=result,
+                    record_raw=True,
+                )
+            elif "trainingreadiness" in lower:
+                _import_training_readiness_file(
+                    conn,
+                    raw_store,
+                    user_id=user_id,
+                    path=source_path,
+                    result=result,
+                    record_raw=True,
+                )
+            elif "userbiometrics" in lower:
+                _import_biometrics_file(
+                    conn,
+                    raw_store,
+                    user_id=user_id,
+                    path=source_path,
+                    result=result,
+                    record_raw=True,
+                )
+            elif "fitnessagedata" in lower:
+                _import_fitness_age_file(
+                    conn,
+                    raw_store,
+                    user_id=user_id,
+                    path=source_path,
+                    result=result,
+                    record_raw=True,
+                )
+            else:
+                _import_json_file(
+                    conn,
+                    raw_store,
+                    user_id=user_id,
+                    path=source_path,
+                    result=result,
+                    record_raw=True,
+                )
         elif suffix == ".tcx":
             _import_tcx_file(
                 conn,

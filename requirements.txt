@@ -32,6 +32,12 @@ numpy>=2.0
 # chromadb 1.6.0 с исправлениями PYSEC-2026-311/3813/3814/3815 ещё не выпущен (проверено 2026-11-03)
 chromadb==1.5.9
 
+# Garmin export-first core (P0); online client is installed separately in P8
+fitparse>=1.2
+reportlab>=4.4
+matplotlib>=3.9
+jsonschema>=4.23
+
 # Безопасные минимумы транзитивных зависимостей (pip-audit, 2026-11-03)
 aiohttp>=3.14.4
 anyio>=4.14.2

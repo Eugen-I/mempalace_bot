@@ -53,6 +53,14 @@ from handlers import (  # noqa: E402
 )
 from handlers.messages import process_user_message  # noqa: E402
 
+# Garmin is optional: a missing dependency (fitparse/reportlab/matplotlib)
+# must not take the whole bot down.
+try:
+    from handlers import garmin  # noqa: E402
+except ImportError as _garmin_exc:  # pragma: no cover - depends on venv
+    garmin = None  # type: ignore[assignment]
+    logger.warning("Garmin disabled: %s", _garmin_exc)
+
 
 def _safe_include(router):
     try:
@@ -66,6 +74,10 @@ _safe_include(settings.router)
 _safe_include(agent.router)
 _safe_include(photos.router)
 _safe_include(notes.router)
+# Garmin must be registered before pdf: its document handler claims only
+# Garmin ZIP/FIT files and returns UNHANDLED for everything else.
+if garmin is not None:
+    _safe_include(garmin.router)
 _safe_include(pdf.router)
 _safe_include(voice.router)
 _safe_include(palace.router)
@@ -114,6 +126,7 @@ async def cmd_start(message: types.Message):
                 types.KeyboardButton(text="📜 Транскрипты"),
             ],
             [
+                types.KeyboardButton(text="🏃 Garmin"),
                 types.KeyboardButton(text="📝 Apple Notes"),
             ],
         ],
@@ -129,6 +142,18 @@ async def cmd_palace_button(message: types.Message):
     from handlers.palace import cmd_palace
 
     await cmd_palace(message)
+
+
+@fallback_router.message(F.text == "🏃 Garmin")
+@allowed_only
+async def cmd_garmin_button(message: types.Message):
+    if garmin is None:
+        await message.answer(
+            "⚠️ Garmin недоступен: не установлены зависимости "
+            "(fitparse, reportlab, matplotlib)."
+        )
+        return
+    await garmin._show_main(message, message.from_user.id)
 
 
 @fallback_router.message(F.text == "📝 Apple Notes")
