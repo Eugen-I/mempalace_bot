@@ -458,6 +458,10 @@ def _iter_ai_chunks(
         return
 
     if engine == "gemini":
+        if model in ("gemini-flash-latest", "gemini", ""):
+            model = "gemini-2.5-flash"
+        elif model in ("gemini-pro-latest", "gemini-pro"):
+            model = "gemini-2.5-pro"
         client = _gemini_client()
         contents = _build_gemini_contents(
             messages,

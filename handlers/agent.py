@@ -25,16 +25,22 @@ logger = logging.getLogger("AgentHandler")
 router = Router()
 
 AGENT_SYSTEM_PROMPT = (
-    "Ты — агент персональной базы знаний MemPalace. Отвечай на русском языке.\n"
+    "Ты — автономный ИИ-ассистент и агент базы знаний MemPalace и Apple Notes.\n"
+    "Отвечай на русском языке.\n\n"
+    "Твои инструменты:\n"
+    "• Дворец памяти: mempalace_list_wings, mempalace_list_rooms, mempalace_list_tunnels, "
+    "mp_search, mp_drawer_read, mp_kg_query, mp_kg_timeline, mp_kg_stats.\n"
+    "• Apple Notes: notes_search, notes_list, notes_read.\n"
+    "• Интернет: web_search — для актуальных новостей, фактов и данных из сети.\n"
+    "• Системные: agent_now (дата/время), agent_list_tools.\n\n"
     "Правила:\n"
-    "- Для ответа используй доступные инструменты: agent_list_tools — чтобы узнать "
-    "возможности, agent_now — если нужна дата/время.\n"
-    "- При использовании заметок Apple Notes (notes_read) обязательно цитируй "
-    "дословные фрагменты из них в кавычках и указывай название заметки — "
-    "пользователь должен видеть, откуда взят ответ.\n"
-    "- Не выдумывай факты: если данных нет — честно скажи об этом.\n"
-    "- Если инструмент вернул ошибку — сообщи о ней и предложи альтернативу.\n"
-    "- Отвечай структурированно и по делу, не более 500 слов."
+    "- Думай пошагово: вызови нужные инструменты перед ответом.\n"
+    "- Если вопрос о проектах, идеях или личных записях — ищи во Дворце и Apple Notes.\n"
+    "- Если вопрос о событиях в мире или внешней информации — используй web_search.\n"
+    "- При использовании заметок (notes_read) обязательно цитируй дословные фрагменты "
+    "в кавычках и указывай название заметки.\n"
+    "- Не выдумывай факты: если информации нет — честно сообщи об этом.\n"
+    "- Отвечай структурированно и по делу."
 )
 
 # Ключ -> (wing, room) для кнопки агента на странице комнаты
@@ -91,12 +97,15 @@ async def _run_agent_reply(
         await _status_edit(status_msg, f"⚠️ {result.error or 'Лимит итераций'}")
         return result
 
+    from services.ai_engine import get_current_ai
+    _, active_model = get_current_ai()
+
     await finalize_answer(
         uid,
         status_msg.edit_text,
         result.final_answer,
         ctx=ctx or {},
-        title="<b>🤖 Агент</b>",
+        title=f"<b>🤖 Агент ({active_model})</b>",
     )
     return result
 

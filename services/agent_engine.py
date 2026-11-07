@@ -24,6 +24,7 @@ from services import (  # noqa: F401
     agent_mcp_tools,
     agent_notes_tools,
     agent_notes_write_tools,
+    agent_web_tools,
 )
 from services import agent_tools as atools
 from services.ai_engine import (
@@ -139,6 +140,11 @@ def _model_tool_call(engine: str, model: str, messages: list[dict], tools: list[
             api_key=api_key,
         )
         temperature = 0.4
+        # Google OpenAI-совместимый эндпоинт требует конкретных имён моделей
+        if model in ("gemini-flash-latest", "gemini", ""):
+            model = "gemini-2.5-flash"
+        elif model in ("gemini-pro-latest", "gemini-pro"):
+            model = "gemini-2.5-pro"
     else:
         raise AgentEngineError(f"Неподдерживаемый движок: '{engine}'.")
 
@@ -202,6 +208,37 @@ def _extract_tool_call_from_content(content: str, tool_map: dict) -> dict | None
     return {"id": "call_text", "name": m.group("name"), "arguments": obj}
 
 
+def _format_tool_status(name: str, args: dict, step: int, max_steps: int) -> str:
+    """Формирует понятный статус выполнения инструмента для Telegram."""
+    prefix = f"Шаг {step}/{max_steps}: "
+    if name == "mp_search":
+        q = args.get("query", "")
+        return f"🔍 {prefix}Ищу во Дворце памяти: «{q[:40]}»…"
+    if name == "web_search":
+        q = args.get("query", "")
+        return f"🌐 {prefix}Ищу в интернете: «{q[:40]}»…"
+    if name == "notes_search":
+        q = args.get("query", "")
+        return f"📝 {prefix}Ищу в Apple Notes: «{q[:40]}»…"
+    if name == "notes_read":
+        return f"📄 {prefix}Читаю заметку Apple Notes…"
+    if name in ("mempalace_list_wings", "mp_list_wings"):
+        return f"🏛️ {prefix}Просматриваю крылья Дворца…"
+    if name in ("mempalace_list_rooms", "mp_list_rooms"):
+        w = args.get("wing", "")
+        return f"🚪 {prefix}Просматриваю комнаты крыла «{w}»…"
+    if name in ("mempalace_list_tunnels", "mp_list_tunnels"):
+        return f"🔗 {prefix}Проверяю туннели Дворца…"
+    if name in ("mempalace_list_drawers", "mp_list_drawers"):
+        r = args.get("room", "")
+        return f"🗄️ {prefix}Просматриваю ящики в комнате «{r}»…"
+    if name == "mp_drawer_read":
+        return f"📖 {prefix}Читаю ящик Дворца…"
+    if name == "agent_now":
+        return f"⏱️ {prefix}Уточняю текущую дату и время…"
+    return f"🔧 {prefix}{name}…"
+
+
 async def run_agent(
     system_prompt: str,
     user_prompt: str,
@@ -257,6 +294,10 @@ async def run_agent(
     messages.append({"role": "user", "content": user_prompt})
     steps: list[AgentStep] = []
 
+    if status_cb:
+        display_m = "Gemini" if engine == "gemini" else model
+        await status_cb(f"🤔 Анализирую задачу ({display_m})…")
+
     for i in range(1, max_iterations + 1):
         try:
             resp = await asyncio.to_thread(
@@ -307,6 +348,8 @@ async def run_agent(
                 embedded["id"] = f"call_text_{i}"
                 calls = [embedded]
             elif content:
+                if status_cb:
+                    await status_cb("🧠 Формирую итоговый ответ…")
                 return AgentResult(
                     final_answer=content,
                     steps=steps,
@@ -361,7 +404,9 @@ async def run_agent(
                     })
                     continue
             if status_cb:
-                await status_cb(f"🔧 Шаг {i}/{max_iterations}: {name}…")
+                await status_cb(
+                    _format_tool_status(name, call["arguments"], i, max_iterations)
+                )
             try:
                 output = await asyncio.wait_for(
                     atools.execute_tool(tool, call["arguments"]),

@@ -202,6 +202,66 @@ async def _mp_check_duplicate(args: dict) -> str:
 
 
 @register_tool(
+    "mempalace_list_wings",
+    "Список всех существующих крыльев во Дворце памяти с количеством комнат/записей. "
+    "Помогает понять общую структуру тем и проектов базы знаний.",
+    schema={"type": "object", "properties": {}},
+    category=CAT_PALACE,
+)
+async def _mp_list_wings(args: dict) -> str:
+    return await _call("mempalace_list_wings", {})
+
+
+@register_tool(
+    "mempalace_list_rooms",
+    "Список всех комнат в указанном крыле Дворце памяти. "
+    "Используй для просмотра комнат конкретного крыла.",
+    schema={
+        "type": "object",
+        "properties": {
+            "wing": {
+                "type": "string",
+                "description": "Имя крыла во Дворце памяти",
+            },
+        },
+        "required": ["wing"],
+    },
+    category=CAT_PALACE,
+)
+async def _mp_list_rooms(args: dict) -> str:
+    return await _call("mempalace_list_rooms", args)
+
+
+@register_tool(
+    "mempalace_list_tunnels",
+    "Список всех туннелей (смысловых связей между комнатами) во Дворце памяти. "
+    "Помогает исследовать ассоциации и связи между проектами и концепциями.",
+    schema={"type": "object", "properties": {}},
+    category=CAT_PALACE,
+)
+async def _mp_list_tunnels(args: dict) -> str:
+    return await _call("mempalace_list_tunnels", {})
+
+
+@register_tool(
+    "mempalace_list_drawers",
+    "Список записей (ящиков) в конкретной комнате Дворца памяти с их ID и заголовками.",
+    schema={
+        "type": "object",
+        "properties": {
+            "wing": {"type": "string", "description": "Крыло Дворца"},
+            "room": {"type": "string", "description": "Комната в крыле"},
+            "limit": {"type": "integer", "description": "Максимум записей (по умолчанию 20)"},
+        },
+        "required": ["wing", "room"],
+    },
+    category=CAT_PALACE,
+)
+async def _mp_list_drawers(args: dict) -> str:
+    return await _call("mempalace_list_drawers", args)
+
+
+@register_tool(
     "palace_create_tunnel",
     "Создать туннель (смысловую связь) между двумя комнатами во Дворце памяти. "
     "Например, связать концепцию из проекта А с архитектурой из проекта Б.",

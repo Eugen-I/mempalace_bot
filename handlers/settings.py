@@ -119,7 +119,10 @@ def build_settings_kb(user_id: int):
     kb = InlineKeyboardBuilder()
     kb.row(
         types.InlineKeyboardButton(
-            text="✨ Gemini", callback_data="set_ai:gemini-flash-latest",
+            text="✨ Gemini Flash", callback_data="set_ai:gemini-2.5-flash",
+        ),
+        types.InlineKeyboardButton(
+            text="🌟 Gemini Pro", callback_data="set_ai:gemini-2.5-pro",
         ),
     )
     kb.row(
