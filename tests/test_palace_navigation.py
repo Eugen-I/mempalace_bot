@@ -340,7 +340,10 @@ def test_cb_rooms_select_success(monkeypatch):
     asyncio.run(nav.cb_rooms_select(cb))
     text = cb.message.edits[-1][0]
     assert "Комнаты крыла философия" in text
-    assert "комната" in text
+    btn_texts = [
+        b.text for row in cb.message.edits[-1][2].inline_keyboard for b in row
+    ]
+    assert any("комната" in b for b in btn_texts)
     assert sh._user_context.get(4242) == {
         "wing": "философия", "room": None, "drawer": None,
     }

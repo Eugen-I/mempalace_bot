@@ -279,15 +279,18 @@ async def cb_rooms_select(cb: types.CallbackQuery):
     if truncated:
         sorted_rooms = sorted_rooms[:room_limit]
 
+    total_records = sum(rooms.values())
     lines = [
         f"🪪 <b>Комнаты крыла {wing}:</b>\n<i>{render_breadcrumbs(wing=wing).strip()}</i>\n",
+        f"<i>Всего комнат: {len(rooms)} | Записей: {total_records:,}</i>\n",
+        "Выберите комнату для чтения записей:",
     ]
     kb = InlineKeyboardBuilder()
-    for i, (r, count) in enumerate(sorted_rooms, 1):
-        lines.append(f"  {i}. <b>{safe_html_format(r)}</b> — {count} записей")
-        kb.row(types.InlineKeyboardButton(
+    for r, count in sorted_rooms:
+        kb.button(
             text=f"📖 {r}", callback_data=_build_room_callback_data(wing, r),
-        ))
+        )
+    kb.adjust(2)
     if truncated:
         lines.append(f"\n... и ещё {len(rooms) - room_limit} комнат.")
     kb.row(types.InlineKeyboardButton(text="🔎 Фильтр комнат", callback_data=f"p_rmsrch:{wing}"))
@@ -526,13 +529,19 @@ async def cb_taxonomy_wing(cb: types.CallbackQuery):
     if not rooms:
         await cb.message.edit_text(f"❌ В крыле «{wing}» нет комнат.")
         return
-    lines = [f"🪪 <b>Комнаты крыла {wing}:</b>\n"]
+    total_records = sum(rooms.values())
+    lines = [
+        f"🪪 <b>Комнаты крыла {wing}:</b>\n<i>{render_breadcrumbs(wing=wing).strip()}</i>\n",
+        f"<i>Всего комнат: {len(rooms)} | Записей: {total_records:,}</i>\n",
+        "Выберите комнату для чтения записей:",
+    ]
     kb = InlineKeyboardBuilder()
-    for i, (room, count) in enumerate(sorted(rooms.items(), key=lambda x: x[1], reverse=True)):
-        lines.append(f"  {i+1}. <b>{safe_html_format(room)}</b> — {count} записей")
-        kb.row(types.InlineKeyboardButton(
-            text=f"📖 {room}", callback_data=_build_room_callback_data(wing, room),
-        ))
+    for room, count in sorted(rooms.items(), key=lambda x: x[1], reverse=True):
+        kb.button(
+            text=f"📖 {room}",
+            callback_data=_build_room_callback_data(wing, room),
+        )
+    kb.adjust(2)
     kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tax"))
     await safe_edit_text(
         cb.message, "\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup(),
@@ -611,9 +620,19 @@ async def cb_export_map(cb: types.CallbackQuery):
         html_content = generate_palace_map_html(wdata, rooms_by_wing, parsed_t)
         html_bytes = html_content.encode("utf-8")
 
+        total_rooms_count = sum(len(r) for r in rooms_by_wing.values())
         caption = (
-            "🗺️ <b>Интерактивная карта комнат и туннелей Дворца памяти</b>\n\n"
-            "Откройте файл в браузере для просмотра интерактивного графа."
+            "🗺️ <b>Интерактивная карта (3D) комнат и туннелей Дворца памяти</b>\n\n"
+            f"📊 На карте: <b>{len(wdata)}</b> крыльев, "
+            f"<b>{total_rooms_count}</b> комнат, "
+            f"<b>{len(parsed_t)}</b> туннелей.\n\n"
+            "💡 <b>Как открыть в браузере (Chrome / Safari):</b>\n"
+            "1. Скачайте файл <code>palace_map.html</code>\n"
+            "2. Правый клик → <i>«Открыть в приложении»</i> → "
+            "<b>Google Chrome</b> или <b>Safari</b> "
+            "(или перетащите файл в окно браузера).\n"
+            "3. Управление: левая кнопка мыши — 3D-вращение, колёсико — зум, "
+            "Shift / правая — сдвиг."
         )
         await cb.message.answer_document(
             types.BufferedInputFile(html_bytes, filename="palace_map.html"),

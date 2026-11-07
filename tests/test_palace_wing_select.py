@@ -130,7 +130,7 @@ async def test_select_long_wing_opens_rooms(monkeypatch):
     cb = FakeCallback(navigation._build_wing_callback_data(LONG_WING), msg)
     await navigation.cb_rooms_select(cb)
     assert f"Комнаты крыла {LONG_WING}" in msg.edited[-1][0]
-    assert "Комната А" in msg.edited[-1][0]
+    assert any("Комната А" in b.text for b in _buttons_of(msg))
 
 
 @pytest.mark.asyncio
