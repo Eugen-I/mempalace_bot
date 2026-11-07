@@ -394,7 +394,33 @@ async def _answer_tr_ai(msg, uid: int, fname: str, question: str, with_web: bool
     except Exception as e:
         await msg.edit_text(format_user_error(e, "transcript_ai"))
         return
-    await msg.edit_text(result or "❌ Пустой ответ.", parse_mode="HTML")
+    if not result:
+        await msg.edit_text("❌ Пустой ответ.")
+        return
+
+    formatted = safe_html_format(result)
+    parts = split_message(formatted, limit=4000)
+    if not parts:
+        await msg.edit_text("❌ Пустой ответ.")
+        return
+
+    use_html = True
+    try:
+        await msg.edit_text(parts[0], parse_mode="HTML")
+    except Exception:
+        use_html = False
+        parts = split_message(result, limit=4000) or [result[:4000]]
+        await msg.edit_text(parts[0])
+
+    for part in parts[1:]:
+        if hasattr(msg, "answer"):
+            if use_html:
+                try:
+                    await msg.answer(part, parse_mode="HTML")
+                except Exception:
+                    await msg.answer(part)
+            else:
+                await msg.answer(part)
 
 
 async def handle_tr_ai_question(uid: int, message: types.Message, fname: str, question: str):

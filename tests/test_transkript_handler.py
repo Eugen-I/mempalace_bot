@@ -23,8 +23,13 @@ class FakeMessage:
 
     async def answer(self, text, parse_mode=None, reply_markup=None):
         self.answers.append((text, parse_mode, reply_markup))
-        status = SimpleNamespace(edits=[], deleted=False)
+        status = SimpleNamespace(edits=[], deleted=False, answers=[])
         status.edit_text = _make_edit(status.edits)
+
+        async def _ans(t, parse_mode=None, reply_markup=None):
+            status.answers.append((t, parse_mode, reply_markup))
+
+        status.answer = _ans
         self.status = status
         return status
 
@@ -860,3 +865,51 @@ async def test_handle_tr_ai_question(monkeypatch, tmp_path):
     assert msg.answers[0][0] == "🤔 Анализирую транскрипт..."
     status = msg.answers[0][0]
     assert status is not None
+
+
+@pytest.mark.asyncio
+async def test_answer_tr_ai_long_result_splits(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    _write_file(d, "a.txt", "контент транскрипта", 100)
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("ollama", "llama3"))
+    long_reply = ("Абзац текста для проверки разбиения сообщения.\n\n" * 150)
+    monkeypatch.setattr("services.ai_engine._sync_ai_call", lambda *a, **k: long_reply)
+
+    answers = []
+    st = SimpleNamespace(edits=[])
+    st.edit_text = _make_edit(st.edits)
+
+    async def fake_answer(text, parse_mode=None, **kw):
+        answers.append((text, parse_mode))
+
+    st.answer = fake_answer
+
+    await tr._answer_tr_ai(st, 4242, "a.txt", "вопрос", with_web=False)
+    assert len(st.edits) == 1
+    assert len(st.edits[0][0]) <= 4000
+    assert len(answers) > 0
+
+
+@pytest.mark.asyncio
+async def test_answer_tr_ai_html_error_falls_back_to_plain_text(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    _write_file(d, "a.txt", "контент", 100)
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("ollama", "llama3"))
+    monkeypatch.setattr(
+        "services.ai_engine._sync_ai_call",
+        lambda *a, **k: "Ответ с <незакрытым тегом",
+    )
+
+    st = SimpleNamespace(edits=[], edit_count=0)
+
+    async def fake_edit(text, parse_mode=None, **kw):
+        st.edit_count += 1
+        if parse_mode == "HTML":
+            raise RuntimeError("TelegramBadRequest: can't parse entities")
+        st.edits.append((text, parse_mode))
+
+    st.edit_text = fake_edit
+
+    await tr._answer_tr_ai(st, 4242, "a.txt", "вопрос", with_web=False)
+    assert len(st.edits) == 1
+    assert st.edits[0][1] is None

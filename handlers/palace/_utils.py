@@ -23,6 +23,7 @@ import logging
 import re
 from typing import Literal, overload
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InaccessibleMessage, Message
 
 logger = logging.getLogger("PalaceUtils")
@@ -65,6 +66,9 @@ async def safe_edit_text(
 
     Проверяет, что message не None и не InaccessibleMessage перед вызовом
     edit_text(). Если сообщение недоступно — молча возвращает False.
+    Если сообщение не содержит текста (например, документ/медиа с кнопками),
+    отправляет новый ответ через answer().
+    Ошибку "message is not modified" считает успешным завершением.
     При неожиданной ошибке логирует её и возвращает False.
 
     Args:
@@ -73,13 +77,31 @@ async def safe_edit_text(
         **kwargs: Дополнительные аргументы (parse_mode, reply_markup и т.д.).
 
     Returns:
-        True, если сообщение было успешно отредактировано, False иначе.
+        True, если сообщение было успешно отредактировано или отправлено заново, False иначе.
     """
     if message is None or isinstance(message, InaccessibleMessage):
         return False
     try:
         await message.edit_text(text, **kwargs)
         return True
+    except TelegramBadRequest as e:
+        err_msg = str(e).lower()
+        if "message is not modified" in err_msg:
+            return True
+        if "there is no text in the message to edit" in err_msg:
+            try:
+                if hasattr(message, "edit_reply_markup"):
+                    try:
+                        await message.edit_reply_markup(reply_markup=None)
+                    except Exception:
+                        pass
+                await message.answer(text, **kwargs)
+                return True
+            except Exception as answer_err:
+                _log_error("safe_edit_text_fallback", answer_err)
+                return False
+        _log_error("safe_edit_text", e)
+        return False
     except Exception as e:
         _log_error("safe_edit_text", e)
         return False
