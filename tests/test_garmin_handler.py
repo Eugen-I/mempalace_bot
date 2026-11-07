@@ -1031,3 +1031,15 @@ async def test_medications_manual_input_no_hardcoded_presets_and_ai_analysis(env
     cb_clear = FakeCb(data="garmin:meds:clear")
     await garmin.cb_meds_clear(cb_clear)
     assert "Список препаратов очищен" in cb_clear.message.edits[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cb_plan_ai_personalizes_and_saves_plan(env):
+    _seed_profile(env, _profile())
+    _seed_plan(env)
+    cb_ai = FakeCb(data="garmin:plan:ai")
+    await garmin.cb_plan_ai(cb_ai)
+    assert cb_ai.message.edits
+    text, kwargs = cb_ai.message.edits[0]
+    assert "План персонализирован" in text
+    assert "garmin:plan:accept" in _callback_ids(kwargs["reply_markup"])

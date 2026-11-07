@@ -255,3 +255,65 @@ def test_plan_and_safety_html_escapes_angle_brackets():
     assert "&lt;6 ч" in rendered
     tags = re.findall(r"</?([a-zA-Z0-9]+)>", rendered)
     assert set(tags) <= {"b", "i", "code"}
+
+
+@pytest.mark.asyncio
+async def test_enrich_plan_with_ai_preserves_skeleton_and_rejects_unsafe(conn):
+    import json
+    from services.garmin.training_plan_ai import enrich_plan_with_ai_async
+
+    plan = build_skeleton(
+        _profile(),
+        _status(),
+        start_date=date(2026, 11, 9),
+        today=date(2026, 11, 6),
+    )
+
+    async def fake_ok_call(model, messages, timeout):
+        return json.dumps(
+            {
+                "sessions": [
+                    {
+                        "index": 0,
+                        "title": "Силовая с гантелями: жим и тяга",
+                        "warmup": "Суставная разминка 8 мин",
+                        "main": "Жим гантелей, тяга в наклоне, кубковые приседания 3x10",
+                        "cooldown": "Дыхание и растяжка 5 мин",
+                        "purpose": "Силовой тонус без отказа",
+                    }
+                ],
+                "note": "Учтены гантели и велотренажёр",
+            },
+            ensure_ascii=False,
+        )
+
+    res = await enrich_plan_with_ai_async(
+        conn, plan, _profile(), ai_call=fake_ok_call
+    )
+    assert res.ok is True
+    assert res.plan.weeks[0].sessions[0].title == "Силовая с гантелями: жим и тяга"
+    assert res.plan.weeks[0].sessions[0].duration_min == plan.weeks[0].sessions[0].duration_min
+    assert res.plan.weeks[0].sessions[0].date == plan.weeks[0].sessions[0].date
+    assert validate_plan(res.plan, _profile()) == []
+
+    async def fake_unsafe_call(model, messages, timeout):
+        return json.dumps(
+            {
+                "sessions": [
+                    {
+                        "index": 0,
+                        "title": "Отмените лекарства перед тренировкой",
+                        "main": "Увеличьте дозу препарата",
+                    }
+                ],
+                "note": "Небезопасный совет",
+            },
+            ensure_ascii=False,
+        )
+
+    unsafe_res = await enrich_plan_with_ai_async(
+        conn, plan, _profile(), ai_call=fake_unsafe_call
+    )
+    assert unsafe_res.ok is False
+    assert unsafe_res.source == "fallback"
+    assert unsafe_res.plan.weeks[0].sessions[0].title == plan.weeks[0].sessions[0].title

@@ -93,6 +93,7 @@ from services.garmin.safety import (
     safety_text,
 )
 from services.garmin.status import data_status, status_text
+from services.garmin.training_plan_ai import enrich_plan_with_ai_async
 
 logger = logging.getLogger("GarminHandler")
 router = Router()
@@ -1424,7 +1425,7 @@ async def _send_meds(
         conn.close()
     has_meds = bool(stored is not None and stored.profile.medications)
     markup = _meds_kb(has_meds)
-    if not has_meds:
+    if stored is None or not stored.profile.medications:
         text = (
             (f"{prefix}\n\n" if prefix else "")
             + "💊 <b>Препараты и добавки не указаны</b>\n\n"
@@ -1438,7 +1439,6 @@ async def _send_meds(
         else:
             await message.answer(text, reply_markup=markup, parse_mode="HTML")
         return
-    assert stored is not None
     layer = build_layer(stored.profile)
     lines: list[str] = []
     if prefix:
@@ -1911,16 +1911,19 @@ async def cb_plan_build(cb: types.CallbackQuery):
     kb.row(
         types.InlineKeyboardButton(text="✅ Принять", callback_data="garmin:plan:accept"),
         types.InlineKeyboardButton(
-            text="🔄 Пересобрать", callback_data="garmin:plan:build"
+            text="🤖 Персонализировать с ИИ", callback_data="garmin:plan:ai"
         ),
     )
     kb.row(
+        types.InlineKeyboardButton(
+            text="🔄 Пересобрать", callback_data="garmin:plan:build"
+        ),
         types.InlineKeyboardButton(text="📄 PDF плана", callback_data="garmin:plan:pdf"),
+    )
+    kb.row(
         types.InlineKeyboardButton(
             text="📈 Обзор недели", callback_data="garmin:plan:review"
         ),
-    )
-    kb.row(
         types.InlineKeyboardButton(text="🩺 Вопросы врачу", callback_data="garmin:doctor"),
         types.InlineKeyboardButton(text="💊 Препараты", callback_data="garmin:meds"),
     )
@@ -1960,13 +1963,16 @@ async def cb_plan_show(cb: types.CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.row(
         types.InlineKeyboardButton(text="✅ Принять", callback_data="garmin:plan:accept"),
-        types.InlineKeyboardButton(text="🩺 Врач", callback_data="garmin:doctor"),
+        types.InlineKeyboardButton(
+            text="🤖 Персонализировать с ИИ", callback_data="garmin:plan:ai"
+        ),
     )
     kb.row(
         types.InlineKeyboardButton(text="📄 PDF плана", callback_data="garmin:plan:pdf"),
         types.InlineKeyboardButton(
             text="📈 Обзор недели", callback_data="garmin:plan:review"
         ),
+        types.InlineKeyboardButton(text="🩺 Врач", callback_data="garmin:doctor"),
     )
     week_buttons = [
         types.InlineKeyboardButton(
@@ -1983,6 +1989,69 @@ async def cb_plan_show(cb: types.CallbackQuery):
         reply_markup=kb.as_markup(),
         parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data == "garmin:plan:ai")
+@allowed_callback
+async def cb_plan_ai(cb: types.CallbackQuery):
+    user_id = _uid(cb)
+    await cb.answer("Персонализирую план с ИИ...")
+    cfg = _cfg()
+    conn = _connect()
+    try:
+        stored = _profile(conn, user_id)
+        plan = latest_plan(conn, user_id)
+        if stored is None or plan is None:
+            await cb.message.answer(
+                "Сначала постройте базовый план, затем его можно персонализировать.",
+                reply_markup=_back_kb(),
+            )
+            return
+        res = await enrich_plan_with_ai_async(
+            conn,
+            plan,
+            stored.profile,
+            user_id=user_id,
+            model=cfg.ai_model,
+            timeout=min(cfg.ai_timeout, 75.0),
+            ai_enabled=cfg.ai_enabled,
+            fallback_model=cfg.ai_fallback_model,
+            fallback_timeout=min(cfg.ai_fallback_timeout, 60.0),
+        )
+        errors = validate_plan(res.plan, stored.profile)
+        save_plan(
+            conn,
+            user_id,
+            res.plan,
+            profile_version=stored.version,
+            validation_errors=errors,
+        )
+        garmin_last_plan[user_id] = res.plan.plan_id
+    finally:
+        conn.close()
+
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(text="✅ Принять", callback_data="garmin:plan:accept"),
+        types.InlineKeyboardButton(text="📄 PDF плана", callback_data="garmin:plan:pdf"),
+    )
+    week_buttons = [
+        types.InlineKeyboardButton(
+            text=f"Неделя {week.week}",
+            callback_data=f"garmin:plan:week:{week.week}",
+        )
+        for week in res.plan.weeks
+    ]
+    for start in range(0, len(week_buttons), 3):
+        kb.row(*week_buttons[start:start + 3])
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="garmin:main"))
+
+    header = (
+        f"🤖 <b>План персонализирован ({_esc(res.source)})</b>"
+        + (f"\n<i>{_esc(res.note)}</i>" if res.note else "")
+    )
+    text = header + "\n\n" + plan_summary(res.plan) + "\n\n" + first_week_text(res.plan)
+    await _safe_edit(cb.message, text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("garmin:plan:week:"))
@@ -2876,8 +2945,8 @@ async def handle_garmin_text(message: types.Message):
         garmin_text_state.pop(user_id, None)
         try:
             await message.delete()
-        except Exception:  # noqa: BLE001 - best-effort privacy cleanup
-            pass
+        except Exception as exc:  # noqa: BLE001 - best-effort privacy cleanup
+            logger.debug("Could not delete profile_meds message: %s", exc)
         await _profile_preview(message, user_id, edit=False)
         return None
 
@@ -2886,8 +2955,8 @@ async def handle_garmin_text(message: types.Message):
         garmin_text_state.pop(user_id, None)
         try:
             await message.delete()
-        except Exception:  # noqa: BLE001 - best-effort privacy cleanup
-            pass
+        except Exception as exc:  # noqa: BLE001 - best-effort privacy cleanup
+            logger.debug("Could not delete meds_direct message: %s", exc)
         conn = _connect()
         try:
             stored = _profile(conn, user_id)
