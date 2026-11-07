@@ -127,3 +127,48 @@ def test_latest_extra_metric(conn):
     )
     assert latest_extra_metric(conn, user_id=1, day="2026-10-01", metric="distance_m") == 1234.5
     assert latest_extra_metric(conn, user_id=1, day="2026-10-01", metric="missing") is None
+
+
+def test_event_correlations_and_extended_metrics(conn):
+    _seed_report_data(conn)
+    upsert_daily(
+        conn,
+        {
+            "user_id": 1,
+            "date": "2026-10-05",
+            "hrv": 36,
+            "resting_hr": 61,
+            "sleep_hours": 5.8,
+            "stress_avg": 65,
+            "body_battery_morning": 35,
+            "respiration_avg": 17.2,
+            "vo2max": 44.0,
+        },
+        source="manual",
+    )
+    conn.execute(
+        "INSERT INTO garmin_events"
+        " (user_id, date, kind, title, notes, severity, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            1,
+            "2026-10-05",
+            "illness",
+            "Простуда / ОРВИ",
+            "насморк",
+            "warning",
+            "2026-10-05T08:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    report = build_report(conn, user_id=1, days=7, end_date="2026-10-07")
+    assert len(report.event_correlations) == 1
+    corr = report.event_correlations[0]
+    assert corr["kind"] == "illness"
+    assert "HRV" in corr["summary"]
+    assert "пульс покоя" in corr["summary"]
+    assert any(flag.code == "illness_context" for flag in report.flags)
+    assert any("Простуда / ОРВИ" in cause for cause in report.causes)
+    assert "respiration_avg" in report.extended_metrics
+    assert "vo2max" in report.extended_metrics

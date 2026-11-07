@@ -8,9 +8,11 @@ training and points to rest or medical advice.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
+from typing import Any, Iterable
 
 from .analytics import ReportData
-from .models import Checkin
+from .models import Checkin, Event
 
 
 @dataclass
@@ -34,6 +36,7 @@ def assess_readiness(
     report: ReportData,
     *,
     checkin: Checkin | None = None,
+    events: Iterable[Event | dict[str, Any]] | None = None,
 ) -> ReadinessResult:
     """Return readiness plus the exact reasons that produced it."""
     reasons: list[str] = []
@@ -111,6 +114,45 @@ def assess_readiness(
         if checkin.mood is not None and checkin.mood <= 2:
             escalate("amber")
             reasons.append("настроение низкое — снизить требования к себе")
+
+    try:
+        end_day = date.fromisoformat(str(report.end)[:10])
+    except ValueError:
+        end_day = date.today()
+    raw_events = list(events) if events is not None else list(report.events or [])
+    for item in raw_events:
+        ev_date_str: str
+        ev_kind: str
+        ev_title: str
+        ev_sev: str
+        if isinstance(item, Event):
+            ev_date_str = item.date
+            ev_kind = str(item.kind)
+            ev_title = item.title
+            ev_sev = str(item.severity)
+        elif isinstance(item, dict):
+            ev_date_str = str(item.get("date") or "")
+            ev_kind = str(item.get("kind") or "")
+            ev_title = str(item.get("title") or ev_kind)
+            ev_sev = str(item.get("severity") or "info")
+        else:
+            continue
+        try:
+            ev_day = date.fromisoformat(ev_date_str[:10])
+        except ValueError:
+            continue
+        if (end_day - ev_day).days > 7 or (end_day - ev_day).days < -1:
+            continue
+        if ev_kind == "illness":
+            if ev_sev in {"critical", "warning"}:
+                escalate("red")
+                reasons.append(f"болезнь/простуда («{ev_title[:80]}»)")
+            else:
+                escalate("amber")
+                reasons.append(f"восстановление после болезни («{ev_title[:80]}»)")
+        elif ev_kind == "injury" and ev_sev in {"critical", "warning"}:
+            escalate("amber")
+            reasons.append(f"травма/ограничение («{ev_title[:80]}»)")
 
     has_data = any(
         report.series.get(key) is not None

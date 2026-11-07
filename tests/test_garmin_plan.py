@@ -175,3 +175,51 @@ def test_clarifying_questions_empty_for_complete_profile():
         equipment=["зал"],
     )
     assert clarifying_questions(profile, _status()) == []
+
+
+def test_post_illness_skeleton_deloads_week1():
+    normal = build_skeleton(
+        _profile(),
+        _status(),
+        start_date=date(2026, 11, 9),
+        today=date(2026, 11, 6),
+    )
+    illness_events = [
+        {
+            "date": "2026-11-04",
+            "kind": "illness",
+            "title": "Простуда / ОРВИ",
+            "severity": "info",
+        }
+    ]
+    post_ill = build_skeleton(
+        _profile(),
+        _status(),
+        start_date=date(2026, 11, 9),
+        today=date(2026, 11, 6),
+        events=illness_events,
+    )
+    assert post_ill.weeks[0].focus == "deload"
+    assert week_volume(post_ill.weeks[0]) < week_volume(normal.weeks[0])
+    assert any(flag.code == "post_illness_week1" for flag in post_ill.safety_flags)
+    assert validate_plan(post_ill, _profile()) == []
+
+
+def test_readiness_reflects_illness_and_recovery(conn):
+    _seed(conn, date(2026, 9, 3), 28, hrv=60, resting_hr=50, sleep_hours=7.6)
+    _seed(conn, date(2026, 10, 1), 7, hrv=60, resting_hr=50, sleep_hours=7.6)
+    report = build_report(conn, user_id=1, days=7, end_date="2026-10-07")
+
+    active = assess_readiness(
+        report,
+        events=[{"date": "2026-10-06", "kind": "illness", "title": "ОРВИ", "severity": "warning"}],
+    )
+    assert active.level == "red"
+    assert any("ОРВИ" in r for r in active.reasons)
+
+    recovered = assess_readiness(
+        report,
+        events=[{"date": "2026-10-06", "kind": "illness", "title": "ОРВИ", "severity": "info"}],
+    )
+    assert recovered.level == "amber"
+    assert any("восстановление после болезни" in r for r in recovered.reasons)

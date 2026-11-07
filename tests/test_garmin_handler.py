@@ -890,3 +890,98 @@ def test_format_import_result_deduplicates_period_days():
 
     assert "Дней с данными: 2" in text
     assert "Период: 01.11.2026 — 02.11.2026" in text
+
+
+# ---------------------------------------------------------------------------
+# illness / cold submenu and agent tools
+
+
+def test_main_kb_has_illness_button():
+    callbacks = _callback_ids(garmin._main_kb())
+    assert "garmin:illness" in callbacks
+
+
+@pytest.mark.asyncio
+async def test_illness_flow_add_cold_recover_and_delete(env):
+    conn = init_db(env.db_path)
+    try:
+        upsert_daily(
+            conn,
+            {
+                "user_id": UID,
+                "date": date.today().isoformat(),
+                "hrv": 34,
+                "resting_hr": 64,
+                "sleep_hours": 6.0,
+                "stress_avg": 58,
+            },
+            source="manual",
+        )
+    finally:
+        conn.close()
+
+    # 1. Open illness submenu
+    cb_open = FakeCb(data="garmin:illness")
+    await garmin.cb_illness(cb_open)
+    assert "Болезнь, простуда и контекст состояния" in cb_open.message.edits[0][0]
+
+    # 2. Add cold preset
+    cb_add = FakeCb(data="garmin:illness:add:cold")
+    await garmin.cb_illness_add(cb_add)
+    screen_text, kwargs = cb_add.message.edits[0]
+    assert "Простуда / ОРВИ (без температуры)" in screen_text
+    assert "garmin:illness:recovered" in _callback_ids(kwargs["reply_markup"])
+
+    # 3. Mark recovered (gentle return)
+    cb_rec = FakeCb(data="garmin:illness:recovered")
+    await garmin.cb_illness_recovered(cb_rec)
+    rec_text, rec_kwargs = cb_rec.message.edits[0]
+    assert "Выздоровление отмечено" in rec_text
+    assert "выздоровел" in rec_text
+    assert "garmin:illness:recovered" not in _callback_ids(rec_kwargs["reply_markup"])
+
+    # 4. Delete last event
+    cb_del = FakeCb(data="garmin:illness:delete_last")
+    await garmin.cb_illness_delete_last(cb_del)
+    assert "Последняя запись удалена" in cb_del.message.edits[0][0]
+
+
+@pytest.mark.asyncio
+async def test_illness_custom_note_and_ai_insight(env):
+    cb_custom = FakeCb(data="garmin:illness:custom")
+    await garmin.cb_illness_custom(cb_custom)
+    assert garmin.garmin_text_state.get(UID) == "illness_note"
+
+    msg = FakeMessage(uid=UID, text="Першит горло, насморк без температуры")
+    await garmin.handle_garmin_text(msg)
+    assert garmin.garmin_text_state.get(UID) is None
+    assert any("Состояние записано" in ans[0] for ans in msg.answers)
+
+    cb_ai = FakeCb(data="garmin:illness:ai")
+    await garmin.cb_illness_ai(cb_ai)
+    assert cb_ai.message.status_edits
+    ai_text = cb_ai.message.status_edits[0][0]
+    assert "ИИ-разбор состояния и показателей" in ai_text
+
+
+def test_garmin_agent_tools_registered_and_callable(env, monkeypatch):
+    from services import agent_tools as at
+    from services.garmin import agent_tools as gat
+
+    monkeypatch.setattr(gat, "get_config", lambda: env)
+    gat.register_garmin_agent_tools()
+
+    for name in (
+        "garmin_health_summary",
+        "garmin_recent_workouts",
+        "garmin_training_plan",
+    ):
+        assert at.get_tool(name) is not None
+        assert at.get_tool(name).is_write is False
+
+    summary_out = at.force_tool_execute("garmin_health_summary", {"days": 7})
+    assert "Готовность:" in summary_out
+    workouts_out = at.force_tool_execute("garmin_recent_workouts", {"limit": 5})
+    assert "тренировок" in workouts_out.lower()
+    plan_out = at.force_tool_execute("garmin_training_plan", {})
+    assert "план" in plan_out.lower()

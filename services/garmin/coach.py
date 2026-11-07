@@ -178,6 +178,16 @@ def build_payload(report: ReportData, *, medications: list[str] | None = None) -
     for key, item in report.series.items():
         if not any(value is not None for value in item.values):
             continue
+        delta_abs = (
+            round(item.avg_7d - item.baseline, 2)
+            if item.avg_7d is not None and item.baseline is not None
+            else None
+        )
+        delta_pct = (
+            round((item.avg_7d - item.baseline) / item.baseline * 100.0, 1)
+            if item.avg_7d is not None and item.baseline not in (None, 0)
+            else None
+        )
         series[key] = {
             "label": item.label,
             "unit": item.unit,
@@ -185,12 +195,15 @@ def build_payload(report: ReportData, *, medications: list[str] | None = None) -
             "avg_7d": item.avg_7d,
             "avg_28d": item.avg_28d,
             "baseline": item.baseline,
+            "delta_7d_vs_baseline": delta_abs,
+            "delta_7d_vs_baseline_pct": delta_pct,
             "coverage": item.coverage,
         }
     return {
         "period": {"start": report.start, "end": report.end, "days": len(report.dates)},
         "confidence": report.confidence,
         "series": series,
+        "extended_metrics": getattr(report, "extended_metrics", {}) or {},
         "flags": [
             {"code": flag.code, "severity": flag.severity, "text": flag.text}
             for flag in report.flags
@@ -202,6 +215,19 @@ def build_payload(report: ReportData, *, medications: list[str] | None = None) -
             "total_load": report.activities.total_load,
             "by_type": report.activities.by_type,
         },
+        "weekly_trends": [
+            {
+                "week_start": w.week_start,
+                "week_end": w.week_end,
+                "sleep_hours": w.sleep_hours,
+                "hrv": w.hrv,
+                "resting_hr": w.resting_hr,
+                "stress_avg": w.stress_avg,
+                "activities": w.activities,
+                "training_min": w.training_min,
+            }
+            for w in (report.weekly or [])[-4:]
+        ],
         "missing_inputs": report.missing_inputs,
         "medications": medications or [],
         "events": [
@@ -215,6 +241,17 @@ def build_payload(report: ReportData, *, medications: list[str] | None = None) -
             }
             for event in report.events
         ],
+        "event_correlations": [
+            {
+                key: (
+                    sanitize_untrusted_text(value, max_length=300)
+                    if isinstance(value, str)
+                    else value
+                )
+                for key, value in corr.items()
+            }
+            for corr in (getattr(report, "event_correlations", None) or [])
+        ],
     }
 
 
@@ -224,14 +261,16 @@ def _system_prompt() -> str:
         "диагнозы и не назначаешь лечение. Правила:\n"
         "1. Не выдумывай числа, даты, симптомы, лекарства или исследования. "
         "Используй только числа из payload.\n"
-        "2. Корреляция не равна причинности. Указывай альтернативные объяснения: "
-        "болезнь, алкоголь, поездки, стресс, жара, недосып, лекарства.\n"
+        "2. Корреляция не равна причинности. Обязательно анализируй поле "
+        "event_correlations и events (особенно болезнь/простуду/ОРВИ, травмы, "
+        "стресс, алкоголь) и объясняй, как это состояние связано с динамикой "
+        "HRV, пульса покоя, сна, дыхания и стресса.\n"
         "3. Не советуй менять, отменять или начинать лекарства. При наличии "
         "препаратов говори только «обсудите с врачом».\n"
         "4. Цитируй только ID из allowed_citations (E1–E12). Не придумывай ссылки.\n"
         "5. При красных флагах (боль в груди, обморок, выраженная одышка, "
-        "неконтролируемое давление, новые неврологические симптомы) рекомендуй "
-        "срочную медицинскую помощь.\n"
+        "лихорадка/температура, неконтролируемое давление, новые неврологические "
+        "симптомы) рекомендуй отложить тренировки и обратиться к врачу.\n"
         "6. Верни только валидный JSON по схеме. Без markdown и без текста вокруг.\n"
         "7. Пиши кратко: summary ≤ 90 слов, каждый пункт ≤ 30 слов. Не повторяй "
         "payload и не добавляй поля сверх схемы.\n"
@@ -503,6 +542,16 @@ def _fallback(
             "citations": ["E4", "E5"],
         },
     ]
+    if any(ev.get("kind") == "illness" for ev in (report.events or [])):
+        what_could_help.insert(
+            0,
+            {
+                "text": "На фоне или после болезни/простуды сделайте паузу в "
+                "интенсивных тренировках; возвращайтесь постепенно (3–7 дней "
+                "лёгкой нагрузки RPE ≤5 при нормализации пульса покоя и HRV).",
+                "citations": ["E3", "E4"],
+            },
+        )
     if medications:
         what_could_help.append(
             {

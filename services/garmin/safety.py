@@ -537,16 +537,28 @@ def _event_signals(
                 ),
             )
         if event.kind == "illness":
-            _add(
-                signals,
-                SafetySignal(
-                    code="recent_illness",
-                    severity="critical",
-                    text=f"Недавняя болезнь «{event.title[:120]}»: тренировки "
-                    "отложить до выздоровления.",
-                    source="events",
-                ),
-            )
+            if event.severity == "info":
+                _add(
+                    signals,
+                    SafetySignal(
+                        code="post_illness_recovery",
+                        severity="warning",
+                        text=f"Восстановление после болезни «{event.title[:120]}»: "
+                        "первые 3–7 дней без интервалов, сниженный объём (RPE ≤5).",
+                        source="events",
+                    ),
+                )
+            else:
+                _add(
+                    signals,
+                    SafetySignal(
+                        code="recent_illness",
+                        severity="critical",
+                        text=f"Недавняя болезнь «{event.title[:120]}»: тренировки "
+                        "отложить до выздоровления.",
+                        source="events",
+                    ),
+                )
         elif event.kind == "injury":
             _add(
                 signals,

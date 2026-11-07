@@ -276,11 +276,24 @@ def compute_delta(
     red_flags = any(event["severity"] == "critical" for event in events) or (
         bool(pain_scores) and pain_scores[0] >= 4
     )
+    recent_cutoff = (end - timedelta(days=6)).isoformat()
+    active_illness = any(
+        event["kind"] == "illness"
+        and event["severity"] == "warning"
+        and str(event["date"])[:10] >= recent_cutoff
+        for event in events
+    )
+    recovering_illness = any(
+        event["kind"] == "illness"
+        and event["severity"] == "info"
+        and str(event["date"])[:10] >= recent_cutoff
+        for event in events
+    )
     if red_flags:
         recommendation = "medical"
-    elif len(important_metrics) >= 3:
+    elif active_illness or len(important_metrics) >= 3:
         recommendation = "rest"
-    elif important_metrics:
+    elif recovering_illness or important_metrics:
         recommendation = "reduce"
     else:
         recommendation = "keep"

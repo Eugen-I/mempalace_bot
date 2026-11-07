@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, timedelta
+from typing import Any, Iterable
 
 from .evidence import CITATION_IDS
 from .medications import MedicationLayer, build_layer
 from .models import (
+    Event,
     PlanSession,
     PlanWeek,
     SafetyFlag,
@@ -240,22 +242,61 @@ def _plan_citations(profile: UserProfile, layer: MedicationLayer) -> list[str]:
     return sorted(citations)
 
 
+def _has_recent_illness(
+    events: Iterable[Event | dict[str, Any]] | None,
+    *,
+    reference_day: date,
+    days: int = 14,
+) -> tuple[bool, str]:
+    for item in events or ():
+        ev_date: str
+        ev_kind: str
+        ev_title: str
+        if isinstance(item, Event):
+            ev_date = item.date
+            ev_kind = str(item.kind)
+            ev_title = item.title
+        elif isinstance(item, dict):
+            ev_date = str(item.get("date") or "")
+            ev_kind = str(item.get("kind") or "")
+            ev_title = str(item.get("title") or ev_kind)
+        else:
+            continue
+        if ev_kind != "illness":
+            continue
+        try:
+            parsed = date.fromisoformat(ev_date[:10])
+        except ValueError:
+            continue
+        if -1 <= (reference_day - parsed).days <= days:
+            return True, ev_title
+    return False, ""
+
+
 def build_skeleton(
     profile: UserProfile,
     status: DataStatus,
     *,
     start_date: date | None = None,
     today: date | None = None,
+    events: Iterable[Event | dict[str, Any]] | None = None,
 ) -> TrainingPlan:
     """Build the deterministic plan; no LLM is involved."""
-    start = start_date or _next_monday(today)
+    ref_day = today or date.today()
+    start = start_date or _next_monday(ref_day)
     horizon = min(max(profile.horizon_weeks, 1), 12)
     layer = build_layer(profile)
+    post_illness, illness_title = _has_recent_illness(
+        events, reference_day=ref_day
+    )
 
     weeks: list[PlanWeek] = []
     for index in range(horizon):
         focus = WEEK_FOCUS[index] if horizon == 6 else _generic_focus(index, horizon)
         factor = VOLUME_FACTOR[index] if horizon == 6 else _generic_factor(index, horizon)
+        if index == 0 and post_illness:
+            focus = "deload"
+            factor = 0.65
         sessions = _week_sessions(
             index,
             focus=focus,
@@ -264,21 +305,61 @@ def build_skeleton(
             profile=profile,
             layer=layer,
         )
+        rules = [
+            "Пропущенную сессию не догонять.",
+            "При сне <6 ч или боли ≥4/10 — отдых, а не перенос нагрузки.",
+            "Прогрессия только по недельному правилу.",
+        ]
+        if index == 0 and post_illness:
+            illness_note = (
+                "После болезни/простуды: мягкий возврат (RPE 4–5), следите "
+                "за пульсом покоя и самочувствием."
+            )
+            for pos, session in enumerate(sessions):
+                if session.type == "rest":
+                    continue
+                combined_safety = (
+                    f"{session.safety} {illness_note}".strip()
+                    if session.safety
+                    else illness_note
+                )
+                sessions[pos] = session.model_copy(
+                    update={
+                        "intensity": (
+                            "RPE 4–5, лёгкая техника без отказа"
+                            if session.type == "strength"
+                            else session.intensity
+                        ),
+                        "safety": combined_safety,
+                    }
+                )
+            rules.insert(
+                0,
+                "После простуды/болезни: первые 3–7 дней без интервалов; "
+                "при возврате симптомов или скачке пульса покоя — стоп и отдых.",
+            )
         weeks.append(
             PlanWeek(
                 week=index + 1,
                 focus=focus,
                 target_load=round(100 * factor, 1),
                 sessions=sessions,
-                adaptation_rules=[
-                    "Пропущенную сессию не догонять.",
-                    "При сне <6 ч или боли ≥4/10 — отдых, а не перенос нагрузки.",
-                    "Прогрессия только по недельному правилу.",
-                ],
+                adaptation_rules=rules,
             )
         )
 
     flags = list(layer.safety_flags)
+    if post_illness:
+        flags.append(
+            SafetyFlag(
+                code="post_illness_week1",
+                severity="warning",
+                text=(
+                    f"Неделя 1 переведена в щадящий режим (разгрузка −35%) "
+                    f"для возврата после «{illness_title[:80]}»."
+                ),
+            )
+        )
     flags.append(
         SafetyFlag(
             code="minimum_data_gate",
@@ -313,6 +394,10 @@ def build_skeleton(
         "Тренировки выполняются с RPE 6–7, не до отказа.",
         "Сон и восстановление важнее «догоняния» плана.",
     ]
+    if post_illness:
+        assumptions.append(
+            "Неделя 1 облегчена (разгрузка −35%, RPE 4–5) после болезни/простуды."
+        )
     if profile.availability:
         assumptions.append("Длительности ограничены доступным временем.")
 

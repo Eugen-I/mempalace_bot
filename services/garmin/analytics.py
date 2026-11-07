@@ -103,6 +103,8 @@ class ReportData:
     confidence: str
     generated_at: str
     events: list[dict[str, Any]] = field(default_factory=list)
+    event_correlations: list[dict[str, Any]] = field(default_factory=list)
+    extended_metrics: dict[str, Any] = field(default_factory=dict)
 
     def values(self, key: str) -> list[float | None]:
         return self.series[key].values if key in self.series else []
@@ -245,7 +247,157 @@ def _activities(rows: list[Any]) -> ActivitySummary:
     )
 
 
-def _flags(series: dict[str, MetricSeries], *, activities: ActivitySummary) -> list[Flag]:
+def _extended_metrics(
+    rows: list[Any],
+    series: dict[str, MetricSeries],
+) -> dict[str, Any]:
+    """Extract secondary physiological metrics from garmin_daily for AI context."""
+    def _col_values(col: str) -> list[float]:
+        out: list[float] = []
+        for row in rows:
+            val = _row_value(row, col)
+            if val is not None:
+                out.append(val)
+        return out
+
+    result: dict[str, Any] = {}
+    for col in (
+        "respiration_avg",
+        "spo2_avg",
+        "spo2_min",
+        "body_battery_charged",
+        "body_battery_spent",
+        "recovery_time_h",
+        "sleep_efficiency",
+        "vo2max",
+        "fitness_age",
+    ):
+        vals = _col_values(col)
+        if vals:
+            result[col] = {
+                "latest": round(vals[-1], 1),
+                "avg": round(statistics.fmean(vals), 1),
+                "max": round(max(vals), 1),
+                "min": round(min(vals), 1),
+            }
+
+    hrv_series = series.get("hrv")
+    if hrv_series is not None:
+        recent_hrv = [float(v) for v in hrv_series.values[-7:] if v is not None]
+        if len(recent_hrv) >= 3:
+            mean_hrv = statistics.fmean(recent_hrv)
+            if mean_hrv > 0:
+                cv_pct = round(statistics.pstdev(recent_hrv) / mean_hrv * 100.0, 1)
+                result["hrv_cv_7d_pct"] = cv_pct
+    return result
+
+
+def _correlate_events(
+    *,
+    rows_by_date: dict[str, Any],
+    series: dict[str, MetricSeries],
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Correlate recorded events (illness/cold/stress/injury) with daily metrics."""
+    correlations: list[dict[str, Any]] = []
+    hrv_base = series["hrv"].baseline if "hrv" in series else None
+    rhr_base = series["resting_hr"].baseline if "resting_hr" in series else None
+    sleep_base = series["sleep_hours"].baseline if "sleep_hours" in series else None
+    stress_base = series["stress_avg"].baseline if "stress_avg" in series else None
+    bb_base = (
+        series["body_battery_morning"].baseline
+        if "body_battery_morning" in series
+        else None
+    )
+
+    for event in events:
+        raw_day = str(event.get("date") or "")[:10]
+        try:
+            ev_day = date.fromisoformat(raw_day)
+        except ValueError:
+            continue
+        window_days = [
+            (ev_day + timedelta(days=offset)).isoformat() for offset in (0, 1, 2)
+        ]
+        window_rows = [rows_by_date[d] for d in window_days if d in rows_by_date]
+        metrics_on_day: dict[str, float] = {}
+        deviations: list[str] = []
+
+        hrv_val = _mean([_row_value(r, "hrv") for r in window_rows])
+        if hrv_val is not None:
+            metrics_on_day["hrv"] = round(hrv_val, 1)
+            if hrv_base:
+                pct = round((hrv_val - hrv_base) / hrv_base * 100.0, 0)
+                metrics_on_day["hrv_delta_pct"] = pct
+                if pct <= -8:
+                    deviations.append(f"HRV {hrv_val:.0f} мс ({pct:+.0f}% к baseline)")
+
+        rhr_val = _mean([_row_value(r, "resting_hr") for r in window_rows])
+        if rhr_val is not None:
+            metrics_on_day["resting_hr"] = round(rhr_val, 1)
+            if rhr_base is not None:
+                diff = round(rhr_val - rhr_base, 0)
+                metrics_on_day["resting_hr_delta"] = diff
+                if diff >= 3:
+                    deviations.append(
+                        f"пульс покоя {rhr_val:.0f} уд/мин ({diff:+.0f} к baseline)"
+                    )
+
+        sleep_val = _mean([_row_value(r, "sleep_hours") for r in window_rows])
+        if sleep_val is not None:
+            metrics_on_day["sleep_hours"] = round(sleep_val, 1)
+            if sleep_base is not None and sleep_val - sleep_base <= -0.7:
+                deviations.append(f"сон {sleep_val:.1f} ч")
+
+        stress_val = _mean([_row_value(r, "stress_avg") for r in window_rows])
+        if stress_val is not None:
+            metrics_on_day["stress_avg"] = round(stress_val, 0)
+            if (stress_base is not None and stress_val - stress_base >= 8) or stress_val >= 45:
+                deviations.append(f"стресс {stress_val:.0f}")
+
+        bb_val = _mean([_row_value(r, "body_battery_morning") for r in window_rows])
+        if bb_val is not None:
+            metrics_on_day["body_battery_morning"] = round(bb_val, 0)
+            if (bb_base is not None and bb_val - bb_base <= -12) or bb_val <= 45:
+                deviations.append(f"Body Battery утром {bb_val:.0f}")
+
+        resp_val = _mean([_row_value(r, "respiration_avg") for r in window_rows])
+        if resp_val is not None:
+            metrics_on_day["respiration_avg"] = round(resp_val, 1)
+            if resp_val >= 16.5:
+                deviations.append(f"дыхание {resp_val:.1f} вд/мин")
+
+        kind = str(event.get("kind") or "other")
+        title = str(event.get("title") or kind)
+        severity = str(event.get("severity") or "info")
+        if deviations:
+            summary = f"{raw_day} («{title}»): " + ", ".join(deviations)
+        elif metrics_on_day:
+            summary = f"{raw_day} («{title}»): без резких отклонений метрик от baseline"
+        else:
+            summary = f"{raw_day} («{title}»): нет дневных метрик Garmin за эту дату"
+
+        correlations.append(
+            {
+                "date": raw_day,
+                "kind": kind,
+                "title": title,
+                "severity": severity,
+                "metrics": metrics_on_day,
+                "deviations": deviations,
+                "summary": summary,
+            }
+        )
+    return correlations
+
+
+def _flags(
+    series: dict[str, MetricSeries],
+    *,
+    activities: ActivitySummary,
+    events: list[dict[str, Any]] | None = None,
+    event_correlations: list[dict[str, Any]] | None = None,
+) -> list[Flag]:
     flags: list[Flag] = []
     sleep = series["sleep_hours"]
     hrv = series["hrv"]
@@ -302,12 +454,50 @@ def _flags(series: dict[str, MetricSeries], *, activities: ActivitySummary) -> l
     if activities.count == 0:
         flags.append(Flag("no_activities", "info", "В периоде нет импортированных тренировок."))
 
+    illness_corrs = [
+        item for item in (event_correlations or []) if item.get("kind") == "illness"
+    ]
+    if illness_corrs:
+        latest_ill = illness_corrs[-1]
+        sev = "warning" if latest_ill.get("severity") in {"critical", "warning"} else "info"
+        flags.append(
+            Flag(
+                "illness_context",
+                sev,
+                f"Отмечена болезнь/простуда: {latest_ill['summary']}.",
+            )
+        )
+
     return flags
 
 
-def _causes(series: dict[str, MetricSeries], flags: list[Flag]) -> list[str]:
+def _causes(
+    series: dict[str, MetricSeries],
+    flags: list[Flag],
+    *,
+    event_correlations: list[dict[str, Any]] | None = None,
+) -> list[str]:
     codes = {flag.code for flag in flags}
     causes: list[str] = []
+    for corr in (event_correlations or [])[-3:]:
+        kind = corr.get("kind")
+        devs = corr.get("deviations") or []
+        if kind == "illness":
+            if devs:
+                causes.append(
+                    f"Связь с болезнью/простудой ({corr['date']}, «{corr['title']}»): "
+                    f"в эти дни зафиксированы {', '.join(devs)}."
+                )
+            else:
+                causes.append(
+                    f"Отмечена болезнь/простуда ({corr['date']}, «{corr['title']}») — "
+                    "учитывайте её при оценке восстановления и нагрузки."
+                )
+        elif devs:
+            causes.append(
+                f"Контекст события ({corr['date']}, «{corr['title']}»): "
+                f"совпал с изменением метрик ({', '.join(devs)})."
+            )
     if "sleep_short" in codes or "sleep_debt" in codes:
         causes.append("Недосып или поздний отход ко сну — самый частый бытовой фактор.")
     if "hrv_below_baseline" in codes or "rhr_above_baseline" in codes:
@@ -368,9 +558,29 @@ def build_report(
         for metric in METRICS
     }
 
+    events = [
+        dict(row)
+        for row in conn.execute(
+            "SELECT date, kind, title, notes, severity FROM garmin_events"
+            " WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date",
+            (int(user_id), start.isoformat(), end.isoformat()),
+        ).fetchall()
+    ]
+    event_correlations = _correlate_events(
+        rows_by_date=rows_by_date,
+        series=series,
+        events=events,
+    )
+    extended_metrics = _extended_metrics(rows, series)
+
     activity_rows = _activity_rows(conn, user_id=user_id, start=start, end=end)
     activities = _activities(activity_rows)
-    flags = _flags(series, activities=activities)
+    flags = _flags(
+        series,
+        activities=activities,
+        events=events,
+        event_correlations=event_correlations,
+    )
     weekly = _weekly(dates=dates, rows_by_date=rows_by_date, activities=activity_rows)
     missing = [
         metric.label
@@ -386,15 +596,6 @@ def build_report(
     else:
         confidence = "low"
 
-    events = [
-        dict(row)
-        for row in conn.execute(
-            "SELECT date, kind, title, notes, severity FROM garmin_events"
-            " WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date",
-            (int(user_id), start.isoformat(), end.isoformat()),
-        ).fetchall()
-    ]
-
     return ReportData(
         user_id=int(user_id),
         start=start.isoformat(),
@@ -402,13 +603,15 @@ def build_report(
         dates=[day.isoformat() for day in dates],
         series=series,
         flags=flags,
-        causes=_causes(series, flags),
+        causes=_causes(series, flags, event_correlations=event_correlations),
         weekly=weekly,
         activities=activities,
         missing_inputs=missing,
         confidence=confidence,
         generated_at=datetime.now().isoformat(timespec="seconds"),
         events=events,
+        event_correlations=event_correlations,
+        extended_metrics=extended_metrics,
     )
 
 

@@ -191,3 +191,56 @@ def save_event(conn: sqlite3.Connection, user_id: int, event: Event) -> int:
     )
     conn.commit()
     return int(cursor.lastrowid)
+
+
+def resolve_illness_events(
+    conn: sqlite3.Connection,
+    user_id: int,
+    *,
+    resolved_date: str | None = None,
+) -> int:
+    """Mark active illness events as recovered ('info') while preserving history.
+
+    Keeping the event row with ``severity='info'`` lets analytics and the AI
+    coach still correlate historical HRV/RHR/sleep deviations with the illness
+    dates, while unblocking daily readiness and enabling a gentle return plan.
+    """
+    stamp = resolved_date or _utcnow()[:10]
+    rows = conn.execute(
+        "SELECT id, title, notes FROM garmin_events"
+        " WHERE user_id = ? AND kind = 'illness'"
+        " AND severity IN ('critical', 'warning')",
+        (int(user_id),),
+    ).fetchall()
+    if not rows:
+        return 0
+    for row in rows:
+        existing_notes = str(row["notes"] or "").strip()
+        marker = f"выздоровел {stamp}"
+        if marker not in existing_notes:
+            notes = f"{existing_notes}; {marker}".strip("; ")
+        else:
+            notes = existing_notes
+        conn.execute(
+            "UPDATE garmin_events SET severity = 'info', notes = ? WHERE id = ?",
+            (notes[:500], int(row["id"])),
+        )
+    conn.commit()
+    return len(rows)
+
+
+def delete_last_event(conn: sqlite3.Connection, user_id: int) -> bool:
+    """Delete the most recent event for a user; return True if one was deleted."""
+    row = conn.execute(
+        "SELECT id FROM garmin_events WHERE user_id = ?"
+        " ORDER BY date DESC, id DESC LIMIT 1",
+        (int(user_id),),
+    ).fetchone()
+    if row is None:
+        return False
+    conn.execute(
+        "DELETE FROM garmin_events WHERE id = ? AND user_id = ?",
+        (int(row["id"]), int(user_id)),
+    )
+    conn.commit()
+    return True

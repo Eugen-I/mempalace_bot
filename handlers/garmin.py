@@ -28,9 +28,10 @@ from services.bot_setup import (
     garmin_profile_draft,
     garmin_text_state,
 )
+import services.garmin.agent_tools  # noqa: F401 - register Garmin agent tools
 from services.garmin.analytics import build_report
 from services.garmin.charts import render_charts
-from services.garmin.coach import generate_causes_async
+from services.garmin.coach import coach_text, generate_causes_async
 from services.garmin.config import get_config
 from services.garmin.db import init_db
 from services.garmin.delta import apply_delta, compute_delta, delta_text, log_delta
@@ -76,8 +77,10 @@ from services.garmin.retention import (
     status as retention_status,
 )
 from services.garmin.profile_store import (
+    delete_last_event,
     load_profile,
     recent_checkins,
+    resolve_illness_events,
     save_checkin,
     save_event,
     save_profile,
@@ -218,12 +221,15 @@ def _main_kb() -> types.InlineKeyboardMarkup:
     )
     kb.row(
         types.InlineKeyboardButton(
+            text="🤒 Болезнь / Состояние", callback_data="garmin:illness"
+        ),
+        types.InlineKeyboardButton(
             text="🔄 Что изменилось", callback_data="garmin:changes"
         ),
-        types.InlineKeyboardButton(text="📥 Импорт", callback_data="garmin:import"),
     )
     kb.row(
-        types.InlineKeyboardButton(text="⚙️ Настройки", callback_data="garmin:settings")
+        types.InlineKeyboardButton(text="📥 Импорт", callback_data="garmin:import"),
+        types.InlineKeyboardButton(text="⚙️ Настройки", callback_data="garmin:settings"),
     )
     return kb.as_markup()
 
@@ -238,8 +244,17 @@ def _safety_kb() -> types.InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.row(
         types.InlineKeyboardButton(
-            text="🩺 Вопросы врачу", callback_data="garmin:doctor"
+            text="✅ Выздоровел (мягкий возврат)",
+            callback_data="garmin:illness:recovered",
         )
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🤒 Болезнь / Состояние", callback_data="garmin:illness"
+        ),
+        types.InlineKeyboardButton(
+            text="🩺 Вопросы врачу", callback_data="garmin:doctor"
+        ),
     )
     kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="garmin:main"))
     return kb.as_markup()
@@ -256,6 +271,19 @@ async def _main_text(conn, user_id: int) -> str:
         )
     else:
         lines.append("Профиль не заполнен — нажмите «🧩 Профиль».")
+    recent_evs = _recent_events(conn, user_id, limit=5)
+    active_ill = [
+        ev
+        for ev in recent_evs
+        if ev.kind == "illness" and ev.severity in {"critical", "warning"}
+    ]
+    if active_ill:
+        lines.append(
+            f"🤒 Статус: отмечена болезнь («{_esc(active_ill[0].title[:60])}», "
+            f"{_fmt_day(active_ill[0].date)})"
+        )
+    elif any(ev.kind == "illness" and ev.severity == "info" for ev in recent_evs):
+        lines.append("🌿 Статус: мягкое восстановление после болезни/простуды.")
     try:
         retention = retention_status(
             conn, user_id, default_days=_cfg().retention_days
@@ -715,8 +743,8 @@ async def cmd_report(message: types.Message):
 # summaries
 
 
-def _readiness_text(report, checkin) -> str:
-    readiness = assess_readiness(report, checkin=checkin)
+def _readiness_text(report, checkin, events=None) -> str:
+    readiness = assess_readiness(report, checkin=checkin, events=events)
     lines = [
         f"{readiness.emoji} <b>Готовность: {readiness.level}</b>",
         "",
@@ -726,6 +754,12 @@ def _readiness_text(report, checkin) -> str:
         lines.append("")
         lines.append("Почему:")
         lines.extend(f"• {_esc(reason)}" for reason in readiness.reasons)
+    corrs = getattr(report, "event_correlations", None) or []
+    if corrs:
+        lines.append("")
+        lines.append("🔗 <b>Связь состояния и метрик:</b>")
+        for corr in corrs[-3:]:
+            lines.append(f"• {_esc(corr.get('summary', ''))}")
     return "\n".join(lines)
 
 
@@ -767,7 +801,7 @@ async def _send_today(message: types.Message, user_id: int) -> None:
             parse_mode="HTML",
         )
         return
-    text = _readiness_text(report, latest_checkin)
+    text = _readiness_text(report, latest_checkin, events=events)
     if assessment.warnings:
         text += "\n\n" + safety_text(assessment)
     today = date.today().isoformat()
@@ -1550,7 +1584,7 @@ async def _save_and_show_checkin(
         text = safety_text(assessment) + "\n\n✅ Чек-ин сохранён."
         markup = _safety_kb()
     else:
-        text = _readiness_text(report, checkin)
+        text = _readiness_text(report, checkin, events=events)
         if assessment.warnings:
             text += "\n\n" + safety_text(assessment)
         text += "\n\n✅ Чек-ин сохранён."
@@ -1707,7 +1741,7 @@ async def cb_plan_build(cb: types.CallbackQuery):
                 parse_mode="HTML",
             )
             return
-        plan = build_skeleton(stored.profile, status)
+        plan = build_skeleton(stored.profile, status, events=events)
         plan.safety_flags = merge_safety_flags(plan.safety_flags, assessment)
         errors = validate_plan(plan, stored.profile)
         save_plan(
@@ -2076,7 +2110,287 @@ async def cb_plan_review_keep(cb: types.CallbackQuery):
 
 
 # ---------------------------------------------------------------------------
-# events and settings
+# illness / events and settings
+
+
+_ILLNESS_PRESETS: dict[str, tuple[str, str, str]] = {
+    "cold": ("illness", "Простуда / ОРВИ (без температуры)", "warning"),
+    "fever": ("illness", "Температура / острая инфекция", "critical"),
+    "malaise": ("illness", "Слабость / недомогание", "warning"),
+    "injury": ("injury", "Травма / локальная боль", "warning"),
+    "alcohol": ("alcohol", "Алкоголь / перелёт / нарушение режима", "info"),
+    "stress": ("stress", "Высокий бытовой или рабочий стресс", "info"),
+}
+
+
+def _illness_kb(has_active_illness: bool, has_events: bool) -> types.InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🤧 Простуда / ОРВИ", callback_data="garmin:illness:add:cold"
+        ),
+        types.InlineKeyboardButton(
+            text="🤒 Температура / Грипп", callback_data="garmin:illness:add:fever"
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="😴 Недомогание", callback_data="garmin:illness:add:malaise"
+        ),
+        types.InlineKeyboardButton(
+            text="🤕 Травма / Боль", callback_data="garmin:illness:add:injury"
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🍷 Алкоголь / Перелёт", callback_data="garmin:illness:add:alcohol"
+        ),
+        types.InlineKeyboardButton(
+            text="😰 Сильный стресс", callback_data="garmin:illness:add:stress"
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="✏️ Описать своё состояние", callback_data="garmin:illness:custom"
+        )
+    )
+    if has_active_illness:
+        kb.row(
+            types.InlineKeyboardButton(
+                text="✅ Выздоровел (мягкий возврат)",
+                callback_data="garmin:illness:recovered",
+            )
+        )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🤖 ИИ-разбор связи с метриками",
+            callback_data="garmin:illness:ai",
+        )
+    )
+    if has_events:
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🗑 Удалить последнюю запись",
+                callback_data="garmin:illness:delete_last",
+            )
+        )
+    kb.row(
+        types.InlineKeyboardButton(text="🏋️ К плану", callback_data="garmin:plan"),
+        types.InlineKeyboardButton(text="⬅️ Назад", callback_data="garmin:main"),
+    )
+    return kb.as_markup()
+
+
+def _illness_screen_data(conn, user_id: int) -> tuple[str, bool, bool]:
+    report = build_report(conn, user_id=user_id, days=14)
+    rows = conn.execute(
+        "SELECT id, date, kind, title, notes, severity FROM garmin_events"
+        " WHERE user_id = ? ORDER BY date DESC, id DESC LIMIT 10",
+        (int(user_id),),
+    ).fetchall()
+    has_events = bool(rows)
+    has_active_illness = any(
+        row["kind"] == "illness" and row["severity"] in {"critical", "warning"}
+        for row in rows
+    )
+    lines = [
+        "🤒 <b>Болезнь, простуда и контекст состояния</b>",
+        "Отметьте простуду, температуру, недомогание или стресс — ИИ и "
+        "алгоритм свяжут их с изменениями HRV, пульса покоя и сна и "
+        "скорректируют тренировочный план.",
+    ]
+    if rows:
+        lines.append("")
+        lines.append("📋 <b>Последние записи:</b>")
+        badge = {"critical": "🔴", "warning": "🟡", "info": "🟢"}
+        for row in rows[:6]:
+            icon = badge.get(str(row["severity"]), "⚪")
+            note_suffix = f" ({_esc(row['notes'])})" if row["notes"] else ""
+            lines.append(
+                f"{icon} {_fmt_day(row['date'])} · {_esc(row['title'])}{note_suffix}"
+            )
+    else:
+        lines.append("")
+        lines.append("📋 Записей о болезни или событиях пока нет.")
+
+    if report.event_correlations:
+        lines.append("")
+        lines.append("🔗 <b>Связь состояния с метриками Garmin (14 дн.):</b>")
+        for corr in report.event_correlations[-4:]:
+            lines.append(f"• {_esc(corr['summary'])}")
+
+    if has_active_illness:
+        lines.append("")
+        lines.append(
+            "💡 Когда симптомы пройдут, нажмите «✅ Выздоровел (мягкий возврат)» — "
+            "запись сохранится в истории для ИИ-анализа, а план перейдёт в "
+            "щадящий режим восстановления."
+        )
+    return "\n".join(lines), has_active_illness, has_events
+
+
+async def _show_illness_screen(
+    message: types.Message,
+    user_id: int,
+    *,
+    edit: bool = True,
+    prefix: str = "",
+) -> None:
+    conn = _connect()
+    try:
+        text, has_active, has_events = _illness_screen_data(conn, user_id)
+    finally:
+        conn.close()
+    if prefix:
+        text = f"{prefix}\n\n{text}"
+    markup = _illness_kb(has_active, has_events)
+    if edit:
+        await _safe_edit(message, text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=markup, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "garmin:illness")
+@allowed_callback
+async def cb_illness(cb: types.CallbackQuery):
+    await cb.answer()
+    await _show_illness_screen(cb.message, _uid(cb), edit=True)
+
+
+@router.message(Command("garmin_illness"))
+@allowed_only
+async def cmd_illness(message: types.Message):
+    await _show_illness_screen(message, _uid(message), edit=False)
+
+
+@router.callback_query(F.data.startswith("garmin:illness:add:"))
+@allowed_callback
+async def cb_illness_add(cb: types.CallbackQuery):
+    preset_key = cb.data.rsplit(":", 1)[1]
+    preset = _ILLNESS_PRESETS.get(preset_key)
+    if preset is None:
+        await cb.answer("Неизвестный вариант", show_alert=True)
+        return
+    kind, title, severity = preset
+    user_id = _uid(cb)
+    event = Event(
+        date=date.today().isoformat(),
+        kind=kind,
+        title=title,
+        severity=severity,
+    )
+    conn = _connect()
+    try:
+        save_event(conn, user_id, event)
+    finally:
+        conn.close()
+    await cb.answer("Записано")
+    await _show_illness_screen(
+        cb.message,
+        user_id,
+        edit=True,
+        prefix=f"✅ Сохранено на сегодня: <b>{_esc(title)}</b>.",
+    )
+    await _maybe_send_delta(cb.message, user_id, trigger="illness")
+
+
+@router.callback_query(F.data == "garmin:illness:custom")
+@allowed_callback
+async def cb_illness_custom(cb: types.CallbackQuery):
+    user_id = _uid(cb)
+    garmin_text_state[user_id] = "illness_note"
+    await cb.answer()
+    await cb.message.answer(
+        "✏️ Опишите самочувствие или симптомы одним сообщением "
+        "(например: <code>насморк, першит горло, без температуры</code> "
+        "или <code>температура 38.2, озноб</code>).\n"
+        "/cancel — отмена.",
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "garmin:illness:recovered")
+@allowed_callback
+async def cb_illness_recovered(cb: types.CallbackQuery):
+    user_id = _uid(cb)
+    conn = _connect()
+    try:
+        updated = resolve_illness_events(conn, user_id)
+    finally:
+        conn.close()
+    if updated:
+        await cb.answer("Статус обновлён: выздоровление")
+        prefix = (
+            "🌿 <b>Выздоровление отмечено!</b> Активная блокировка снята, "
+            "история болезни сохранена для ИИ, а план переведён на мягкий возврат."
+        )
+    else:
+        await cb.answer("Активных записей о болезни не было")
+        prefix = "ℹ️ Активных записей о болезни не найдено."
+    await _show_illness_screen(cb.message, user_id, edit=True, prefix=prefix)
+
+
+@router.callback_query(F.data == "garmin:illness:delete_last")
+@allowed_callback
+async def cb_illness_delete_last(cb: types.CallbackQuery):
+    user_id = _uid(cb)
+    conn = _connect()
+    try:
+        deleted = delete_last_event(conn, user_id)
+    finally:
+        conn.close()
+    await cb.answer("Удалено" if deleted else "Записей нет")
+    prefix = "🗑 Последняя запись удалена." if deleted else "ℹ️ Записей нет."
+    await _show_illness_screen(cb.message, user_id, edit=True, prefix=prefix)
+
+
+@router.callback_query(F.data == "garmin:illness:ai")
+@allowed_callback
+async def cb_illness_ai(cb: types.CallbackQuery):
+    await cb.answer("Анализирую связь состояния и метрик...")
+    user_id = _uid(cb)
+    cfg = _cfg()
+    status_msg = await cb.message.answer(
+        "🤖 <i>Анализирую влияние состояния на HRV, пульс покоя, сон и нагрузку...</i>",
+        parse_mode="HTML",
+    )
+    conn = init_db(cfg.db_path)
+    try:
+        report = build_report(conn, user_id=user_id, days=14)
+        meds = _med_names(conn, user_id)
+        coach = await generate_causes_async(
+            conn,
+            report,
+            model=cfg.ai_model,
+            timeout=min(cfg.ai_timeout, 75.0),
+            ai_enabled=cfg.ai_enabled,
+            medications=meds,
+            fallback_model=cfg.ai_fallback_model,
+            fallback_timeout=min(cfg.ai_fallback_timeout, 60.0),
+        )
+    finally:
+        conn.close()
+
+    lines = ["🤖 <b>ИИ-разбор состояния и показателей (14 дн.)</b>", ""]
+    if report.event_correlations:
+        lines.append("🔗 <b>Зафиксированные корреляции:</b>")
+        for corr in report.event_correlations[-4:]:
+            lines.append(f"• {_esc(corr['summary'])}")
+        lines.append("")
+    lines.append(_esc(coach_text(coach)))
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🤒 К состоянию", callback_data="garmin:illness"
+        ),
+        types.InlineKeyboardButton(text="🏋️ К плану", callback_data="garmin:plan"),
+    )
+    kb.row(types.InlineKeyboardButton(text="⬅️ В меню", callback_data="garmin:main"))
+    await status_msg.edit_text(
+        "\n".join(lines)[:4000],
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("garmin_events"))
@@ -2416,6 +2730,30 @@ async def handle_garmin_text(message: types.Message):
         checkin = _parse_checkin(text)
         garmin_text_state.pop(user_id, None)
         await _save_and_show_checkin(message, user_id, checkin, edit=False)
+        return None
+
+    if state == "illness_note":
+        garmin_text_state.pop(user_id, None)
+        check = assess_safety(text=text)
+        severity = "critical" if check.blocked else "warning"
+        event = Event(
+            date=date.today().isoformat(),
+            kind="illness",
+            title=text[:200],
+            severity=severity,
+        )
+        conn = _connect()
+        try:
+            save_event(conn, user_id, event)
+        finally:
+            conn.close()
+        await _show_illness_screen(
+            message,
+            user_id,
+            edit=False,
+            prefix=f"✅ Состояние записано: <b>{_esc(text[:120])}</b>.",
+        )
+        await _maybe_send_delta(message, user_id, trigger="illness")
         return None
 
     garmin_text_state.pop(user_id, None)
