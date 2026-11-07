@@ -57,6 +57,25 @@ def _log_error(context: str, error: Exception) -> None:
         logger.error("[PALACE_UTILS] Ошибка в %s: %s", context, error, exc_info=True)
 
 
+async def _fallback_send_new(
+    message: Message,
+    text: str,
+    **kwargs,
+) -> bool:
+    """Очищает кнопки на медиа-сообщении и отправляет новое текстовое сообщение."""
+    try:
+        if hasattr(message, "edit_reply_markup"):
+            try:
+                await message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+        await message.answer(text, **kwargs)
+        return True
+    except Exception as answer_err:
+        _log_error("safe_edit_text_fallback", answer_err)
+        return False
+
+
 async def safe_edit_text(
     message: Message | InaccessibleMessage | None,
     text: str,
@@ -81,6 +100,10 @@ async def safe_edit_text(
     """
     if message is None or isinstance(message, InaccessibleMessage):
         return False
+
+    if hasattr(message, "text") and message.text is None:
+        return await _fallback_send_new(message, text, **kwargs)
+
     try:
         await message.edit_text(text, **kwargs)
         return True
@@ -89,17 +112,7 @@ async def safe_edit_text(
         if "message is not modified" in err_msg:
             return True
         if "there is no text in the message to edit" in err_msg:
-            try:
-                if hasattr(message, "edit_reply_markup"):
-                    try:
-                        await message.edit_reply_markup(reply_markup=None)
-                    except Exception:
-                        pass
-                await message.answer(text, **kwargs)
-                return True
-            except Exception as answer_err:
-                _log_error("safe_edit_text_fallback", answer_err)
-                return False
+            return await _fallback_send_new(message, text, **kwargs)
         _log_error("safe_edit_text", e)
         return False
     except Exception as e:

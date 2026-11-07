@@ -146,6 +146,17 @@ async def test_safe_edit_text_no_text_fallback_fails(caplog):
     assert any("safe_edit_text_fallback" in r.message for r in caplog.records)
 
 
+@pytest.mark.asyncio
+async def test_safe_edit_text_message_text_is_none(caplog):
+    msg = FakeMessage()
+    msg.text = None
+    assert await u.safe_edit_text(msg, "текст", parse_mode="HTML") is True
+    assert msg.reply_markup_cleared is True
+    assert msg.answered == [("текст", {"parse_mode": "HTML"})]
+    assert msg.edited == []
+    assert not any("safe_edit_text" in r.message for r in caplog.records)
+
+
 # ---------- safe_delete ----------
 
 
