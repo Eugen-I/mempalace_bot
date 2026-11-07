@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import pytest
 
@@ -29,7 +28,6 @@ async def test_palace_create_tunnel_tool(monkeypatch):
     called_args = {}
 
     async def fake_call(tool_name, args):
-        nonlocal called_args
         called_args[tool_name] = args
         return json.dumps({"status": "ok", "tunnel": "created"})
 
@@ -63,7 +61,6 @@ async def test_palace_kg_add_fact_tool(monkeypatch):
     called_args = {}
 
     async def fake_call(tool_name, args):
-        nonlocal called_args
         called_args[tool_name] = args
         return json.dumps({"status": "fact_added"})
 
@@ -133,7 +130,6 @@ async def test_palace_move_drawer_tool(monkeypatch):
     called_args = {}
 
     async def fake_call(tool_name, args):
-        nonlocal called_args
         called_args[tool_name] = args
         return json.dumps({"status": "moved"})
 
@@ -166,7 +162,8 @@ async def test_palace_move_drawer_tool(monkeypatch):
     assert called_args["mempalace_update_drawer"] == {
         "drawer_id": "d_99", "wing": "Archive", "room": "2026",
     }
-    assert backlink_updated["target_wing" if "target_wing" in backlink_updated else "wing"] == "Archive"
+    wing_key = "target_wing" if "target_wing" in backlink_updated else "wing"
+    assert backlink_updated[wing_key] == "Archive"
     assert backlink_updated["room"] == "2026"
 
 
@@ -183,7 +180,8 @@ def test_is_conversational_query():
     # Длинная фраза с местоимением
     assert is_conversational_query("А что мы вчера решили насчёт этой сложной проблемы?") is True
     # Длинная фраза без местоимений
-    assert is_conversational_query("Инструкция по настройке протокола WebRTC на сервере Ubuntu") is False
+    long_topic = "Инструкция по настройке протокола WebRTC на сервере Ubuntu"
+    assert is_conversational_query(long_topic) is False
 
 
 @pytest.mark.asyncio
@@ -264,3 +262,24 @@ async def test_agent_engine_openai_gemini_dispatch(monkeypatch):
     res = ae._model_tool_call("qwen", "qwen2.5:7b", [], [])
     assert qwen_called is True
     assert res["content"] == "qwen_ok"
+
+
+@pytest.mark.asyncio
+async def test_agent_engine_qwen_timeout_friendly_error(monkeypatch):
+    """При таймауте Ollama возвращается понятная рекомендация о num_ctx."""
+    class APITimeoutError(Exception):
+        pass
+
+    def boom(*a, **k):
+        raise APITimeoutError("Request timed out.")
+
+    monkeypatch.setattr(ae, "_model_tool_call", boom)
+    result = await ae.run_agent(
+        system_prompt="Ты ассистент",
+        user_prompt="Тест",
+        engine="qwen",
+        model="qwen3.6-12b",
+    )
+    assert result.ok is False
+    assert "таймаут" in result.error
+    assert "num_ctx" in result.error

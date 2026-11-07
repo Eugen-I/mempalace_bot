@@ -28,6 +28,7 @@ from services import (  # noqa: F401
 from services import agent_tools as atools
 from services.ai_engine import (
     _OLLAMA_UNREACHABLE_MSG,
+    _is_ollama_timeout,
     _is_ollama_unavailable,
     get_current_ai,
 )
@@ -42,7 +43,7 @@ logger = logging.getLogger("AgentEngine")
 
 MAX_ITERATIONS = 5
 TOOL_TIMEOUT = 60.0
-MODEL_TIMEOUT = 200.0
+MODEL_TIMEOUT = 120.0
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
 
 
@@ -85,7 +86,11 @@ def _qwen_tool_call(model: str, messages: list[dict], tools: list[dict]) -> dict
     ensure_ollama_running(model)
     if OpenAI is None:
         raise ImportError("Библиотека openai не установлена.")
-    client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
+    kwargs = {"base_url": OLLAMA_BASE_URL, "api_key": "ollama"}
+    try:
+        client = OpenAI(**kwargs, max_retries=0, timeout=MODEL_TIMEOUT)
+    except TypeError:
+        client = OpenAI(**kwargs)
     r = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -254,7 +259,9 @@ async def run_agent(
 
     for i in range(1, max_iterations + 1):
         try:
-            resp = await asyncio.to_thread(_model_tool_call, engine, model, messages, openai_tools)
+            resp = await asyncio.to_thread(
+                _model_tool_call, engine, model, messages, openai_tools,
+            )
         except Exception as exc:
             if engine in ("qwen", "ollama") and _is_ollama_unavailable(exc):
                 return AgentResult(
@@ -265,6 +272,18 @@ async def run_agent(
                     error=(
                         f"{_OLLAMA_UNREACHABLE_MSG}. "
                         "Запустите Ollama или переключите модель в /settings."
+                    ),
+                )
+            if engine in ("qwen", "ollama") and _is_ollama_timeout(exc):
+                return AgentResult(
+                    final_answer="",
+                    steps=steps,
+                    iterations=i - 1,
+                    finished_reason="error",
+                    error=(
+                        f"⏱️ Локальная модель Ollama ({model}) не ответила вовремя (таймаут). "
+                        "Рекомендуется уменьшить num_ctx в Ollama до 64K/128K "
+                        "или переключить модель в /settings."
                     ),
                 )
             logger.error("[AGENT] model call failed (%s): %s", engine, exc, exc_info=True)
