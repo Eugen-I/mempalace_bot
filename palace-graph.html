@@ -129,9 +129,10 @@
       transform: translateY(-1px);
     }
     .btn.active {
-      background: rgba(88, 166, 255, 0.25);
-      border-color: var(--accent);
-      color: var(--accent);
+      background: rgba(56, 189, 248, 0.25) !important;
+      border-color: #38bdf8 !important;
+      color: #38bdf8 !important;
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.35);
     }
 
     /* Панель инспектора (десктоп: справа, мобилка: bottom-sheet) */
@@ -265,6 +266,19 @@
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
+      transition: color 0.2s;
+    }
+    .note-card.expanded .note-card-preview {
+      display: block;
+      -webkit-line-clamp: unset;
+      white-space: pre-wrap;
+      color: #e6edf3;
+      margin-top: 4px;
+    }
+    .note-card.highlighted {
+      border-color: #38bdf8 !important;
+      background: rgba(56, 189, 248, 0.18) !important;
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.3);
     }
     .actions-row {
       display: flex;
@@ -357,13 +371,14 @@
   </style>
 </head>
 <body>
-  <canvas id="main-canvas"></canvas>
+  <canvas id="graph-canvas"></canvas>
 
   <div id="header">
     <h1>🏰 Дворец памяти</h1>
     <span class="badge" id="badge-wings">Крыльев: 14</span>
     <span class="badge" id="badge-rooms">Комнат: 139</span>
     <span class="badge" id="badge-records">Записей: 2766</span>
+    <span class="badge" id="badge-tunnels">Туннелей: 30</span>
     <div id="search-box">
       <input type="text" id="search-input" placeholder="🔍 Поиск комнат / крыльев..." />
     </div>
@@ -460,7 +475,7 @@
       return hash >>> 0;
     }
 
-    const canvas = document.getElementById('main-canvas');
+    const canvas = document.getElementById('graph-canvas') || document.getElementById('main-canvas');
     const ctx = canvas.getContext('2d');
     const atlasCanvas = document.getElementById('atlas-canvas');
     const atlasCtx = atlasCanvas.getContext('2d');
@@ -708,6 +723,8 @@
     let hoveredNode = null;
     let selectedNode = null;
     let expandedNodeId = null;
+    let expandedWingId = null;
+    let activeSatellites = [];
     let showForgotten = false;
     let searchQuery = '';
 
@@ -718,6 +735,7 @@
     // 8. Отрисовка Слоя B «Созвездия»
     function draw() {
       ctx.clearRect(0, 0, width, height);
+      activeSatellites = [];
       ctx.save();
       ctx.translate(panX, panY);
       ctx.scale(zoom, zoom);
@@ -824,6 +842,17 @@
           drawHaloText(n.label, n.x, n.y + n.r + 14, 12, true);
           drawBadgeText(`${n.records}`, n.x, n.y + n.r + 28);
 
+          // Если раскрыто это крыло — рисуем ауру
+          if (expandedWingId === n.id) {
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, n.r * 2.2, 0, 2 * Math.PI);
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([6, 6]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+
         } else {
           // Комната: круговой узел
           ctx.beginPath();
@@ -898,7 +927,9 @@
           }
 
           // Раскрытие ящиков на графе (по запросу пользователя!)
-          if (expandedNodeId === n.id && n.notes && n.notes.length > 0) {
+          const isRoomExpanded = (expandedNodeId === n.id) ||
+            (expandedWingId && (n.wing === expandedWingId || n.wing_name === selectedNode?.label));
+          if (isRoomExpanded) {
             drawExpandedSatelliteNotes(n);
           }
         }
@@ -918,34 +949,104 @@
 
     // Раскрытие спутниковых ящиков вокруг выбранной комнаты
     function drawExpandedSatelliteNotes(roomNode) {
-      const notes = roomNode.notes.slice(0, 16);
-      const orbitR = roomNode.r + 48;
-      for (let i = 0; i < notes.length; i++) {
+      let notes = (roomNode.notes && roomNode.notes.length > 0)
+        ? roomNode.notes
+        : [];
+      if (notes.length === 0 && (roomNode.records || 0) > 0) {
+        const cnt = Math.min(roomNode.records, 16);
+        notes = Array.from({ length: cnt }, (_, i) => ({
+          t: `Запись #${i + 1}`,
+          d: '',
+          p: `Запись в комнате «${roomNode.label}»`
+        }));
+      }
+
+      const count = Math.min(notes.length, 20);
+      if (count === 0) return;
+
+      const orbitR = Math.max(roomNode.r + 50, 36 + count * 4.5);
+
+      // Орбитальное кольцо
+      ctx.beginPath();
+      ctx.arc(roomNode.x, roomNode.y, orbitR, 0, 2 * Math.PI);
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      for (let i = 0; i < count; i++) {
         const item = notes[i];
-        const angle = (i / notes.length) * 2 * Math.PI;
+        const angle = (i / count) * 2 * Math.PI - Math.PI / 2;
         const sx = roomNode.x + Math.cos(angle) * orbitR;
         const sy = roomNode.y + Math.sin(angle) * orbitR;
+        const satR = 6;
+
+        activeSatellites.push({
+          x: sx,
+          y: sy,
+          r: satR + 4,
+          note: item,
+          room: roomNode,
+          idx: i
+        });
 
         // Связь со спутником
         ctx.beginPath();
-        ctx.strokeStyle = 'rgba(88, 166, 255, 0.4)';
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+        ctx.lineWidth = 1.2;
         ctx.moveTo(roomNode.x, roomNode.y);
         ctx.lineTo(sx, sy);
         ctx.stroke();
 
-        // Спутник-ящик
+        // Спутник-ящик (кружок)
         ctx.beginPath();
-        ctx.arc(sx, sy, 4.5, 0, 2 * Math.PI);
+        ctx.arc(sx, sy, satR, 0, 2 * Math.PI);
         ctx.fillStyle = '#38bdf8';
         ctx.fill();
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.2;
+        ctx.lineWidth = 1.4;
         ctx.stroke();
 
+        // Сердцевина
+        ctx.beginPath();
+        ctx.arc(sx, sy, 2, 0, 2 * Math.PI);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+
         // Подпись ящика
-        drawHaloText(item.t || item.title, sx, sy + 12, 9, false);
+        const rawTitle = item.t || item.title || `Заметка #${i + 1}`;
+        const labelText = rawTitle.length > 22 ? rawTitle.slice(0, 20) + '…' : rawTitle;
+        const textY = sy + (Math.sin(angle) >= 0 ? 14 : -14);
+        drawPillText(labelText, sx, textY, 10);
       }
+    }
+
+    // Текст плашки для спутников
+    function drawPillText(text, x, y, size) {
+      ctx.save();
+      ctx.font = `${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const tw = ctx.measureText(text).width;
+      const pw = tw + 12;
+      const ph = size + 8;
+
+      ctx.fillStyle = 'rgba(13, 17, 23, 0.90)';
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(x - pw / 2, y - ph / 2, pw, ph, 4);
+      } else {
+        ctx.rect(x - pw / 2, y - ph / 2, pw, ph);
+      }
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(text, x, y);
+      ctx.restore();
     }
 
     // Текст с обводкой (halo)
@@ -1113,6 +1214,21 @@
         return;
       }
 
+      // Проверка наведения на спутники ящиков
+      let satHovered = null;
+      for (let i = 0; i < activeSatellites.length; i++) {
+        const sat = activeSatellites[i];
+        if (Math.hypot(sat.x - worldX, sat.y - worldY) <= (sat.r / zoom) * 1.5 + 4) {
+          satHovered = sat;
+          break;
+        }
+      }
+
+      if (satHovered) {
+        canvas.style.cursor = 'pointer';
+        return;
+      }
+
       // Определение узла под курсором (через пространственный хэш)
       const hit = findNodeAt(worldX, worldY, zoom);
 
@@ -1159,6 +1275,22 @@
       if (didDragNode) return;
       const worldX = (e.clientX - panX) / zoom;
       const worldY = (e.clientY - panY) / zoom;
+
+      // Проверка клика по спутнику-ящику
+      for (let i = 0; i < activeSatellites.length; i++) {
+        const sat = activeSatellites[i];
+        if (Math.hypot(sat.x - worldX, sat.y - worldY) <= (sat.r / zoom) * 1.5 + 6) {
+          const noteCards = inspectorNotes.querySelectorAll('.note-card');
+          if (noteCards[sat.idx]) {
+            noteCards.forEach(c => c.classList.remove('highlighted'));
+            noteCards[sat.idx].classList.add('highlighted');
+            noteCards[sat.idx].classList.add('expanded');
+            noteCards[sat.idx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+          return;
+        }
+      }
+
       const hit = findNodeAt(worldX, worldY, zoom);
 
       if (hit) {
@@ -1166,6 +1298,8 @@
       } else {
         selectedNode = null;
         expandedNodeId = null;
+        expandedWingId = null;
+        btnInspectExpand.classList.remove('active');
         inspector.style.display = 'none';
         draw();
       }
@@ -1177,13 +1311,15 @@
       const worldY = (e.clientY - panY) / zoom;
       const hit = findNodeAt(worldX, worldY, zoom);
       if (hit) {
-        focusOnNode(hit);
+        if (hit.type === 'wing') focusOnWing(hit);
+        else focusOnNode(hit);
       }
     });
 
     function selectNode(n) {
       selectedNode = n;
-      const prefix = n.type === 'wing' ? '🏛️ Крыло' : '📁 Комната';
+      const isWing = n.type === 'wing';
+      const prefix = isWing ? '🏛️ Крыло' : '📁 Комната';
       inspectorTitle.textContent = `${prefix}: ${n.label}`;
       metaWing.textContent = n.wing_name || n.wing || n.label;
       metaRecords.textContent = `${n.records} записей`;
@@ -1212,65 +1348,173 @@
         });
       }
 
-      // Список заметок (Notes List с названиями заметок!)
+      // Список заметок и ящиков
       inspectorNotes.innerHTML = '';
-      const notes = n.notes || [];
-      notesCount.textContent = `${notes.length}`;
 
-      if (notes.length === 0) {
-        inspectorNotes.innerHTML =
-          '<div style="font-size:11px; color:var(--text-muted); padding:4px;">Нет заметок</div>';
+      if (isWing) {
+        const wingRooms = roomNodes.filter(r => r.wing === n.id || r.wing_name === n.label);
+        const allNotesCount = wingRooms.reduce(
+          (acc, r) => acc + (r.notes?.length || r.records || 0), 0
+        );
+        notesCount.textContent = `${wingRooms.length} комнат, ${allNotesCount} ящиков`;
+
+        if (wingRooms.length === 0) {
+          inspectorNotes.innerHTML =
+            '<div style="font-size:11px; color:var(--text-muted); padding:4px;">' +
+            'Нет комнат в этом крыле</div>';
+        } else {
+          wingRooms.forEach(room => {
+            const card = document.createElement('div');
+            card.className = 'note-card';
+            const roomNotes = room.notes || [];
+            const previewText = roomNotes.length > 0
+              ? roomNotes.map(nt => '• ' + (nt.t || nt.title)).join('<br>')
+              : (room.tags || []).slice(0, 4).map(t => '#' + t).join(' ');
+            card.innerHTML = `
+              <div class="note-card-title">📁 ${room.label}</div>
+              <div class="note-card-date">${room.records} записей • свежесть ${Math.round((room.freshness || 0.5) * 100)}%</div>
+              <div class="note-card-preview">${previewText}</div>
+            `;
+            card.onclick = () => {
+              selectNode(room);
+              focusOnNode(room);
+            };
+            inspectorNotes.appendChild(card);
+          });
+        }
+
+        const isExpanded = (expandedWingId === n.id);
+        btnInspectExpand.textContent = isExpanded
+          ? 'Свернуть комнаты'
+          : '🌐 Раскрыть комнаты и ящики';
+        btnInspectExpand.classList.toggle('active', isExpanded);
+
       } else {
-        notes.forEach((item, idx) => {
-          const card = document.createElement('div');
-          card.className = 'note-card';
-          card.innerHTML = `
-            <div class="note-card-title">${item.t || item.title || ('Заметка #' + (idx+1))}</div>
-            <div class="note-card-date">${item.d || item.date || ''}</div>
-            <div class="note-card-preview">${item.p || item.preview || ''}</div>
-          `;
-          card.onclick = () => {
-            // Подсветка и центрирование
-            expandedNodeId = n.id;
-            draw();
-          };
-          inspectorNotes.appendChild(card);
-        });
+        // Комната
+        let notes = (n.notes && n.notes.length > 0) ? n.notes : [];
+        if (notes.length === 0 && (n.records || 0) > 0) {
+          const cnt = Math.min(n.records, 16);
+          notes = Array.from({ length: cnt }, (_, i) => ({
+            t: `Запись #${i + 1}`,
+            d: '',
+            p: `Запись в комнате «${n.label}».`
+          }));
+        }
+
+        notesCount.textContent = `${notes.length}`;
+
+        if (notes.length === 0) {
+          inspectorNotes.innerHTML =
+            '<div style="font-size:11px; color:var(--text-muted); padding:4px;">Нет записей</div>';
+        } else {
+          notes.forEach((item, idx) => {
+            const card = document.createElement('div');
+            card.className = 'note-card';
+            card.innerHTML = `
+              <div class="note-card-title">🗂️ ${item.t || item.title || ('Заметка #' + (idx+1))}</div>
+              <div class="note-card-date">${item.d || item.date || ''}</div>
+              <div class="note-card-preview">${item.p || item.preview || ''}</div>
+            `;
+            card.onclick = () => {
+              expandedNodeId = n.id;
+              card.classList.toggle('expanded');
+              focusOnNode(n);
+              btnInspectExpand.classList.add('active');
+              btnInspectExpand.textContent = 'Свернуть ящики';
+              draw();
+            };
+            inspectorNotes.appendChild(card);
+          });
+        }
+
+        const isExpanded = (expandedNodeId === n.id);
+        btnInspectExpand.textContent = isExpanded ? 'Свернуть ящики' : '🌐 Раскрыть ящики';
+        btnInspectExpand.classList.toggle('active', isExpanded);
       }
 
-      btnInspectExpand.textContent =
-        (expandedNodeId === n.id) ? 'Свернуть ящики' : '🌐 Раскрыть ящики';
       inspector.style.display = 'flex';
       draw();
     }
 
     function focusOnNode(n) {
-      zoom = 1.8;
-      panX = width / 2 - n.x * zoom;
+      zoom = 1.6;
+      const offsetX = (window.innerWidth > 768) ? 170 : 0;
+      panX = (width / 2 - offsetX) - n.x * zoom;
       panY = height / 2 - n.y * zoom;
+      draw();
+    }
+
+    function focusOnWing(w) {
+      const rooms = roomNodes.filter(r => r.wing === w.id || r.wing_name === w.label);
+      if (rooms.length === 0) {
+        focusOnNode(w);
+        return;
+      }
+      let minX = w.x, maxX = w.x, minY = w.y, maxY = w.y;
+      rooms.forEach(r => {
+        minX = Math.min(minX, r.x);
+        maxX = Math.max(maxX, r.x);
+        minY = Math.min(minY, r.y);
+        maxY = Math.max(maxY, r.y);
+      });
+      const bbW = Math.max(maxX - minX + 160, 240);
+      const bbH = Math.max(maxY - minY + 160, 240);
+      const midX = (minX + maxX) / 2;
+      const midY = (minY + maxY) / 2;
+      const availW = window.innerWidth > 768 ? (width - 360) : width;
+      const availH = height - 100;
+      zoom = Math.max(0.6, Math.min(1.8, Math.min(availW / bbW, availH / bbH)));
+      const offsetX = window.innerWidth > 768 ? 170 : 0;
+      panX = (width / 2 - offsetX) - midX * zoom;
+      panY = height / 2 - midY * zoom;
       draw();
     }
 
     btnInspectExpand.onclick = () => {
       if (!selectedNode) return;
-      if (expandedNodeId === selectedNode.id) {
-        expandedNodeId = null;
-        btnInspectExpand.textContent = '🌐 Раскрыть ящики';
+      if (selectedNode.type === 'wing') {
+        if (expandedWingId === selectedNode.id) {
+          expandedWingId = null;
+          btnInspectExpand.classList.remove('active');
+          btnInspectExpand.textContent = '🌐 Раскрыть комнаты и ящики';
+        } else {
+          expandedWingId = selectedNode.id;
+          expandedNodeId = null;
+          btnInspectExpand.classList.add('active');
+          btnInspectExpand.textContent = 'Свернуть комнаты';
+          focusOnWing(selectedNode);
+        }
       } else {
-        expandedNodeId = selectedNode.id;
-        btnInspectExpand.textContent = 'Свернуть ящики';
+        if (expandedNodeId === selectedNode.id) {
+          expandedNodeId = null;
+          btnInspectExpand.classList.remove('active');
+          btnInspectExpand.textContent = '🌐 Раскрыть ящики';
+        } else {
+          expandedNodeId = selectedNode.id;
+          expandedWingId = null;
+          btnInspectExpand.classList.add('active');
+          btnInspectExpand.textContent = 'Свернуть ящики';
+          focusOnNode(selectedNode);
+        }
       }
+      const noteCards = inspectorNotes.querySelectorAll('.note-card');
+      const isExp = (expandedNodeId === selectedNode.id || expandedWingId === selectedNode.id);
+      noteCards.forEach(c => c.classList.toggle('expanded', isExp));
       draw();
     };
 
     btnInspectFocus.onclick = () => {
-      if (selectedNode) focusOnNode(selectedNode);
+      if (!selectedNode) return;
+      if (selectedNode.type === 'wing') focusOnWing(selectedNode);
+      else focusOnNode(selectedNode);
     };
 
     document.getElementById('inspector-close').onclick = () => {
       inspector.style.display = 'none';
       selectedNode = null;
       expandedNodeId = null;
+      expandedWingId = null;
+      btnInspectExpand.classList.remove('active');
       draw();
     };
 
@@ -1293,6 +1537,8 @@
       document.getElementById('btn-forgotten').classList.remove('active');
       selectedNode = null;
       expandedNodeId = null;
+      expandedWingId = null;
+      btnInspectExpand.classList.remove('active');
       inspector.style.display = 'none';
       draw();
     };
