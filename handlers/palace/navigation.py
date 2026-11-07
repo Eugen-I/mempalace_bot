@@ -3,6 +3,7 @@ import base64
 import binascii
 import json
 import logging
+import os
 import secrets
 
 from aiogram import F, types
@@ -620,28 +621,71 @@ async def cb_export_map(cb: types.CallbackQuery):
         html_content = generate_palace_map_html(wdata, rooms_by_wing, parsed_t)
         html_bytes = html_content.encode("utf-8")
 
+        # Сохраняем во временный файл для мгновенного открытия в браузере на Mac
+        try:
+            with open("/tmp/palace-graph.html", "w", encoding="utf-8") as f:
+                f.write(html_content)
+        except Exception:
+            pass
+
         total_rooms_count = sum(len(r) for r in rooms_by_wing.values())
         caption = (
-            "🗺️ <b>Интерактивная карта (3D) комнат и туннелей Дворца памяти</b>\n\n"
-            f"📊 На карте: <b>{len(wdata)}</b> крыльев, "
-            f"<b>{total_rooms_count}</b> комнат, "
-            f"<b>{len(parsed_t)}</b> туннелей.\n\n"
-            "💡 <b>Как открыть в браузере (Chrome / Safari):</b>\n"
-            "1. Скачайте файл <code>palace_map.html</code>\n"
-            "2. Правый клик → <i>«Открыть в приложении»</i> → "
-            "<b>Google Chrome</b> или <b>Safari</b> "
-            "(или перетащите файл в окно браузера).\n"
-            "3. Управление: левая кнопка мыши — 3D-вращение, колёсико — зум, "
-            "Shift / правая — сдвиг."
+            "🌌 <b>Интерактивная карта — Граф знаний «Созвездия»</b>\n\n"
+            f"📊 <b>Объекты:</b> {len(wdata)} крыльев, "
+            f"{total_rooms_count} комнат, "
+            f"{len(parsed_t)} туннелей.\n\n"
+            "✨ <b>Возможности:</b>\n"
+            "• <b>Слой «Созвездия»:</b> интерактивный граф на Canvas с физикой и зумом.\n"
+            "• <b>Слой «Атлас»:</b> круговая Sunburst-миникарта в левом углу.\n"
+            "• <b>Раскрытие ящиков:</b> кликните на комнату и нажмите «Раскрыть ящики» "
+            "для просмотра названий заметок!\n"
+            "• <b>Офлайн 100%:</b> работает без интернета в Chrome, Safari и Telegram.\n\n"
+            "💡 <i>Нажмите кнопку ниже, чтобы мгновенно открыть граф в браузере на Mac!</i>"
         )
-        await cb.message.answer_document(
-            types.BufferedInputFile(html_bytes, filename="palace_map.html"),
-            caption=caption,
-            parse_mode="HTML",
-        )
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.row(types.InlineKeyboardButton(
+            text="🖥️ Открыть в браузере (Chrome / Safari)",
+            callback_data="p_open_browser",
+        ))
+        kb.row(types.InlineKeyboardButton(
+            text="◀️ Назад во Дворец",
+            callback_data="p_nav",
+        ))
+        doc_file = types.BufferedInputFile(html_bytes, filename="palace_map.html")
+        try:
+            await cb.message.answer_document(
+                doc_file,
+                caption=caption,
+                reply_markup=kb.as_markup(),
+                parse_mode="HTML",
+            )
+        except TypeError:
+            await cb.message.answer_document(
+                doc_file,
+                caption=caption,
+                parse_mode="HTML",
+            )
     except Exception as e:
         logger.warning("[MAP_EXPORT] Ошибка экспорта карты: %s", e, exc_info=True)
         await cb.message.answer(f"❌ Ошибка экспорта карты: {e}")
+
+
+@router.callback_query(F.data == "p_open_browser")
+@allowed_callback
+async def cb_open_browser(cb: types.CallbackQuery):
+    try:
+        import subprocess
+        tmp_path = "/tmp/palace-graph.html"
+        repo_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "palace-graph.html"
+        )
+        target = repo_path if os.path.exists(repo_path) else tmp_path
+        subprocess.Popen(["open", target])
+        await cb.answer("🚀 Граф открыт в вашем браузере!")
+    except Exception as e:
+        logger.warning("[MAP] Ошибка открытия в браузере: %s", e)
+        await cb.answer(f"❌ Не удалось открыть: {e}", show_alert=True)
 
 
 # ─── DRAWERS ───

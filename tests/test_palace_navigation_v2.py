@@ -8,7 +8,6 @@
 3.4 Экспорт визуальной карты комнат и туннелей в интерактивный HTML-файл.
 """
 
-import asyncio
 import json
 import pytest
 
@@ -42,7 +41,7 @@ class FakeMsg:
         self.edits.append((text, parse_mode, reply_markup))
         return self
 
-    async def answer_document(self, document, caption=None, parse_mode=None):
+    async def answer_document(self, document, caption=None, parse_mode=None, reply_markup=None):
         self.documents.append((document, caption, parse_mode))
         return self
 
@@ -153,7 +152,9 @@ async def test_drawers_page_rich_preview_and_breadcrumbs(monkeypatch):
     monkeypatch.setattr(nav, "get_mcp", lambda: FakeMCP())
 
     captured = {}
-    async def fake_finalize(uid, edit_func, text, is_html=False, ctx=None, extra_rows=None, title=""):
+
+    async def fake_finalize(uid, edit_func, text, is_html=False, ctx=None,
+                            extra_rows=None, title=""):
         captured["text"] = text
         captured["ctx"] = ctx
 
@@ -177,7 +178,12 @@ async def test_export_palace_map_html_callback(monkeypatch):
             if name == "mempalace_list_wings":
                 return json.dumps({"wings": {"w1": 10, "w2": 5}})
             if name == "mempalace_list_tunnels":
-                return json.dumps({"tunnels": [{"source": {"wing": "w1", "room": "r1"}, "target": {"wing": "w2", "room": "r2"}, "label": "связь"}]})
+                tun_item = {
+                    "source": {"wing": "w1", "room": "r1"},
+                    "target": {"wing": "w2", "room": "r2"},
+                    "label": "связь",
+                }
+                return json.dumps({"tunnels": [tun_item]})
             if name == "mempalace_list_rooms":
                 return json.dumps({"rooms": {"r1": 5, "r2": 5}})
             return "{}"
