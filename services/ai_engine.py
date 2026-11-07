@@ -116,6 +116,14 @@ def _is_ollama_unavailable(exc: Exception) -> bool:
     }
 
 
+def _is_ollama_timeout(exc: Exception) -> bool:
+    """True, если запрос к локальной модели Ollama превысил таймаут."""
+    name = type(exc).__name__
+    if name in {"APITimeoutError", "ReadTimeout", "TimeoutException"}:
+        return True
+    return "timed out" in str(exc).lower() or "readtimeout" in name.lower()
+
+
 def _normalize_engine(engine: str) -> str:
     """Приводит имя движка к внутреннему виду (ollama → qwen)."""
     normalized = engine.lower().strip()
@@ -308,7 +316,15 @@ def _openai_client(engine: str, model: str) -> Any:
             raise ImportError("Библиотека openai не установлена.")
 
         logger.info(f"[OLLAMA] Sending request to {model}...")
-        return OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+        try:
+            return OpenAI(
+                base_url="http://localhost:11434/v1",
+                api_key="ollama",
+                max_retries=0,
+                timeout=180.0,
+            )
+        except TypeError:
+            return OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 
     if engine == "openai":
         if OpenAI is None:
@@ -346,7 +362,7 @@ def _openai_kwargs(
         "messages": messages,
         "temperature": sampling.get("temperature", default_temperature),
         "max_tokens": 8192,
-        "timeout": 200.0,
+        "timeout": 180.0,
         "stop": list(_OPENAI_STOP_TOKENS),
     }
     kwargs.update({
@@ -524,6 +540,12 @@ def _sync_ai_call(
             error_msg = (
                 f"🧠 {_OLLAMA_UNREACHABLE_MSG}. "
                 "Запустите Ollama или переключите модель в /settings."
+            )
+        elif engine == "qwen" and _is_ollama_timeout(e):
+            error_msg = (
+                f"⏱️ Локальная модель Ollama ({model}) не ответила за {elapsed:.0f}с "
+                "(таймаут). Рекомендуется уменьшить num_ctx в Ollama до 64K/128K "
+                "или переключить модель в /settings."
             )
         else:
             error_msg = f"❌ Ошибка ИИ ({engine}) после {elapsed:.2f}s: {e!s}"

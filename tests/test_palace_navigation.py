@@ -209,9 +209,12 @@ def test_cb_list_wings_dict(monkeypatch):
     monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
     cb = FakeCb(data="p_wing")
     asyncio.run(nav.cb_list_wings(cb))
-    text = cb.message.edits[-1][0]
-    assert text.find("beta") < text.find("alpha")
-    assert "alpha" in text
+    markup = cb.message.edits[-1][2]
+    buttons = [
+        b.text for row in markup.inline_keyboard
+        for b in row if b.callback_data != "p_nav"
+    ]
+    assert buttons == ["🪪 beta", "🪪 alpha"]
     assert nav._wing_cache.get(4242) == ["beta", "alpha"]
     data = _kb_data(cb.message.edits[-1][2])
     assert data[0].startswith("p_rs_:")

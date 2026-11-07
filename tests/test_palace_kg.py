@@ -176,9 +176,23 @@ def test_cb_kg_stats_success(monkeypatch):
     cb = FakeCb(data="p_kgst")
     asyncio.run(k.cb_kg_stats(cb))
     assert cb.message.answers[0][0] == "📊 Загружаю статистику KG..."
-    assert "entities:</b> 10" in captured["text"]
+    assert "Сущностей в графе:</b> <code>10</code>" in captured["text"]
     assert "• kind: 3" in captured["text"]
     assert captured["ctx"] == {"parent_cb": "p_kg"}
+
+
+def test_cb_kg_stats_relationship_types(monkeypatch):
+    _enable(monkeypatch)
+    mcp = FakeMCP('{"relationship_types": ["author", "contains_idea"]}')
+    monkeypatch.setattr(k, "get_mcp", lambda: mcp)
+    captured = _capture_finalize(monkeypatch)
+    cb = FakeCb(data="p_kgst")
+    asyncio.run(k.cb_kg_stats(cb))
+    assert "Типы связей (2):" in captured["text"]
+    assert "author" in captured["text"]
+    assert "автор" in captured["text"]
+    assert "contains_idea" in captured["text"]
+    assert "содержит идею" in captured["text"]
 
 
 def test_cb_kg_stats_non_dict(monkeypatch):
@@ -610,6 +624,7 @@ def test_kg_read_sources_skip_missing_in_chroma(monkeypatch):
         k, "_get_full_text_from_chroma",
         lambda src: "текст есть" if "Есть" in src else "",
     )
+
     async def fake_send(*a, **kw):
         return None
 
@@ -629,6 +644,7 @@ def test_kg_read_sources_string_facts_ignored(monkeypatch):
         "page": 0,
     }
     monkeypatch.setattr(k, "_get_full_text_from_chroma", lambda src: "текст")
+
     async def fake_send(*a, **kw):
         return None
 

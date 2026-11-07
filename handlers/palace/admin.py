@@ -20,10 +20,29 @@ from .shared import router
 
 async def _finalize_admin_result(uid: int, edit_func, text: str, parent_cb: str):
     from .action_bar import finalize_answer
-    await finalize_answer(
-        uid, edit_func, text or "❌ Нет данных.",
-        ctx={"parent_cb": parent_cb},
-    )
+    extra_rows = None
+    if parent_cb == "palace_back":
+        extra_rows = [
+            [
+                types.InlineKeyboardButton(
+                    text="🗺️ Скачать карту (.html)", callback_data="p_export_map",
+                ),
+                types.InlineKeyboardButton(
+                    text="🏛️ Крылья", callback_data="p_wing",
+                ),
+            ],
+        ]
+    try:
+        await finalize_answer(
+            uid, edit_func, text or "❌ Нет данных.",
+            ctx={"parent_cb": parent_cb},
+            extra_rows=extra_rows,
+        )
+    except TypeError:
+        await finalize_answer(
+            uid, edit_func, text or "❌ Нет данных.",
+            ctx={"parent_cb": parent_cb},
+        )
 
 
 @router.callback_query(F.data == "palace_status")

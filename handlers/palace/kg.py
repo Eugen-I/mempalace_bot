@@ -63,6 +63,31 @@ async def cb_kg_help(cb: types.CallbackQuery):
     await cb.message.edit_text(help_text, parse_mode="HTML", reply_markup=kb.as_markup())
 
 
+_KG_STAT_LABELS = {
+    "entities": "👤 Сущностей в графе",
+    "triples": "🔗 Всего фактов (триплетов)",
+    "current_facts": "✅ Активных связей",
+    "expired_facts": "⏳ Устаревших (исторических)",
+    "relationship_types": "🏷️ Типы связей",
+    "facts": "📋 Факты",
+    "predicates": "🏷️ Предикаты",
+}
+
+_RELATIONSHIP_TRANSLATIONS = {
+    "author": "автор",
+    "wrote": "автор произведения",
+    "contains_idea": "содержит идею",
+    "contains_quote": "содержит цитату",
+    "related_to": "ассоциация / связь",
+    "topic": "тематика",
+    "part_of": "составная часть",
+    "created": "создал",
+    "influences": "влияет на",
+    "influenced_by": "испытал влияние",
+    "references": "ссылается на",
+}
+
+
 @router.callback_query(F.data == "p_kgst")
 @allowed_callback
 async def cb_kg_stats(cb: types.CallbackQuery):
@@ -75,12 +100,23 @@ async def cb_kg_stats(cb: types.CallbackQuery):
         lines = ["<b>📊 Статистика графа знаний</b>\n"]
         if isinstance(parsed, dict):
             for k, v in parsed.items():
-                if isinstance(v, dict):
-                    lines.append(f"\n<b>{k}:</b>")
+                label = _KG_STAT_LABELS.get(k, k)
+                if k == "relationship_types" and isinstance(v, list):
+                    lines.append(f"\n<b>{label} ({len(v)}):</b>")
+                    for r in v:
+                        trans = _RELATIONSHIP_TRANSLATIONS.get(str(r), "")
+                        trans_str = f" — <i>{trans}</i>" if trans else ""
+                        lines.append(
+                            f"  • <code>{safe_html_format(str(r))}</code>{trans_str}"
+                        )
+                elif isinstance(v, dict):
+                    lines.append(f"\n<b>{label}:</b>")
                     for sk, sv in v.items():
                         lines.append(f"  • {interpreter.display_name(str(sk))}: {sv}")
+                elif isinstance(v, int):
+                    lines.append(f"<b>{label}:</b> <code>{v:,}</code>")
                 else:
-                    lines.append(f"\n<b>{k}:</b> {v}")
+                    lines.append(f"<b>{label}:</b> {safe_html_format(str(v))}")
         else:
             lines.append(str(parsed))
         from .action_bar import finalize_answer

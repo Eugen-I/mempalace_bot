@@ -118,7 +118,7 @@ def test_cmd_start_answers_with_keyboard(monkeypatch, caplog):
     asyncio.run(main.cmd_start(msg))
     assert len(msg.answers) == 1
     text, kb = msg.answers[0]
-    assert text == "🦾 MemPalace запущен."
+    assert "🦾 <b>MemPalace запущен.</b>" in text
     assert kb is not None
     assert "⚙️ Настройки" in repr(kb)
     assert any("started" in r.getMessage() for r in caplog.records)

@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 from datetime import datetime
@@ -506,8 +507,103 @@ async def _run_mempalace_impl(args: list[str]) -> str:
     return stdout.decode("utf-8").strip()
 
 
+def _wing_emoji(name: str) -> str:
+    """Подбирает подходящий эмодзи для крыла."""
+    low = name.lower()
+    if "phil" in low or "филос" in low:
+        return "🧠"
+    if "gen" in low or "общ" in low:
+        return "🌐"
+    if "proj" in low or "проект" in low:
+        return "🚀"
+    if "творч" in low or "арт" in low:
+        return "🎨"
+    if "лит" in low or "книг" in low:
+        return "📚"
+    if "псих" in low or "psych" in low:
+        return "🧩"
+    if "фот" in low or "photo" in low:
+        return "📷"
+    if "инсайт" in low or "insight" in low:
+        return "💡"
+    if "сон" in low or "сны" in low:
+        return "🌙"
+    if "раб" in low or "work" in low:
+        return "💼"
+    if "личн" in low:
+        return "💭"
+    if "deutsch" in low or "нем" in low:
+        return "🇩🇪"
+    return "🏛️"
+
+
+def format_palace_status_dashboard(raw: str) -> str:
+    """Преобразует CLI-вывод 'mempalace status' в структурированный HTML-дашборд."""
+    if not raw or "WING:" not in raw:
+        return raw
+
+    match = re.search(r"MemPalace Status — (\d+) drawers", raw, re.IGNORECASE)
+    total_drawers = int(match.group(1)) if match else 0
+
+    wings: dict[str, int] = {}
+    current_wing: str | None = None
+    total_rooms = 0
+
+    for line in raw.splitlines():
+        line = line.strip()
+        if line.startswith("WING:"):
+            current_wing = line[5:].strip()
+            if current_wing not in wings:
+                wings[current_wing] = 0
+        elif line.startswith("ROOM:") and current_wing:
+            rm = re.match(r"ROOM:\s+(.*?)\s+(\d+)\s+drawers?", line, re.IGNORECASE)
+            if rm:
+                count = int(rm.group(2))
+                wings[current_wing] += count
+                total_rooms += 1
+
+    if not wings:
+        return raw
+
+    if total_drawers == 0:
+        total_drawers = sum(wings.values())
+
+    sorted_wings = sorted(wings.items(), key=lambda x: x[1], reverse=True)
+    total_wings = len(sorted_wings)
+
+    lines = [
+        "🏰 <b>Чертоги Разума — Сводка</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"📦 <b>Всего записей:</b> <code>{total_drawers:,}</code>",
+        f"🏛️ <b>Крыльев:</b> <code>{total_wings}</code> | "
+        f"🚪 <b>Комнат:</b> <code>{total_rooms}</code>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "📊 <b>Распределение по разделам:</b>",
+    ]
+
+    limit = 8
+    displayed = sorted_wings[:limit]
+    remaining = sorted_wings[limit:]
+
+    for wing, count in displayed:
+        pct = (count / total_drawers * 100) if total_drawers else 0
+        emoji = _wing_emoji(wing)
+        lines.append(f"{emoji} <b>{wing}:</b> {count:,} <i>({pct:.1f}%)</i>")
+
+    if remaining:
+        rem_count = sum(c for _, c in remaining)
+        lines.append(
+            f"<i>… и ещё {len(remaining)} разделов ({rem_count:,} записей)</i>"
+        )
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    lines.append("💡 <i>Выберите действие ниже для перехода или экспорта:</i>")
+    return "\n".join(lines)
+
+
 async def palace_status() -> str:
-    return await _run_mempalace(["status"])
+    raw = await _run_mempalace(["status"])
+    return format_palace_status_dashboard(raw)
 
 
 async def palace_mcp() -> str:
@@ -542,54 +638,44 @@ async def palace_instructions() -> str:
     return (
         "<b>📖 Как работать с Дворцом MemPalace</b>\n\n"
         "<b>🏰 Что такое Дворец?</b>\n"
-        "Это твоя база знаний. Все заметки, файлы и диалоги "
+        "Это ваша база знаний и «второй мозг». Все заметки, файлы и диалоги "
         "раскладываются по <b>крыльям</b> и <b>комнатам</b>.\n\n"
-        "<b>🕸️ Крылья</b> — большие разделы (проекты, люди, темы).\n"
-        "  Пример: «my_notes», «projects», «chats».\n\n"
-        "<b>🪪 Комнаты</b> — подтемы внутри крыла.\n"
-        "  Пример: в крыле «my_notes»: «философия», «архетипы», «daily».\n\n"
-        "<b>🏛️ Структура:</b>\n"
-        "  Крыло → Комната → Записи (каждая запись — фрагмент текста)\n\n"
-        "<b>Навигация по комнатам:</b>\n"
-        "  Дворец → Все комнаты → выбери крыло → кликни на комнату →\n"
-        "  увидишь список записей. У каждой записи кнопка «Получить запись».\n"
-        "  Длинные записи (>3500 символов) разбиты на части.\n\n"
-        "<b>🔗 Связанные записи:</b>\n"
-        "  Когда читаешь запись — нажми «🔗 Связано».\n"
-        "  Бот покажет комнаты, связанные через туннели с этой записью.\n\n"
-        "<b>📡 Чтение с туннелями:</b>\n"
-        "  В списке записей комнаты — кнопка «📡 Читать с туннелями».\n"
-        "  Собирает записи из текущей и всех связанных комнат в один поток.\n"
-        "  Внизу — кнопка «🤖 Статья»: ИИ составит связный текст.\n\n"
-        "<b>🔄 Туннели</b> — связи между комнатами РАЗНЫХ крыльев.\n"
-        "  Если тема «интегралы» есть и в «math», и в «physics» — "
-        "возникает туннель.\n"
-        "  В меню туннелей:\n"
-        "  • «📋 Список» — все туннели, кликабельные для детального просмотра\n"
-        "  • «🤖 Анализ туннелей» — ИИ находит пересекающиеся темы\n"
-        "  • «🔍 Между крыльями» — общие темы двух крыльев\n"
-        "  • «➡️ Пройти» — обход от комнаты\n"
-        "  • «➕ Создать» — 4-шаговый мастер\n"
-        "  В детальном просмотре туннеля можно читать записи из обеих комнат.\n\n"
-        "<b>🧠 Граф знаний (KG)</b> — база фактов.\n"
-        "  Связи: «Сущность → отношение → значение».\n"
-        "  Пример: «Max → работает_над → MemPalace».\n"
-        "  Поиск по сущности покажет все связанные факты.\n\n"
-        "<b>⏰ Напоминания</b>\n"
-        "  Напиши «напомни завтра в 15:00 позвонить маме» —\n"
-        "  бот разберёт время и текст через ИИ, покажет подтверждение\n"
-        "  и отправит напоминание в заданное время.\n"
-        "  Если данных не хватает — бот сам спросит.\n\n"
+        "<b>⚡ Интерактивные команды:</b>\n"
+        "• /palace — главное меню Чертогов Разума\n"
+        "• /search — сквозной поиск OmniSearch\n"
+        "• /notes — управление и синхронизация Apple Notes\n"
+        "• /settings — смена AI-модели (Ollama, Gemini, OpenAI)\n\n"
+        "<b>🏛️ Структура Дворца:</b>\n"
+        "• <b>Крылья</b> — макро-разделы (философия, проекты, творчество, психология)\n"
+        "• <b>Комнаты</b> — тематические разделы внутри каждого крыла\n"
+        "• <b>Записи (drawers)</b> — атомарные карточки знаний и цитат\n\n"
+        "<b>🔍 OmniSearch (сквозной поиск):</b>\n"
+        "Объединённый поиск по трём слоям: ChromaDB, Графу знаний (KG) "
+        "и Apple Notes в едином окне. Доступен по /search.\n\n"
+        "<b>🗺️ 3D/2D Карта Дворца (.html):</b>\n"
+        "Экспорт интерактивной карты в формате .html. Откройте в любом браузере: "
+        "доступен 3D-граф, 2D-схема и фильтрация связей.\n\n"
+        "<b>📝 Apple Notes & Бэклинки:</b>\n"
+        "Двусторонняя синхронизация: заметки отправляются во Дворец, а в Apple Notes "
+        "проставляются кликабельные бэклинки вида <code>mempalace://</code>.\n\n"
+        "<b>🔄 Туннели между крыльями:</b>\n"
+        "Связывают пересекающиеся темы из разных крыльев. ИИ анализирует туннели "
+        "и помогает генерировать синтетические обзоры.\n\n"
+        "<b>🧠 Граф знаний (KG):</b>\n"
+        "Сеть структурированных фактов: «Сущность → Отношение → Значение». "
+        "Позволяет находить скрытые взаимосвязи между авторами и идеями.\n\n"
+        "<b>🤖 Автономный агент Дворца:</b>\n"
+        "Интеллектуальный помощник: выявляет дубли, предлагает слияние или разделение "
+        "комнат и оптимизирует структуру Чертогов.\n\n"
         "<b>🔧 Обслуживание:</b>\n"
-        "  • Перестроить индекс — после ручного добавления файлов\n"
-        "  • Сжать БД — очистить старые сегменты ChromaDB (compact)\n"
-        "  • Сжать текст — удалить дубликаты и объединить похожее\n"
-        "  • Загрузить в контекст — подгрузить крыло в память\n\n"
+        "• Статус — актуальная сводка записей и визуальное распределение\n"
+        "• Сжать БД (compact) — очистка неиспользуемых сегментов ChromaDB\n"
+        "• Сжать текст — дедупликация и объединение родственных заметок\n"
+        "• Перестроить индекс — обновление поискового индекса после синхронизации\n\n"
         "<b>💡 Советы:</b>\n"
-        "  • После майнинга проверь Статус — увидишь новые крылья\n"
-        "  • Найди пересечения через Туннели → Между крыльями\n"
-        "  • Ищи факты в KG — там выводы ИИ\n"
-        "  • Если база тормозит — запусти Сжать БД (compact)\n"
+        "• Скачивайте карту (.html) для наглядного обзора всего Дворца\n"
+        "• Используйте OmniSearch для комплексных запросов по всем базам\n"
+        "• Запускайте Сжать БД раз в месяц для оптимальной скорости\n"
     )
 
 

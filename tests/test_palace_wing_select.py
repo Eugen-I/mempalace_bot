@@ -109,9 +109,9 @@ async def test_list_wings_all_wings_present(monkeypatch):
     _patch_mcp_list_wings(monkeypatch)
     msg = FakeMessage()
     await navigation.cb_list_wings(FakeCallback("p_wing", msg))
-    text = msg.edited[-1][0]
-    assert LONG_WING in text
-    assert SHORT_WING in text
+    btn_texts = [b.text for b in _buttons_of(msg)]
+    assert any(LONG_WING in b for b in btn_texts)
+    assert any(SHORT_WING in b for b in btn_texts)
 
 
 @pytest.mark.asyncio

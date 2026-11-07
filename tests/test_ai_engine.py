@@ -788,6 +788,25 @@ def test_sync_qwen_apiconnection_error_friendly_message(monkeypatch):
     assert "Запустите Ollama" in out
 
 
+def test_sync_qwen_timeout_friendly_message(monkeypatch):
+    class APITimeoutError(Exception):
+        pass
+
+    class BoomCompletions:
+        def create(self, **kwargs):
+            raise APITimeoutError("Request timed out.")
+
+    class BoomOpenAI(FakeOpenAI):
+        def __init__(self, *args, **kwargs):
+            super().__init__(None)
+            self.chat.completions = BoomCompletions()
+
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: BoomOpenAI(**kwargs))
+    out = ai_engine._sync_ai_call("qwen", "m", [{"role": "user", "content": "hi"}])
+    assert "таймаут" in out
+    assert "num_ctx" in out
+
+
 def test_sync_gemini_does_not_ensure_ollama(monkeypatch):
     def fake_ensure(model="qwen2.5:7b"):
         raise AssertionError("ensure_ollama_running вызван для gemini")

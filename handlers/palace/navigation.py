@@ -183,17 +183,17 @@ async def cb_list_wings(cb: types.CallbackQuery):
             wing_names = list(wings)
         uid = cb.from_user.id
         _wing_cache[uid] = wing_names
-        lines = [render_breadcrumbs(section="Крылья") + "<b>🕸️ Крылья MemPalace:</b>\n"]
-
-        for w in wing_names:
-            count = wings[w] if isinstance(wings, dict) else ""
-            lines.append(f"  • <b>{safe_html_format(w)}</b> {count}")
+        lines = [
+            render_breadcrumbs(section="Крылья") + "<b>🕸️ Крылья MemPalace:</b>\n",
+            "Выберите крыло для перехода к комнатам:",
+        ]
 
         kb = InlineKeyboardBuilder()
         for w in wing_names:
-            kb.row(types.InlineKeyboardButton(
+            kb.button(
                 text=f"🪪 {w}", callback_data=_build_wing_callback_data(w),
-            ))
+            )
+        kb.adjust(2)
         kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_nav"))
 
         await safe_edit_text(

@@ -132,7 +132,16 @@ async def cmd_start(message: types.Message):
         ],
         resize_keyboard=True,
     )
-    await message.answer("🦾 MemPalace запущен.", reply_markup=kb)
+    welcome_text = (
+        "🦾 <b>MemPalace запущен.</b>\n\n"
+        "🏛️ <b>Возможности Чертогов Разума:</b>\n"
+        "• <b>OmniSearch:</b> сквозной поиск по ящикам, Графу знаний (KG) и Apple Notes\n"
+        "• <b>Карта Дворца:</b> интерактивная 3D/2D визуализация в .html\n"
+        "• <b>Apple Notes:</b> двусторонняя синхронизация с умными бэклинками\n"
+        "• <b>Автономный AI-агент:</b> реструктуризация комнат и оптимизация связей\n\n"
+        "💡 <i>Выберите действие на клавиатуре ниже или команду /palace.</i>"
+    )
+    await message.answer(welcome_text, reply_markup=kb, parse_mode="HTML")
     logger.info(f"User {message.from_user.id} started.")
 
 
