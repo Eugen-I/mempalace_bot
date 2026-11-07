@@ -7,6 +7,7 @@ numbers.  The validator enforces the safety rules from the integration plan.
 
 from __future__ import annotations
 
+import html
 import uuid
 from datetime import date, timedelta
 from typing import Any, Iterable
@@ -564,26 +565,33 @@ def clarifying_questions(
     return questions[:3]
 
 
+def _esc(value: object) -> str:
+    return html.escape(str(value), quote=False)
+
+
 def plan_summary(plan: TrainingPlan) -> str:
     """Compact Russian overview for Telegram."""
     lines = [
         f"🏋️ <b>План на {plan.horizon_weeks} недель</b>",
-        f"Цель: {_goal_text(plan.goal)} · уверенность: {plan.confidence}",
+        f"Цель: {_esc(_goal_text(plan.goal))} · уверенность: {_esc(plan.confidence)}",
         "",
     ]
     for week in plan.weeks:
         strength = sum(1 for session in week.sessions if session.type == "strength")
         aerobic = sum(1 for session in week.sessions if session.type == "aerobic")
         lines.append(
-            f"Неделя {week.week} ({week.focus}): "
+            f"Неделя {week.week} ({_esc(week.focus)}): "
             f"{strength} силовых, {aerobic} вело, "
             f"{week_volume(week)} мин"
         )
     if plan.missing_data:
         lines.append("")
-        lines.append("⚠️ Не хватает: " + "; ".join(plan.missing_data))
+        lines.append(
+            "⚠️ Не хватает: "
+            + "; ".join(_esc(item) for item in plan.missing_data)
+        )
     lines.append("")
-    lines.append(plan.disclaimer)
+    lines.append(_esc(plan.disclaimer))
     return "\n".join(lines)
 
 
@@ -597,26 +605,26 @@ def week_detail_text(plan: TrainingPlan, week_number: int) -> str:
         return ""
     index = max(0, min(week_number - 1, len(plan.weeks) - 1))
     week = plan.weeks[index]
-    lines = [f"<b>Неделя {week.week} · {week.focus}</b>"]
+    lines = [f"<b>Неделя {week.week} · {_esc(week.focus)}</b>"]
     for session in week.sessions:
         day = date.fromisoformat(session.date)
         lines.append("")
         lines.append(
             f"<b>{DAY_NAMES[day.weekday()]} {day.strftime('%d.%m')}: "
-            f"{session.title}</b> — {session.duration_min or 0} мин"
+            f"{_esc(session.title)}</b> — {session.duration_min or 0} мин"
         )
         if session.intensity:
-            lines.append(f"Интенсивность: {session.intensity}")
+            lines.append(f"Интенсивность: {_esc(session.intensity)}")
         if session.structure.warmup:
-            lines.append(f"Разминка: {session.structure.warmup}")
+            lines.append(f"Разминка: {_esc(session.structure.warmup)}")
         if session.structure.main:
-            lines.append(f"Основная часть: {session.structure.main}")
+            lines.append(f"Основная часть: {_esc(session.structure.main)}")
         if session.structure.cooldown:
-            lines.append(f"Заминка: {session.structure.cooldown}")
+            lines.append(f"Заминка: {_esc(session.structure.cooldown)}")
         if session.safety:
-            lines.append(f"⚠️ {session.safety}")
+            lines.append(f"⚠️ {_esc(session.safety)}")
     if week.adaptation_rules:
         lines.append("")
         lines.append("<b>Правила недели:</b>")
-        lines.extend(f"• {rule}" for rule in week.adaptation_rules)
+        lines.extend(f"• {_esc(rule)}" for rule in week.adaptation_rules)
     return "\n".join(lines)

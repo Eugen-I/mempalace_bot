@@ -223,3 +223,35 @@ def test_readiness_reflects_illness_and_recovery(conn):
     )
     assert recovered.level == "amber"
     assert any("восстановление после болезни" in r for r in recovered.reasons)
+
+
+def test_plan_and_safety_html_escapes_angle_brackets():
+    import re
+    from services.garmin.plan_engine import first_week_text, plan_summary
+    from services.garmin.safety import SafetyAssessment, SafetySignal, safety_text
+
+    plan = build_skeleton(
+        _profile(),
+        _status(),
+        start_date=date(2026, 11, 9),
+        today=date(2026, 11, 6),
+    )
+    assessment = SafetyAssessment(
+        signals=[
+            SafetySignal(
+                code="report:sleep_short",
+                severity="warning",
+                text="2+ ночи сном <6 ч за последние 7 дней.",
+            )
+        ]
+    )
+    rendered = (
+        plan_summary(plan)
+        + "\n\n"
+        + first_week_text(plan)
+        + "\n\n"
+        + safety_text(assessment)
+    )
+    assert "&lt;6 ч" in rendered
+    tags = re.findall(r"</?([a-zA-Z0-9]+)>", rendered)
+    assert set(tags) <= {"b", "i", "code"}

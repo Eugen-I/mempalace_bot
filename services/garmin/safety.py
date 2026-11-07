@@ -8,6 +8,7 @@ medical help; warnings keep the plan conservative and are shown in the UI.
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -800,6 +801,10 @@ def merge_safety_flags(
     return result
 
 
+def _esc(value: object) -> str:
+    return html.escape(str(value), quote=False)
+
+
 def safety_text(assessment: SafetyAssessment) -> str:
     """Render a concise Russian safety block for Telegram or a report."""
     if not assessment.signals:
@@ -812,11 +817,11 @@ def safety_text(assessment: SafetyAssessment) -> str:
         lines.append("⚠️ <b>Ограничения безопасности</b>")
 
     ordered = assessment.critical + assessment.warnings
-    lines.extend(f"• {signal.text}" for signal in ordered)
+    lines.extend(f"• {_esc(signal.text)}" for signal in ordered)
 
     if assessment.blocked:
         lines.append("")
-        lines.append(f"<b>Что сделать сейчас:</b> {ESCALATION_TEXT}")
+        lines.append(f"<b>Что сделать сейчас:</b> {_esc(ESCALATION_TEXT)}")
     else:
         lines.append("")
         lines.append(
@@ -824,7 +829,7 @@ def safety_text(assessment: SafetyAssessment) -> str:
             "При красных флагах — срочно к врачу."
         )
     lines.append("")
-    lines.append(MEDICAL_DISCLAIMER)
+    lines.append(_esc(MEDICAL_DISCLAIMER))
     return "\n".join(lines)
 
 

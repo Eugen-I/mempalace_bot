@@ -7,6 +7,7 @@ most one conservative change.  Nothing is applied until the user confirms.
 
 from __future__ import annotations
 
+import html
 import json
 import sqlite3
 import uuid
@@ -433,13 +434,17 @@ def apply_review(
     return updated
 
 
+def _esc(value: object) -> str:
+    return html.escape(str(value), quote=False)
+
+
 def review_text(review: PlanReview) -> str:
     """Compact Russian diff for Telegram."""
     metrics = review.metrics
     lines = [
         f"📈 <b>Недельный обзор · неделя {review.week_index}</b>",
         f"Готовность: {READINESS_EMOJI.get(review.readiness, '⚪')} "
-        f"{READINESS_LABELS.get(review.readiness, review.readiness)}",
+        f"{_esc(READINESS_LABELS.get(review.readiness, review.readiness))}",
     ]
     parts = []
     if metrics.get("sleep_avg_h") is not None:
@@ -464,17 +469,17 @@ def review_text(review: PlanReview) -> str:
     lines.append("")
     lines.append(
         "Решение: "
-        + DECISION_LABELS.get(review.decision, review.decision)
+        + _esc(DECISION_LABELS.get(review.decision, review.decision))
         + "."
     )
     if review.changes:
         change = review.changes[0]
         if change.get("percent"):
             lines.append(
-                f"Изменение: {change['action']} · {change['percent']}% · "
-                f"{change['scope']}"
+                f"Изменение: {_esc(change['action'])} · {change['percent']}% · "
+                f"{_esc(change['scope'])}"
             )
-    lines.append(f"Почему: {review.rationale}.")
+    lines.append(f"Почему: {_esc(review.rationale)}.")
     lines.append("")
     lines.append(
         "Это вероятная связь, не диагноз. Без вашего подтверждения план "

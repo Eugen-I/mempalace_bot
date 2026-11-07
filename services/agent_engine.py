@@ -194,7 +194,9 @@ async def run_agent(
         {"role": "system", "content": system_prompt},
     ]
     if conversation_history:
-        messages.extend(conversation_history)
+        messages.extend(
+            m for m in conversation_history if m.get("role") != "system"
+        )
     messages.append({"role": "user", "content": user_prompt})
     steps: list[AgentStep] = []
 

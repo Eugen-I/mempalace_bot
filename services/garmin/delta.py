@@ -7,6 +7,7 @@ user always confirms before the stored plan is modified.
 
 from __future__ import annotations
 
+import html
 import json
 import sqlite3
 import statistics
@@ -350,11 +351,15 @@ def log_delta(
     conn.commit()
 
 
+def _esc(value: object) -> str:
+    return html.escape(str(value), quote=False)
+
+
 def delta_text(delta: DeltaReport) -> str:
     """Compact Russian explanation for Telegram."""
     lines = [
         "📉 <b>Что изменилось за неделю</b>",
-        f"Сравнение: {delta.compared_from} — {delta.compared_to}",
+        f"Сравнение: {_esc(delta.compared_from)} — {_esc(delta.compared_to)}",
         "",
     ]
     important = [metric for metric in delta.changed_metrics if metric.important]
@@ -363,12 +368,15 @@ def delta_text(delta: DeltaReport) -> str:
     else:
         for metric in important:
             lines.append(
-                f"• {metric.metric}: {metric.from_value} → {metric.to_value} "
+                f"• {_esc(metric.metric)}: {metric.from_value} → {metric.to_value} "
                 f"({metric.delta:+})"
             )
     if delta.likely_context:
         lines.append("")
-        lines.append("Возможный контекст: " + ", ".join(delta.likely_context))
+        lines.append(
+            "Возможный контекст: "
+            + ", ".join(_esc(item) for item in delta.likely_context)
+        )
     lines.append("")
     advice = {
         "keep": "Продолжаем план без изменений.",
@@ -378,7 +386,7 @@ def delta_text(delta: DeltaReport) -> str:
         "deload": "Разгрузочная неделя.",
         "progress": "Можно продолжить прогрессию по плану.",
     }.get(delta.recommendation, delta.recommendation)
-    lines.append(f"Рекомендация: {advice}")
+    lines.append(f"Рекомендация: {_esc(advice)}")
     lines.append("")
     lines.append(
         "Это вероятная связь, не диагноз. Решение всегда подтверждает пользователь."

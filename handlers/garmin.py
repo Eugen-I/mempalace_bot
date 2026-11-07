@@ -746,9 +746,9 @@ async def cmd_report(message: types.Message):
 def _readiness_text(report, checkin, events=None) -> str:
     readiness = assess_readiness(report, checkin=checkin, events=events)
     lines = [
-        f"{readiness.emoji} <b>Готовность: {readiness.level}</b>",
+        f"{readiness.emoji} <b>Готовность: {_esc(readiness.level)}</b>",
         "",
-        readiness.advice,
+        _esc(readiness.advice),
     ]
     if readiness.reasons:
         lines.append("")
@@ -819,7 +819,7 @@ async def _send_today(message: types.Message, user_id: int) -> None:
                 f"{session.duration_min or 0} мин"
             )
             if session.intensity:
-                text += f"\n{session.intensity}"
+                text += f"\n{_esc(session.intensity)}"
         else:
             text += "\n\n📅 На сегодня в плане нет сессии."
     await message.answer(text, reply_markup=_back_kb(), parse_mode="HTML")
@@ -1010,7 +1010,7 @@ async def cb_adapt(cb: types.CallbackQuery):
         conn.close()
     text = delta_text(delta) + "\n\n✅ План адаптирован на ближайшие 3 дня."
     if errors:
-        text += "\n⚠️ Валидатор: " + "; ".join(errors[:3])
+        text += "\n⚠️ Валидатор: " + "; ".join(_esc(e) for e in errors[:3])
     await cb.message.edit_text(text, reply_markup=_back_kb(), parse_mode="HTML")
 
 
@@ -2084,7 +2084,7 @@ async def cb_plan_review_accept(cb: types.CallbackQuery):
         + plan_summary(adapted)
     )
     if errors:
-        text += "\n⚠️ Валидатор: " + "; ".join(errors[:3])
+        text += "\n⚠️ Валидатор: " + "; ".join(_esc(e) for e in errors[:3])
     await cb.message.edit_text(text, reply_markup=_back_kb(), parse_mode="HTML")
 
 

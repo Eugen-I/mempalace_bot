@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -151,6 +152,10 @@ def data_status(
     return status
 
 
+def _esc(value: object) -> str:
+    return html.escape(str(value), quote=False)
+
+
 def status_text(status: DataStatus) -> str:
     """Compact Russian summary for Telegram."""
     if not status.days:
@@ -159,18 +164,18 @@ def status_text(status: DataStatus) -> str:
         period = f"{status.first_day} — {status.last_day} ({status.days} дн.)"
     lines = [
         "🏃 <b>Garmin</b>",
-        f"Данные: {period}",
+        f"Данные: {_esc(period)}",
         f"Сон: {status.sleep_days} дн. · HRV: {status.hrv_days} дн. · "
         f"Пульс покоя: {status.rhr_days} дн.",
         f"Тренировки: {status.activities} (дней с активностью: {status.activity_days})",
-        f"Coverage: {status.coverage_label}",
+        f"Coverage: {_esc(status.coverage_label)}",
         f"Профиль: {'заполнен' if status.has_profile else 'не заполнен'}",
-        f"Последний импорт: {status.last_import_at or '—'}",
+        f"Последний импорт: {_esc(status.last_import_at or '—')}",
     ]
     if status.missing:
         lines.append("")
         lines.append("⚠️ Для плана не хватает:")
-        lines.extend(f"• {item}" for item in status.missing)
+        lines.extend(f"• {_esc(item)}" for item in status.missing)
     return "\n".join(lines)
 
 

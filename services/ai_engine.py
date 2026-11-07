@@ -159,9 +159,10 @@ def _prepare_chat_messages(
 ) -> list[dict]:
     """Нормализует историю для OpenAI-совместимых API.
 
-    ``use_message_system`` — брать system из ``messages`` (sync) или всегда
-    подставлять сгенерированный prompt (stream; исходные system-сообщения
-    остаются в истории для обратной совместимости).
+    ``use_message_system`` — брать system из ``messages`` (sync) или объединять
+    сгенерированный prompt с system-сообщениями из ``messages`` в одно ведущее
+    system-сообщение (stream; в шаблонах Jinja Ollama/Qwen system-сообщение
+    допустимо только на позиции 0).
     ``images_for_all_users`` — вкладывать изображения во все user-сообщения
     (stream) или только в первое (sync).
     """
@@ -169,7 +170,19 @@ def _prepare_chat_messages(
     if system_message is not None:
         prepared = [system_message]
     else:
-        prepared = [{"role": "system", "content": system_prompt}]
+        extra_system: list[str] = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                content = (msg.get("content") or "").strip()
+                if content and content != system_prompt:
+                    if system_prompt and content.startswith(system_prompt):
+                        content = content[len(system_prompt):].strip()
+                    if content:
+                        extra_system.append(content)
+        combined = "\n\n".join(
+            part for part in [system_prompt, *extra_system] if part
+        )
+        prepared = [{"role": "system", "content": combined or system_prompt}]
 
     if images:
         logger.info(f"[🖼️ MULTIMODAL] Received {len(images)} images.")
@@ -178,7 +191,7 @@ def _prepare_chat_messages(
 
     images_added = False
     for message in messages:
-        if use_message_system and message["role"] == "system":
+        if message.get("role") == "system":
             continue
         if (
             message["role"] == "user"

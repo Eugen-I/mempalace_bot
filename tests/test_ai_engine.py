@@ -378,10 +378,24 @@ def test_prepare_chat_messages_stream_keeps_system_and_images_every_user():
         messages, "generated", ["img"],
         use_message_system=False, images_for_all_users=True,
     )
-    assert prepared[0] == {"role": "system", "content": "generated"}
-    assert prepared[1] is original_system
-    assert prepared[2]["content"][1]["image_url"]["url"].endswith("img")
-    assert prepared[4]["content"][1]["image_url"]["url"].endswith("img")
+    assert prepared[0] == {"role": "system", "content": "generated\n\nORIGINAL"}
+    assert [m["role"] for m in prepared] == ["system", "user", "assistant", "user"]
+    assert prepared[1]["content"][1]["image_url"]["url"].endswith("img")
+    assert prepared[3]["content"][1]["image_url"]["url"].endswith("img")
+
+
+def test_prepare_chat_messages_stream_deduplicates_system_prefix():
+    messages = [
+        {"role": "system", "content": "generated\n\nEXTRA_RULES"},
+        {"role": "user", "content": "one"},
+        {"role": "system", "content": "LATE_SYSTEM"},
+    ]
+    prepared = ai_engine._prepare_chat_messages(
+        messages, "generated", [],
+        use_message_system=False, images_for_all_users=True,
+    )
+    assert [m["role"] for m in prepared] == ["system", "user"]
+    assert prepared[0]["content"] == "generated\n\nEXTRA_RULES\n\nLATE_SYSTEM"
 
 
 def test_prepare_chat_messages_empty_history():
