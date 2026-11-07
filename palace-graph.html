@@ -1124,7 +1124,8 @@
       inspectorTags.innerHTML = '';
       const tags = n.tags || [];
       if (tags.length === 0) {
-        inspectorTags.innerHTML =\n          '<span style="font-size:11px; color:var(--text-muted);">Теги не заданы</span>';
+        inspectorTags.innerHTML =
+          '<span style="font-size:11px; color:var(--text-muted);">Теги не заданы</span>';
       } else {
         tags.forEach(t => {
           const chip = document.createElement('span');
@@ -1140,7 +1141,8 @@
       notesCount.textContent = `${notes.length}`;
 
       if (notes.length === 0) {
-        inspectorNotes.innerHTML =\n          '<div style="font-size:11px; color:var(--text-muted); padding:4px;">Нет заметок</div>';
+        inspectorNotes.innerHTML =
+          '<div style="font-size:11px; color:var(--text-muted); padding:4px;">Нет заметок</div>';
       } else {
         notes.forEach((item, idx) => {
           const card = document.createElement('div');
