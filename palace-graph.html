@@ -1027,19 +1027,85 @@
       });
     }
 
-    // 10. Обработка событий мыши и тача
+    // 10. Обработка событий мыши и тача (включая перемещение крыльев и узлов)
     let isDragging = false;
+    let draggedNode = null;
+    let dragOffset = { x: 0, y: 0 };
     let dragStartX = 0;
     let dragStartY = 0;
+    let didDragNode = false;
+    let startMouseX = 0;
+    let startMouseY = 0;
 
     canvas.addEventListener('mousedown', e => {
-      isDragging = true;
-      dragStartX = e.clientX - panX;
-      dragStartY = e.clientY - panY;
-      canvas.classList.add('grabbing');
+      startMouseX = e.clientX;
+      startMouseY = e.clientY;
+      didDragNode = false;
+
+      const worldX = (e.clientX - panX) / zoom;
+      const worldY = (e.clientY - panY) / zoom;
+      const hit = findNodeAt(worldX, worldY, zoom);
+
+      if (hit) {
+        // Зажимаем узел (крыло или комнату) для перетаскивания!
+        draggedNode = hit;
+        draggedNode.pinned = true;
+        dragOffset.x = draggedNode.x - worldX;
+        dragOffset.y = draggedNode.y - worldY;
+        canvas.classList.add('grabbing');
+      } else {
+        // Панорамирование камеры
+        isDragging = true;
+        dragStartX = e.clientX - panX;
+        dragStartY = e.clientY - panY;
+        canvas.classList.add('grabbing');
+      }
     });
 
     window.addEventListener('mousemove', e => {
+      const worldX = (e.clientX - panX) / zoom;
+      const worldY = (e.clientY - panY) / zoom;
+
+      if (draggedNode) {
+        const targetX = worldX + dragOffset.x;
+        const targetY = worldY + dragOffset.y;
+        const deltaX = targetX - draggedNode.x;
+        const deltaY = targetY - draggedNode.y;
+
+        if (Math.hypot(e.clientX - startMouseX, e.clientY - startMouseY) > 4) {
+          didDragNode = true;
+        }
+
+        draggedNode.x = targetX;
+        draggedNode.y = targetY;
+        draggedNode.vx = 0;
+        draggedNode.vy = 0;
+
+        // Если перетаскиваем крыло — сдвигаем вместе с ним всю его гроздь комнат!
+        if (draggedNode.type === 'wing') {
+          for (let i = 0; i < roomNodes.length; i++) {
+            const r = roomNodes[i];
+            if (r.wing === draggedNode.id) {
+              r.x += deltaX;
+              r.y += deltaY;
+              r.vx = 0;
+              r.vy = 0;
+            }
+          }
+        }
+
+        // Подогреваем симуляцию для мягкой адаптации связей
+        simAlpha = Math.max(simAlpha, 0.25);
+        if (!isSimRunning) {
+          isSimRunning = true;
+          requestAnimationFrame(draw);
+        }
+
+        updateSpatialGrid();
+        draw();
+        return;
+      }
+
       if (isDragging) {
         panX = e.clientX - dragStartX;
         panY = e.clientY - dragStartY;
@@ -1048,18 +1114,28 @@
       }
 
       // Определение узла под курсором (через пространственный хэш)
-      const worldX = (e.clientX - panX) / zoom;
-      const worldY = (e.clientY - panY) / zoom;
       const hit = findNodeAt(worldX, worldY, zoom);
 
       if (hit !== hoveredNode) {
         hoveredNode = hit;
-        canvas.style.cursor = hit ? 'pointer' : 'grab';
+        if (hit) {
+          canvas.style.cursor = hit.type === 'wing' ? 'move' : 'pointer';
+        } else {
+          canvas.style.cursor = 'grab';
+        }
         draw();
       }
     });
 
     window.addEventListener('mouseup', () => {
+      if (draggedNode) {
+        draggedNode.pinned = true;
+        // Сохраняем новые координаты в хранилище
+        const posMap = {};
+        nodes.forEach(n => { posMap[n.id] = { x: Math.round(n.x), y: Math.round(n.y) }; });
+        safeStorage.setItem('palace:pos:v1', JSON.stringify(posMap));
+        draggedNode = null;
+      }
       isDragging = false;
       canvas.classList.remove('grabbing');
     });
@@ -1078,8 +1154,9 @@
       draw();
     }, { passive: false });
 
-    // Клик по узлу — открытие панели инспектора
+    // Клик по узлу — открытие панели инспектора (только если не было сдвига)
     canvas.addEventListener('click', e => {
+      if (didDragNode) return;
       const worldX = (e.clientX - panX) / zoom;
       const worldY = (e.clientY - panY) / zoom;
       const hit = findNodeAt(worldX, worldY, zoom);
