@@ -15,9 +15,11 @@ from services.agent_tools import CAT_SYSTEM, register_tool, unregister_tool
 from .analytics import build_report
 from .config import get_config
 from .db import init_db
+from .errors import GarminError
+from .medications import medication_ai_context
 from .plan_engine import plan_summary, week_detail_text
 from .plan_store import latest_plan
-from .profile_store import recent_checkins
+from .profile_store import load_profile, recent_checkins
 from .readiness import assess_readiness
 
 
@@ -73,7 +75,12 @@ def register_garmin_agent_tools() -> None:
         try:
             uid = _resolve_user_id(conn)
             report = build_report(conn, user_id=uid, days=days)
-            checkins = recent_checkins(conn, uid, limit=1)
+            checkins = recent_checkins(conn, uid, limit=7)
+            try:
+                stored = load_profile(conn, uid)
+                meds = stored.profile.medications if stored else []
+            except GarminError:
+                meds = []
             readiness = assess_readiness(
                 report, checkin=checkins[0] if checkins else None
             )
@@ -108,6 +115,30 @@ def register_garmin_agent_tools() -> None:
                     ext_parts.append(f"{k}: {val}")
             if ext_parts:
                 lines.append("\nДоп. физиология: " + "; ".join(ext_parts))
+
+        if checkins:
+            moods = [c.mood for c in checkins if c.mood is not None]
+            stresses = [c.stress for c in checkins if c.stress is not None]
+            parts_chk = []
+            if moods:
+                parts_chk.append(f"настроение ср. {sum(moods)/len(moods):.1f}/5")
+            if stresses:
+                parts_chk.append(f"субъект. стресс ср. {sum(stresses)/len(stresses):.1f}/5")
+            if parts_chk:
+                lines.append("\nЭмоциональное состояние (чек-ины): " + ", ".join(parts_chk))
+
+        med_ctx = medication_ai_context(meds)
+        if med_ctx["has_medications"]:
+            lines.append(
+                "\nУчёт терапии (классы): " + ", ".join(med_ctx["classes"])
+            )
+            if med_ctx["sleep_effects"]:
+                lines.append("Влияние на сон: " + " ".join(med_ctx["sleep_effects"]))
+            if med_ctx["emotional_effects"]:
+                lines.append(
+                    "Влияние на эмоции и ВНС: "
+                    + " ".join(med_ctx["emotional_effects"])
+                )
 
         if report.event_correlations:
             lines.append("\nСобытия и связь с состоянием (болезнь/простуда/стресс):")

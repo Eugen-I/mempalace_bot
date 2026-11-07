@@ -985,3 +985,49 @@ def test_garmin_agent_tools_registered_and_callable(env, monkeypatch):
     assert "тренировок" in workouts_out.lower()
     plan_out = at.force_tool_execute("garmin_training_plan", {})
     assert "план" in plan_out.lower()
+
+
+@pytest.mark.asyncio
+async def test_medications_manual_input_no_hardcoded_presets_and_ai_analysis(env):
+    # 1. Profile step 3 has no hardcoded specific drug buttons
+    cb_step3 = FakeCb(data="garmin:profile:next3")
+    await garmin.cb_profile_next3(cb_step3)
+    step3_text, step3_kwargs = cb_step3.message.edits[0]
+    step3_callbacks = _callback_ids(step3_kwargs["reply_markup"])
+    assert "garmin:profile:meds:other" in step3_callbacks
+    assert "garmin:profile:meds:none" in step3_callbacks
+    assert "garmin:profile:meds:both" not in step3_callbacks
+    assert "garmin:profile:meds:mirt" not in step3_callbacks
+    assert "garmin:profile:meds:venla" not in step3_callbacks
+
+    # 2. Direct manual entry from medications submenu deletes message and saves encrypted
+    cb_edit = FakeCb(data="garmin:meds:edit")
+    await garmin.cb_meds_edit(cb_edit)
+    assert garmin.garmin_text_state.get(UID) == "meds_direct"
+
+    deleted_calls: list[bool] = []
+    msg = FakeMessage(uid=UID, text="мелатонин, магний")
+
+    async def fake_delete():
+        deleted_calls.append(True)
+
+    msg.delete = fake_delete  # type: ignore[attr-defined]
+    await garmin.handle_garmin_text(msg)
+    assert deleted_calls == [True]
+    assert garmin.garmin_text_state.get(UID) is None
+
+    ans_text, ans_kwargs = msg.answers[0]
+    assert "Влияние на сон" in ans_text
+    assert "Эмоциональное состояние и ВНС" in ans_text
+    assert "garmin:meds:ai" in _callback_ids(ans_kwargs["reply_markup"])
+
+    # 3. AI analysis of sleep & emotions with medications
+    cb_ai = FakeCb(data="garmin:meds:ai")
+    await garmin.cb_meds_ai(cb_ai)
+    assert cb_ai.message.status_edits
+    assert "ИИ-разбор: препараты, сон и эмоциональное состояние" in cb_ai.message.status_edits[0][0]
+
+    # 4. Clear medications list
+    cb_clear = FakeCb(data="garmin:meds:clear")
+    await garmin.cb_meds_clear(cb_clear)
+    assert "Список препаратов очищен" in cb_clear.message.edits[0][0]

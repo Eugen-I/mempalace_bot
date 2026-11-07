@@ -154,3 +154,25 @@ def test_anticoagulant_and_hypoglycemia_layers_are_conservative():
     codes = {flag.code for flag in layer.safety_flags}
     assert "contact_caution" in codes
     assert "hypoglycemia_caution" in codes
+
+
+def test_medication_sleep_and_emotional_effects_context():
+    from services.garmin.medications import medication_ai_context
+
+    layer = build_layer(
+        UserProfile(
+            medications=[
+                MedicationEntry(name="мелатонин"),
+                MedicationEntry(name="магний"),
+            ]
+        )
+    )
+    assert layer.sleep_effects
+    assert layer.emotional_effects
+
+    ctx = medication_ai_context(["мелатонин", "магний"])
+    assert ctx["has_medications"] is True
+    assert ctx["count"] == 2
+    assert len(ctx["classes"]) == 2
+    assert ctx["sleep_effects"]
+    assert ctx["emotional_effects"]

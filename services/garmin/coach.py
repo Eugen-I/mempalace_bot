@@ -24,6 +24,7 @@ import jsonschema
 from .analytics import ReportData
 from .evidence import CITATION_IDS, EVIDENCE, citations_for_flags, format_citations
 from .errors import GarminError
+from .medications import medication_ai_context
 from .safety import is_prompt_injection, sanitize_untrusted_text
 
 PROMPT_VERSION = "garmin-coach-v1"
@@ -172,7 +173,102 @@ def _utcnow() -> datetime:
     return datetime.now(UTC).replace(microsecond=0)
 
 
-def build_payload(report: ReportData, *, medications: list[str] | None = None) -> dict[str, Any]:
+def _load_recent_checkins(conn: Any, user_id: int) -> list[dict[str, Any]]:
+    if conn is None or not hasattr(conn, "execute"):
+        return []
+    try:
+        from .profile_store import recent_checkins
+
+        items = recent_checkins(conn, int(user_id), limit=7)
+        return [
+            {
+                "date": c.date,
+                "mood": c.mood,
+                "stress": c.stress,
+                "sleep_quality": c.sleep_quality,
+                "sleep_h": c.sleep_h,
+                "pain": c.pain_score,
+            }
+            for c in items
+        ]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _emotional_and_sleep_context(
+    report: ReportData,
+    *,
+    checkins: list[dict[str, Any]] | None = None,
+    medications: list[str] | None = None,
+) -> dict[str, Any]:
+    """Summarize sleep, autonomic stress, subjective mood/stress and medication effects."""
+    sleep_s = report.series.get("sleep_hours")
+    score_s = report.series.get("sleep_score")
+    stress_s = report.series.get("stress_avg")
+    hrv_s = report.series.get("hrv")
+    rhr_s = report.series.get("resting_hr")
+    bb_s = report.series.get("body_battery_morning")
+
+    recent_sleep = [v for v in (sleep_s.values[-7:] if sleep_s else []) if v is not None]
+    short_nights_7d = sum(1 for v in recent_sleep if v < 6.0)
+
+    clean_checkins: list[dict[str, Any]] = []
+    moods: list[float] = []
+    stresses: list[float] = []
+    for item in (checkins or [])[:7]:
+        mood = item.get("mood")
+        subj_stress = item.get("stress")
+        if isinstance(mood, (int, float)):
+            moods.append(float(mood))
+        if isinstance(subj_stress, (int, float)):
+            stresses.append(float(subj_stress))
+        clean_checkins.append(
+            {
+                "date": item.get("date"),
+                "mood": mood,
+                "stress": subj_stress,
+                "sleep_quality": item.get("sleep_quality"),
+                "sleep_h": item.get("sleep_h"),
+                "pain": item.get("pain"),
+            }
+        )
+
+    med_ctx = medication_ai_context(medications or [])
+    return {
+        "sleep": {
+            "avg_7d_h": sleep_s.avg_7d if sleep_s else None,
+            "latest_h": sleep_s.latest if sleep_s else None,
+            "baseline_h": sleep_s.baseline if sleep_s else None,
+            "sleep_score_avg_7d": score_s.avg_7d if score_s else None,
+            "short_nights_7d": short_nights_7d,
+        },
+        "autonomic_and_emotional": {
+            "stress_avg_7d": stress_s.avg_7d if stress_s else None,
+            "stress_latest": stress_s.latest if stress_s else None,
+            "hrv_avg_7d": hrv_s.avg_7d if hrv_s else None,
+            "hrv_baseline": hrv_s.baseline if hrv_s else None,
+            "rhr_avg_7d": rhr_s.avg_7d if rhr_s else None,
+            "rhr_baseline": rhr_s.baseline if rhr_s else None,
+            "body_battery_morning_7d": bb_s.avg_7d if bb_s else None,
+            "subjective_mood_avg_7d": (
+                round(sum(moods) / len(moods), 2) if moods else None
+            ),
+            "subjective_stress_avg_7d": (
+                round(sum(stresses) / len(stresses), 2) if stresses else None
+            ),
+        },
+        "recent_checkins": clean_checkins,
+        "medication_sleep_effects": med_ctx["sleep_effects"],
+        "medication_emotional_effects": med_ctx["emotional_effects"],
+    }
+
+
+def build_payload(
+    report: ReportData,
+    *,
+    medications: list[str] | None = None,
+    checkins: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Build a de-identified payload; no user id, email or raw rows."""
     series = {}
     for key, item in report.series.items():
@@ -230,6 +326,10 @@ def build_payload(report: ReportData, *, medications: list[str] | None = None) -
         ],
         "missing_inputs": report.missing_inputs,
         "medications": medications or [],
+        "medication_context": medication_ai_context(medications or []),
+        "emotional_and_sleep_state": _emotional_and_sleep_context(
+            report, checkins=checkins, medications=medications
+        ),
         "events": [
             {
                 key: (
@@ -263,10 +363,12 @@ def _system_prompt() -> str:
         "Используй только числа из payload.\n"
         "2. Корреляция не равна причинности. Обязательно анализируй поле "
         "event_correlations и events (особенно болезнь/простуду/ОРВИ, травмы, "
-        "стресс, алкоголь) и объясняй, как это состояние связано с динамикой "
-        "HRV, пульса покоя, сна, дыхания и стресса.\n"
+        "стресс, алкоголь), а также emotional_and_sleep_state и medication_context, "
+        "объясняя связь между препаратами, эмоциональным состоянием, стрессом, "
+        "сном, HRV и пульсом покоя.\n"
         "3. Не советуй менять, отменять или начинать лекарства. При наличии "
-        "препаратов говори только «обсудите с врачом».\n"
+        "препаратов учитывай их возможное влияние на архитектуру сна, утреннюю "
+        "бодрость, стресс-индекс и ВСР и говори только «обсудите с врачом».\n"
         "4. Цитируй только ID из allowed_citations (E1–E12). Не придумывай ссылки.\n"
         "5. При красных флагах (боль в груди, обморок, выраженная одышка, "
         "лихорадка/температура, неконтролируемое давление, новые неврологические "
@@ -553,10 +655,24 @@ def _fallback(
             },
         )
     if medications:
+        med_ctx = medication_ai_context(medications)
+        med_notes = (
+            med_ctx["sleep_effects"][:1] + med_ctx["emotional_effects"][:1]
+        )
+        if med_notes:
+            possible_causes.append(
+                {
+                    "text": "Влияние терапии на сон и вегетативный тонус: "
+                    + " ".join(med_notes),
+                    "confidence": "medium",
+                    "factors": ["medication_context"],
+                    "citations": med_ctx["citations"] or ["E9", "E10"],
+                }
+            )
         what_could_help.append(
             {
                 "text": "Обсудите с врачом, как ваши препараты могут влиять на сон, "
-                "аппетит, пульс и давление; не меняйте дозу самостоятельно.",
+                "эмоциональный тонус, пульс и давление; не меняйте дозу самостоятельно.",
                 "citations": ["E9", "E10"],
             }
         )
@@ -640,7 +756,11 @@ async def generate_causes_async(
     A custom ``ai_call`` (tests) disables the fallback model to keep calls
     deterministic.
     """
-    payload = build_payload(report, medications=medications)
+    payload = build_payload(
+        report,
+        medications=medications,
+        checkins=_load_recent_checkins(conn, report.user_id),
+    )
     allowed_numbers = _payload_numbers(payload)
     key = _cache_key(payload, model)
     if use_cache:

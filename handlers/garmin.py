@@ -481,17 +481,17 @@ def _profile_summary_kb() -> types.InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def _medication_entries(kind: str) -> list[MedicationEntry]:
-    if kind == "both":
-        return [
-            MedicationEntry(name="миртазапин"),
-            MedicationEntry(name="венлафаксин"),
-        ]
-    if kind == "mirt":
-        return [MedicationEntry(name="миртазапин")]
-    if kind == "venla":
-        return [MedicationEntry(name="венлафаксин")]
-    return []
+def _parse_medication_entries(text: str) -> list[MedicationEntry]:
+    """Parse manual comma/semicolon/newline-separated medication list."""
+    entries: list[MedicationEntry] = []
+    for raw_part in re.split(r"[,;\n]", text or ""):
+        cleaned = raw_part.strip()
+        if not cleaned:
+            continue
+        entries.append(MedicationEntry(name=cleaned[:80]))
+        if len(entries) >= 10:
+            break
+    return entries
 
 
 # ---------------------------------------------------------------------------
@@ -1230,33 +1230,36 @@ async def _profile_screen3(message: types.Message, user_id: int) -> None:
     kb = InlineKeyboardBuilder()
     kb.row(
         types.InlineKeyboardButton(
-            text="Миртазапин + венлафаксин", callback_data="garmin:profile:meds:both"
+            text="✏️ Ввести препараты вручную",
+            callback_data="garmin:profile:meds:other",
         )
     )
-    kb.row(
-        types.InlineKeyboardButton(
-            text="Только миртазапин", callback_data="garmin:profile:meds:mirt"
-        ),
-        types.InlineKeyboardButton(
-            text="Только венлафаксин", callback_data="garmin:profile:meds:venla"
-        ),
-    )
-    kb.row(
-        types.InlineKeyboardButton(
-            text="✏️ Другое (написать)", callback_data="garmin:profile:meds:other"
+    conn = _connect()
+    try:
+        stored = _profile(conn, user_id)
+    finally:
+        conn.close()
+    if stored is not None and stored.profile.medications:
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🔒 Оставить текущие",
+                callback_data="garmin:profile:meds:keep",
+            )
         )
-    )
     kb.row(
         types.InlineKeyboardButton(
-            text="Не указывать", callback_data="garmin:profile:meds:none"
+            text="Не указывать / Очистить",
+            callback_data="garmin:profile:meds:none",
         )
     )
     await _safe_edit(
         message,
         "🧩 <b>Профиль · шаг 3/3</b>\n"
-        "Препараты помогают учесть влияние на сон, пульс, давление и баланс. "
+        "Препараты и добавки вводятся только вручную и хранятся локально в "
+        "зашифрованном виде (Keychain + Fernet). ИИ учитывает их влияние на "
+        "архитектуру сна, эмоциональное состояние, ВСР и пульс покоя.\n"
         "Бот не меняет дозы и не отменяет препараты.\n\n"
-        "Выберите вариант или отправьте названия текстом.",
+        "Выберите действие:",
         reply_markup=kb.as_markup(),
         parse_mode="HTML",
     )
@@ -1266,19 +1269,32 @@ async def _profile_screen3(message: types.Message, user_id: int) -> None:
 @allowed_callback
 async def cb_profile_meds(cb: types.CallbackQuery):
     kind = cb.data.rsplit(":", 1)[1]
-    draft = _draft(_uid(cb))
+    user_id = _uid(cb)
+    draft = _draft(user_id)
     if kind == "other":
-        garmin_text_state[_uid(cb)] = "profile_meds"
+        garmin_text_state[user_id] = "profile_meds"
         await cb.answer()
         await cb.message.answer(
-            "Напишите препараты через запятую, например: "
-            "миртазапин 15 мг, венлафаксин 75 мг.\n"
-            "Дозы можно не указывать. /cancel — отмена."
+            "✏️ Напишите принимаемые препараты или добавки через запятую "
+            "(название и, по желанию, время приёма).\n"
+            "🔒 Ваше сообщение будет автоматически удалено из чата после чтения "
+            "и сохранено локально в зашифрованном профиле.\n"
+            "/cancel — отмена."
         )
         return
-    draft["medications"] = _medication_entries(kind)
+    if kind == "keep":
+        conn = _connect()
+        try:
+            stored = _profile(conn, user_id)
+        finally:
+            conn.close()
+        draft["medications"] = (
+            list(stored.profile.medications) if stored is not None else []
+        )
+    else:
+        draft["medications"] = []
     await cb.answer()
-    await _profile_preview(cb.message, _uid(cb))
+    await _profile_preview(cb.message, user_id)
 
 
 async def _profile_preview(
@@ -1363,33 +1379,169 @@ async def cmd_meds(message: types.Message):
     await _send_meds(message, _uid(message))
 
 
-async def _send_meds(message: types.Message, user_id: int) -> None:
+def _meds_kb(has_meds: bool) -> types.InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text="✏️ Ввести / изменить вручную",
+            callback_data="garmin:meds:edit",
+        )
+    )
+    if has_meds:
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🤖 ИИ-анализ: сон и эмоции",
+                callback_data="garmin:meds:ai",
+            ),
+            types.InlineKeyboardButton(
+                text="🗑 Очистить список",
+                callback_data="garmin:meds:clear",
+            ),
+        )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🩺 Вопросы врачу", callback_data="garmin:doctor"
+        ),
+        types.InlineKeyboardButton(
+            text="🧩 Профиль", callback_data="garmin:profile"
+        ),
+    )
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="garmin:main"))
+    return kb.as_markup()
+
+
+async def _send_meds(
+    message: types.Message,
+    user_id: int,
+    *,
+    edit: bool = False,
+    prefix: str = "",
+) -> None:
     conn = _connect()
     try:
         stored = _profile(conn, user_id)
     finally:
         conn.close()
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        types.InlineKeyboardButton(
-            text="🧩 Заполнить профиль", callback_data="garmin:profile"
+    has_meds = bool(stored is not None and stored.profile.medications)
+    markup = _meds_kb(has_meds)
+    if not has_meds:
+        text = (
+            (f"{prefix}\n\n" if prefix else "")
+            + "💊 <b>Препараты и добавки не указаны</b>\n\n"
+            "Вы можете ввести их вручную (список шифруется локально, сообщение "
+            "удаляется из чата). ИИ будет учитывать их влияние на архитектуру "
+            "сна, эмоциональное состояние, уровень стресса, ВСР и пульс покоя.\n"
+            "Дозы и отмену обсуждайте только с врачом."
         )
-    )
-    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="garmin:main"))
-    if stored is None or not stored.profile.medications:
-        await message.answer(
-            "💊 Препараты не указаны. Это необязательно, но помогает сделать "
-            "план консервативнее. Дозы и отмену обсуждайте только с врачом.",
-            reply_markup=kb.as_markup(),
-        )
+        if edit:
+            await _safe_edit(message, text, reply_markup=markup, parse_mode="HTML")
+        else:
+            await message.answer(text, reply_markup=markup, parse_mode="HTML")
         return
+    assert stored is not None
     layer = build_layer(stored.profile)
-    lines = ["💊 <b>Препараты и предосторожности</b>", layer.summary, ""]
-    lines.extend(f"• {_esc(flag.text)}" for flag in layer.safety_flags)
+    lines: list[str] = []
+    if prefix:
+        lines.extend([prefix, ""])
+    lines.extend(
+        [
+            "💊 <b>Препараты, сон и эмоциональное состояние</b>",
+            _esc(layer.summary),
+        ]
+    )
+    if layer.sleep_effects:
+        lines.append("")
+        lines.append("🌙 <b>Влияние на сон:</b>")
+        lines.extend(f"• {_esc(item)}" for item in layer.sleep_effects)
+    if layer.emotional_effects:
+        lines.append("")
+        lines.append("🧠 <b>Эмоциональное состояние и ВНС:</b>")
+        lines.extend(f"• {_esc(item)}" for item in layer.emotional_effects)
+    if layer.safety_flags:
+        lines.append("")
+        lines.append("⚠️ <b>Предосторожности для тренировок:</b>")
+        lines.extend(f"• {_esc(flag.text)}" for flag in layer.safety_flags)
     lines.append("")
-    lines.append("Бот не меняет дозы и не отменяет препараты.")
-    await message.answer(
-        "\n".join(lines), reply_markup=kb.as_markup(), parse_mode="HTML"
+    lines.append("🔒 Хранится зашифрованным локально. Бот не меняет дозы и не отменяет препараты.")
+    text = "\n".join(lines)
+    if edit:
+        await _safe_edit(message, text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=markup, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "garmin:meds:edit")
+@allowed_callback
+async def cb_meds_edit(cb: types.CallbackQuery):
+    user_id = _uid(cb)
+    garmin_text_state[user_id] = "meds_direct"
+    await cb.answer()
+    await cb.message.answer(
+        "✏️ Введите названия препаратов или добавок через запятую.\n"
+        "🔒 Сообщение будет сразу удалено из чата после чтения и сохранено в "
+        "зашифрованном локальном профиле.\n"
+        "/cancel — отмена."
+    )
+
+
+@router.callback_query(F.data == "garmin:meds:clear")
+@allowed_callback
+async def cb_meds_clear(cb: types.CallbackQuery):
+    user_id = _uid(cb)
+    await cb.answer("Очищаю список препаратов...")
+    conn = _connect()
+    try:
+        stored = _profile(conn, user_id)
+        if stored is not None:
+            updated = stored.profile.model_copy(update={"medications": []})
+            save_profile(conn, user_id, updated)
+    finally:
+        conn.close()
+    await _send_meds(
+        cb.message,
+        user_id,
+        edit=True,
+        prefix="🗑 Список препаратов очищен.",
+    )
+
+
+@router.callback_query(F.data == "garmin:meds:ai")
+@allowed_callback
+async def cb_meds_ai(cb: types.CallbackQuery):
+    user_id = _uid(cb)
+    await cb.answer("Анализирую влияние на сон и эмоции...")
+    cfg = _cfg()
+    status_msg = await cb.message.answer(
+        "🤖 <i>Анализирую связь препаратов, сна, ВСР и эмоционального состояния...</i>",
+        parse_mode="HTML",
+    )
+    conn = _connect()
+    try:
+        report = build_report(conn, user_id=user_id, days=14)
+        meds = _med_names(conn, user_id)
+        coach = await generate_causes_async(
+            conn,
+            report,
+            model=cfg.ai_model,
+            timeout=min(cfg.ai_timeout, 75.0),
+            ai_enabled=cfg.ai_enabled,
+            medications=meds,
+            fallback_model=cfg.ai_fallback_model,
+            fallback_timeout=min(cfg.ai_fallback_timeout, 60.0),
+            use_cache=False,
+        )
+    finally:
+        conn.close()
+    lines = [
+        "🤖 <b>ИИ-разбор: препараты, сон и эмоциональное состояние (14 дней)</b>",
+        "",
+        _esc(coach_text(coach)),
+    ]
+    await _safe_edit(
+        status_msg,
+        "\n".join(lines),
+        reply_markup=_meds_kb(bool(meds)),
+        parse_mode="HTML",
     )
 
 
@@ -2719,11 +2871,46 @@ async def handle_garmin_text(message: types.Message):
         return None
 
     if state == "profile_meds":
-        names = [part.strip() for part in re.split(r"[,;\n]", text) if part.strip()]
-        entries = [MedicationEntry(name=name[:80]) for name in names[:10]]
+        entries = _parse_medication_entries(text)
         _draft(user_id)["medications"] = entries
         garmin_text_state.pop(user_id, None)
+        try:
+            await message.delete()
+        except Exception:  # noqa: BLE001 - best-effort privacy cleanup
+            pass
         await _profile_preview(message, user_id, edit=False)
+        return None
+
+    if state == "meds_direct":
+        entries = _parse_medication_entries(text)
+        garmin_text_state.pop(user_id, None)
+        try:
+            await message.delete()
+        except Exception:  # noqa: BLE001 - best-effort privacy cleanup
+            pass
+        conn = _connect()
+        try:
+            stored = _profile(conn, user_id)
+            base_profile = (
+                stored.profile
+                if stored is not None
+                else _profile_from_draft(_draft(user_id))
+            )
+            updated_profile = base_profile.model_copy(
+                update={"medications": entries}
+            )
+            save_profile(conn, user_id, updated_profile)
+        finally:
+            conn.close()
+        await _send_meds(
+            message,
+            user_id,
+            edit=False,
+            prefix=(
+                "✅ Список препаратов сохранён в зашифрованном профиле "
+                "(сообщение удалено из чата)."
+            ),
+        )
         return None
 
     if state == "checkin":

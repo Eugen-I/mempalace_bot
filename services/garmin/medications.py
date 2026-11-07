@@ -8,6 +8,7 @@ user to their prescriber.  Unknown medications produce a conservative default.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, Iterable
 
 from .models import MedicationEntry, SafetyFlag, UserProfile
 
@@ -19,16 +20,19 @@ class MedicationKnowledge:
     precautions: tuple[str, ...]
     red_flags: tuple[str, ...] = ()
     citations: tuple[str, ...] = ()
+    sleep_effects: tuple[str, ...] = ()
+    emotional_effects: tuple[str, ...] = ()
     intensity_caution: bool = False
     heat_caution: bool = False
     orthostatic_caution: bool = False
     contact_caution: bool = False
     hypoglycemia_caution: bool = False
+    serotonergic: bool = False
 
 
 KB: tuple[MedicationKnowledge, ...] = (
     MedicationKnowledge(
-        class_name="NaSSA (миртазапин)",
+        class_name="NaSSA (норадренергический и серотонинергический антидепрессант)",
         aliases=("миртазапин", "mirtazapine", "ремерон", "remaron", "mirataz"),
         precautions=(
             "Возможна седация и снижение концентрации — начинайте с RPE 6 и "
@@ -43,11 +47,29 @@ KB: tuple[MedicationKnowledge, ...] = (
             "спутанность, тремор, лихорадка, мышечная ригидность",
         ),
         citations=("E10",),
+        sleep_effects=(
+            "Увеличивает общую длительность и глубину сна, но может вызывать "
+            "утреннюю сонливость (инерцию сна) и яркие сновидения.",
+        ),
+        emotional_effects=(
+            "Снижает вечернюю тревожность и гипервозбуждение; в первые недели "
+            "возможна дневная вялость при субъективно низкой оценке энергии.",
+        ),
         orthostatic_caution=True,
+        serotonergic=True,
     ),
     MedicationKnowledge(
-        class_name="SNRI (венлафаксин)",
-        aliases=("венлафаксин", "venlafaxine", "велбутрин", "effexor"),
+        class_name="SNRI (СИОЗСиН)",
+        aliases=(
+            "венлафаксин",
+            "venlafaxine",
+            "велбутрин",
+            "effexor",
+            "дулоксетин",
+            "duloxetine",
+            "милнаципран",
+            "milnacipran",
+        ),
         precautions=(
             "Может повышать пульс и давление — контролируйте самочувствие, "
             "особенно в жару и при интенсивных интервалах.",
@@ -61,11 +83,21 @@ KB: tuple[MedicationKnowledge, ...] = (
             "спутанность, ажитация, тремор, лихорадка, потливость, тахикардия",
         ),
         citations=("E9",),
+        sleep_effects=(
+            "Может подавлять фазу REM-сна, делать сон более поверхностным или "
+            "вызывать ночную потливость и ранние пробуждения.",
+        ),
+        emotional_effects=(
+            "Стабилизирует эмоциональный фон и тонус, но из-за норадренергического "
+            "эффекта может фоново повышать пульс покоя (RHR), индекс стресса Garmin "
+            "и умеренно снижать базовую ВСР (HRV) без реального переутомления.",
+        ),
         intensity_caution=True,
         heat_caution=True,
+        serotonergic=True,
     ),
     MedicationKnowledge(
-        class_name="SSRI",
+        class_name="SSRI (СИОЗС)",
         aliases=(
             "сертралин",
             "sertraline",
@@ -77,6 +109,8 @@ KB: tuple[MedicationKnowledge, ...] = (
             "paroxetine",
             "циталопрам",
             "citalopram",
+            "флувоксамин",
+            "fluvoxamine",
         ),
         precautions=(
             "Возможна гипонатриемия и повышенная потливость; следите за "
@@ -88,7 +122,16 @@ KB: tuple[MedicationKnowledge, ...] = (
             "выраженная слабость или судороги",
         ),
         citations=("E9",),
+        sleep_effects=(
+            "Может смещать латентность REM-сна, вызывать яркие сны или "
+            "фрагментацию сна при вечернем приёме.",
+        ),
+        emotional_effects=(
+            "Сглаживает острые эмоциональные реакции и тревожность; возможна "
+            "небольшая коррекция базовой ВСР.",
+        ),
         heat_caution=True,
+        serotonergic=True,
     ),
     MedicationKnowledge(
         class_name="Бета-блокаторы",
@@ -101,6 +144,8 @@ KB: tuple[MedicationKnowledge, ...] = (
             "atenolol",
             "небиволол",
             "nebivolol",
+            "пропранолол",
+            "propranolol",
         ),
         precautions=(
             "Пульс и HR-зоны могут быть ненадёжны: ориентируйтесь на RPE и "
@@ -108,6 +153,14 @@ KB: tuple[MedicationKnowledge, ...] = (
             "Возможны головокружение и усталость; не меняйте дозу сами.",
         ),
         red_flags=("обморок", "выраженная брадикардия с головокружением"),
+        sleep_effects=(
+            "Могут снижать ночную выработку мелатонина и вызывать ночные "
+            "пробуждения или яркие сны.",
+        ),
+        emotional_effects=(
+            "Снижают вегетативные проявления тревоги (тахикардию, тремор) и "
+            "искусственно занижают пульс покоя и стресс-индекс Garmin.",
+        ),
         intensity_caution=True,
         orthostatic_caution=True,
     ),
@@ -129,6 +182,14 @@ KB: tuple[MedicationKnowledge, ...] = (
             "Избегайте экстремальных интервалов в жару.",
         ),
         red_flags=("судороги", "выраженная слабость", "обморок"),
+        sleep_effects=(
+            "При вечернем приёме могут нарушать непрерывность сна из-за ночных "
+            "пробуждений.",
+        ),
+        emotional_effects=(
+            "При дефиците электролитов возможны ощущение упадка сил и "
+            "раздражительность.",
+        ),
         heat_caution=True,
         intensity_caution=True,
     ),
@@ -140,6 +201,8 @@ KB: tuple[MedicationKnowledge, ...] = (
             "сахароснижающими препаратами; носите быстрые углеводы.",
         ),
         red_flags=("спутанность", "выраженная слабость", "обморок"),
+        sleep_effects=("Прямого седативного эффекта нет; важна стабильность гликемии ночью.",),
+        emotional_effects=("Колебания сахара в крови могут сказываться на субъективной энергии.",),
     ),
     MedicationKnowledge(
         class_name="НПВС",
@@ -158,6 +221,14 @@ KB: tuple[MedicationKnowledge, ...] = (
             "их, чтобы «дотерпеть» тренировку.",
         ),
         red_flags=("чёрный стул", "необычные синяки", "сильная боль в животе"),
+        sleep_effects=(
+            "Уменьшают ночной дискомфорт от боли, но могут слегка снижать "
+            "выработку мелатонина.",
+        ),
+        emotional_effects=(
+            "Могут маскировать физическое утомление и болевой сигнал при оценке "
+            "готовности к нагрузке.",
+        ),
     ),
     MedicationKnowledge(
         class_name="Фторхинолоны",
@@ -174,6 +245,8 @@ KB: tuple[MedicationKnowledge, ...] = (
             "рывковых и ударных нагрузок, при боли в сухожилии — стоп.",
         ),
         red_flags=("острая боль в сухожилии", "отёк или щелчок в сухожилии"),
+        sleep_effects=("Могут вызывать бессонницу и поверхностный сон.",),
+        emotional_effects=("Возможны повышенная тревожность и возбудимость ЦНС.",),
         intensity_caution=True,
     ),
     MedicationKnowledge(
@@ -232,7 +305,115 @@ KB: tuple[MedicationKnowledge, ...] = (
             "с врачом.",
         ),
         red_flags=("спутанность", "выраженная слабость", "обморок", "судороги"),
+        sleep_effects=(
+            "Ночная гипогликемия после вечерней тренировки может вызывать "
+            "скачки ЧСС, потливость и падение качества сна.",
+        ),
+        emotional_effects=(
+            "Снижение глюкозы может сопровождаться резкой тревогой, тремором "
+            "и упадком сил.",
+        ),
         hypoglycemia_caution=True,
+    ),
+    MedicationKnowledge(
+        class_name="Мелатонин / хронобиотики",
+        aliases=("мелатонин", "melatonin", "мелаксен", "циркадин", "circadin"),
+        precautions=(
+            "Принимайте в одно и то же время вечером; при утренней сонливости "
+            "начинайте тренировку с более длинной разминки.",
+        ),
+        sleep_effects=(
+            "Ускоряет засыпание и стабилизирует середину сна (sleep midpoint), "
+            "при избыточной дозе возможны яркие сны и утренняя вялость.",
+        ),
+        emotional_effects=(
+            "Снижает вечернее возбуждение и помогает выровнять циркадный ритм "
+            "настроения и бодрости.",
+        ),
+    ),
+    MedicationKnowledge(
+        class_name="Магний / нутрицевтики сна и нервной системы",
+        aliases=(
+            "магний",
+            "magnesium",
+            "глицинат",
+            "теанин",
+            "l-theanine",
+            "глицин",
+            "glycine",
+        ),
+        precautions=(
+            "Учитывайте индивидуальную переносимость ЖКТ перед длительными "
+            "тренировками.",
+        ),
+        sleep_effects=(
+            "Способствует расслаблению мышц и парасимпатическому восстановлению "
+            "во сне.",
+        ),
+        emotional_effects=(
+            "Мягко снижает субъективное напряжение и вегетативный отклик на стресс.",
+        ),
+    ),
+    MedicationKnowledge(
+        class_name="Седативные антигистаминные / анксиолитики",
+        aliases=(
+            "доксиламин",
+            "doxylamine",
+            "донормил",
+            "гидроксизин",
+            "hydroxyzine",
+            "атаракс",
+            "цетиризин",
+            "cetirizine",
+            "супрастин",
+        ),
+        precautions=(
+            "Возможна утренняя седация, сухость слизистых и снижение скорости "
+            "реакции — избегайте технически сложных упражнений при сонливости.",
+        ),
+        sleep_effects=(
+            "Сокращает время засыпания, но может снижать долю REM-сна и "
+            "вызывать остаточную сонливость утром.",
+        ),
+        emotional_effects=(
+            "Снижает ситуативную тревогу, но утром может ощущаться как снижение "
+            "тонуса и мотивации.",
+        ),
+        orthostatic_caution=True,
+        heat_caution=True,
+    ),
+    MedicationKnowledge(
+        class_name="Бензодиазепины / Z-гипнотики",
+        aliases=(
+            "золпидем",
+            "zolpidem",
+            "зопиклон",
+            "zopiclone",
+            "залеплон",
+            "феназепам",
+            "алпразолам",
+            "alprazolam",
+            "диазепам",
+            "diazepam",
+            "клоназепам",
+            "clonazepam",
+        ),
+        precautions=(
+            "Возможны нарушение координации, головокружение и снижение реакции — "
+            "исключите работу со свободными весами на пределе и езду по трафику "
+            "при остаточной сонливости.",
+        ),
+        red_flags=("выраженное головокружение или обморок", "спутанность"),
+        sleep_effects=(
+            "Увеличивают общую длительность сна, но могут уменьшать долю "
+            "глубокого медленноволнового сна.",
+        ),
+        emotional_effects=(
+            "Подавляют острую тревогу и вегетативный стресс, но могут вызывать "
+            "дневную заторможенность.",
+        ),
+        orthostatic_caution=True,
+        intensity_caution=True,
     ),
 )
 
@@ -242,6 +423,14 @@ _UNKNOWN = MedicationKnowledge(
     precautions=(
         "Класс препарата не распознан: выберите консервативный режим и "
         "обсудите влияние на тренировки с врачом или фармацевтом.",
+    ),
+    sleep_effects=(
+        "Учитывайте возможное влияние препарата на глубину сна, пульс покоя, "
+        "ВСР и утреннюю бодрость (обсудите с лечащим врачом).",
+    ),
+    emotional_effects=(
+        "Учитывайте возможную связь приёма препарата с динамикой настроения, "
+        "субъективной энергии и вегетативного стресса.",
     ),
 )
 
@@ -277,6 +466,8 @@ class MedicationLayer:
     entries: list[MedicationEntry] = field(default_factory=list)
     citations: list[str] = field(default_factory=list)
     safety_flags: list[SafetyFlag] = field(default_factory=list)
+    sleep_effects: list[str] = field(default_factory=list)
+    emotional_effects: list[str] = field(default_factory=list)
     intensity_caution: bool = False
     heat_caution: bool = False
     orthostatic_caution: bool = False
@@ -294,14 +485,17 @@ class MedicationLayer:
 
 
 def build_layer(profile: UserProfile) -> MedicationLayer:
-    """Enrich all medications and aggregate training precautions."""
+    """Enrich all medications and aggregate training, sleep and emotional effects."""
     layer = MedicationLayer()
     citations: set[str] = set()
+    serotonergic_count = 0
     for raw in profile.medications:
         entry = enrich(raw)
         layer.entries.append(entry)
         knowledge = lookup(entry.name)
         citations.update(knowledge.citations)
+        if knowledge.serotonergic:
+            serotonergic_count += 1
         layer.intensity_caution = layer.intensity_caution or knowledge.intensity_caution
         layer.heat_caution = layer.heat_caution or knowledge.heat_caution
         layer.orthostatic_caution = (
@@ -311,6 +505,14 @@ def build_layer(profile: UserProfile) -> MedicationLayer:
         layer.hypoglycemia_caution = (
             layer.hypoglycemia_caution or knowledge.hypoglycemia_caution
         )
+        for effect in knowledge.sleep_effects:
+            text = f"{entry.name}: {effect}"
+            if text not in layer.sleep_effects:
+                layer.sleep_effects.append(text)
+        for effect in knowledge.emotional_effects:
+            text = f"{entry.name}: {effect}"
+            if text not in layer.emotional_effects:
+                layer.emotional_effects.append(text)
         for precaution in entry.precautions:
             layer.safety_flags.append(
                 SafetyFlag(
@@ -322,12 +524,7 @@ def build_layer(profile: UserProfile) -> MedicationLayer:
     layer.citations = sorted(citations)
 
     names = {entry.name.lower() for entry in profile.medications}
-    serotonergic = any(
-        token in name
-        for name in names
-        for token in ("миртазапин", "mirtazapine", "венлафаксин", "venlafaxine")
-    )
-    if len(names) >= 2 and serotonergic:
+    if len(names) >= 2 and serotonergic_count >= 1:
         layer.safety_flags.append(
             SafetyFlag(
                 code="serotonergic_combination",
@@ -403,3 +600,43 @@ def doctor_questions(layer: MedicationLayer) -> list[str]:
             "сон, аппетит или баланс?",
         )
     return questions
+
+
+def medication_ai_context(
+    medications: Iterable[str | MedicationEntry],
+) -> dict[str, Any]:
+    """Build class-level pharmacological context for sleep, emotion and training AI analysis."""
+    classes: list[str] = []
+    sleep_effects: list[str] = []
+    emotional_effects: list[str] = []
+    precautions: list[str] = []
+    citations: set[str] = set()
+    count = 0
+    for item in medications:
+        name = item.name if isinstance(item, MedicationEntry) else str(item or "")
+        name = name.strip()
+        if not name:
+            continue
+        count += 1
+        knowledge = lookup(name)
+        if knowledge.class_name not in classes:
+            classes.append(knowledge.class_name)
+        citations.update(knowledge.citations)
+        for effect in knowledge.sleep_effects:
+            if effect not in sleep_effects:
+                sleep_effects.append(effect)
+        for effect in knowledge.emotional_effects:
+            if effect not in emotional_effects:
+                emotional_effects.append(effect)
+        for precaution in knowledge.precautions:
+            if precaution not in precautions:
+                precautions.append(precaution)
+    return {
+        "has_medications": count > 0,
+        "count": count,
+        "classes": classes,
+        "sleep_effects": sleep_effects,
+        "emotional_effects": emotional_effects,
+        "training_precautions": precautions,
+        "citations": sorted(citations),
+    }
