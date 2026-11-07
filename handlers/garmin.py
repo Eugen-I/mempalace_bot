@@ -29,7 +29,7 @@ from services.bot_setup import (
     garmin_text_state,
 )
 import services.garmin.agent_tools  # noqa: F401 - register Garmin agent tools
-from services.garmin.analytics import build_report
+from services.garmin.analytics import build_report, workout_comparison
 from services.garmin.charts import render_charts
 from services.garmin.coach import coach_text, generate_causes_async
 from services.garmin.config import get_config
@@ -863,6 +863,29 @@ async def _send_sleep(message: types.Message, user_id: int) -> None:
     ]
     if sleep.baseline is not None:
         lines.append(f"Baseline: {sleep.baseline:.1f} ч")
+    ext = report.extended_metrics or {}
+    arch = ext.get("sleep_architecture")
+    if isinstance(arch, dict):
+        stage_parts = []
+        if arch.get("deep_pct_avg") is not None:
+            stage_parts.append(f"глубокий {arch['deep_pct_avg']:.1f}%")
+        if arch.get("rem_pct_avg") is not None:
+            stage_parts.append(f"REM {arch['rem_pct_avg']:.1f}%")
+        if arch.get("awake_min_avg") is not None:
+            stage_parts.append(f"пробуждения {arch['awake_min_avg']:.0f} мин")
+        if stage_parts:
+            lines.append("Структура сна (ср.): " + " · ".join(stage_parts))
+    cons = ext.get("sleep_consistency")
+    if isinstance(cons, dict) and cons.get("avg_midpoint"):
+        stdev_txt = (
+            f" (±{cons['midpoint_stdev_min']:.0f} мин)"
+            if cons.get("midpoint_stdev_min") is not None
+            else ""
+        )
+        lines.append(f"Середина сна: {_esc(str(cons['avg_midpoint']))}{stdev_txt}")
+    lag = ext.get("workout_to_sleep_lag")
+    if isinstance(lag, dict) and lag.get("summary"):
+        lines.append(f"🔗 {_esc(str(lag['summary']))}")
     await message.answer("\n".join(lines), reply_markup=_back_kb(), parse_mode="HTML")
 
 
@@ -1015,17 +1038,34 @@ async def cb_adapt(cb: types.CallbackQuery):
     await cb.message.edit_text(text, reply_markup=_back_kb(), parse_mode="HTML")
 
 
+@router.callback_query(F.data == "garmin:last")
+@allowed_callback
+async def cb_last(cb: types.CallbackQuery):
+    await cb.answer()
+    await _send_last(cb.message, _uid(cb))
+
+
 @router.message(Command("garmin_last"))
 @allowed_only
 async def cmd_last(message: types.Message):
+    await _send_last(message, _uid(message))
+
+
+async def _send_last(message: types.Message, user_id: int) -> None:
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT activity_type, name, start_time, duration_min, distance_m,"
-            " avg_hr, training_load FROM garmin_activities"
+            "SELECT activity_id, activity_type, name, start_time, duration_min,"
+            " distance_m, calories, avg_hr, max_hr, training_load,"
+            " aerobic_te, anaerobic_te FROM garmin_activities"
             " WHERE user_id = ? ORDER BY start_time DESC LIMIT 1",
-            (_uid(message),),
+            (user_id,),
         ).fetchone()
+        comp = (
+            workout_comparison(conn, user_id=user_id, activity_row=row)
+            if row is not None
+            else None
+        )
     finally:
         conn.close()
     if row is None:
@@ -1042,6 +1082,11 @@ async def cmd_last(message: types.Message):
         lines.append(f"Дистанция: {row['distance_m'] / 1000:.2f} км")
     if row["avg_hr"] is not None:
         lines.append(f"Средний пульс: {row['avg_hr']:.0f}")
+    if row["training_load"] is not None:
+        lines.append(f"Тренировочная нагрузка: {row['training_load']:.0f}")
+    if comp and comp.get("summary"):
+        lines.append("")
+        lines.append(f"📊 <b>Разбор:</b> {_esc(str(comp['summary']))}")
     await message.answer("\n".join(lines), reply_markup=_back_kb(), parse_mode="HTML")
 
 

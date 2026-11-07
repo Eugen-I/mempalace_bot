@@ -8,6 +8,7 @@ never interpolated into the report's numbers.
 
 from __future__ import annotations
 
+import json
 import statistics
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -247,9 +248,172 @@ def _activities(rows: list[Any]) -> ActivitySummary:
     )
 
 
+def _sleep_architecture_and_consistency(rows: list[Any]) -> dict[str, Any]:
+    """Parse sleep_stages_json and sleep_midpoint_min across daily rows."""
+    deep_pcts: list[float] = []
+    rem_pcts: list[float] = []
+    light_pcts: list[float] = []
+    awake_mins: list[float] = []
+    shifted_midpoints: list[float] = []
+
+    for row in rows:
+        try:
+            raw_stages = row["sleep_stages_json"]
+        except (KeyError, IndexError):
+            raw_stages = None
+        if raw_stages:
+            try:
+                stages = (
+                    json.loads(raw_stages)
+                    if isinstance(raw_stages, str)
+                    else raw_stages
+                )
+            except (TypeError, ValueError):
+                stages = None
+            if isinstance(stages, dict):
+                deep = _num_opt(stages.get("deep") or stages.get("deep_min"))
+                light = _num_opt(stages.get("light") or stages.get("light_min"))
+                rem = _num_opt(stages.get("rem") or stages.get("rem_min"))
+                awake = _num_opt(stages.get("awake") or stages.get("awake_min"))
+                if awake is not None and awake >= 0:
+                    awake_mins.append(awake)
+                d_val = deep or 0.0
+                l_val = light or 0.0
+                r_val = rem or 0.0
+                asleep = d_val + l_val + r_val
+                if asleep > 0:
+                    deep_pcts.append(round(d_val / asleep * 100.0, 1))
+                    rem_pcts.append(round(r_val / asleep * 100.0, 1))
+                    light_pcts.append(round(l_val / asleep * 100.0, 1))
+
+        midpoint = _row_value(row, "sleep_midpoint_min")
+        if midpoint is not None and 0 <= midpoint < 1440:
+            shifted = midpoint - 1440.0 if midpoint >= 720.0 else midpoint
+            shifted_midpoints.append(shifted)
+
+    out: dict[str, Any] = {}
+    if deep_pcts or rem_pcts or awake_mins:
+        arch: dict[str, Any] = {"nights_count": max(len(deep_pcts), len(awake_mins))}
+        if deep_pcts:
+            arch["deep_pct_avg"] = round(statistics.fmean(deep_pcts), 1)
+            arch["deep_pct_latest"] = deep_pcts[-1]
+        if rem_pcts:
+            arch["rem_pct_avg"] = round(statistics.fmean(rem_pcts), 1)
+            arch["rem_pct_latest"] = rem_pcts[-1]
+        if light_pcts:
+            arch["light_pct_avg"] = round(statistics.fmean(light_pcts), 1)
+        if awake_mins:
+            arch["awake_min_avg"] = round(statistics.fmean(awake_mins), 1)
+            arch["awake_min_latest"] = round(awake_mins[-1], 1)
+        out["sleep_architecture"] = arch
+
+    if shifted_midpoints:
+        avg_shift = statistics.fmean(shifted_midpoints)
+        avg_mod = int(round(avg_shift)) % 1440
+        hh, mm = divmod(avg_mod, 60)
+        cons: dict[str, Any] = {
+            "avg_midpoint": f"{hh:02d}:{mm:02d}",
+            "nights_count": len(shifted_midpoints),
+        }
+        if len(shifted_midpoints) >= 2:
+            cons["midpoint_stdev_min"] = round(
+                statistics.pstdev(shifted_midpoints), 1
+            )
+        out["sleep_consistency"] = cons
+    return out
+
+
+def _num_opt(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _workout_to_sleep_lag(
+    rows: list[Any],
+    activity_rows: list[Any] | None,
+) -> dict[str, Any] | None:
+    """Compare recovery metrics on nights following workouts vs rest days."""
+    if not rows or not activity_rows:
+        return None
+    rows_by_date = {str(r["date"]): r for r in rows}
+    workout_dates: set[str] = set()
+    for act in activity_rows:
+        day_str = str(act["start_time"] or "")[:10]
+        dur = float(act["duration_min"] or 0.0)
+        load = float(act["training_load"] or 0.0)
+        if day_str and (dur >= 15.0 or load > 0.0):
+            workout_dates.add(day_str)
+    if not workout_dates:
+        return None
+
+    post_workout_dates: set[str] = set()
+    for w_day_str in workout_dates:
+        try:
+            next_day = (date.fromisoformat(w_day_str) + timedelta(days=1)).isoformat()
+        except ValueError:
+            continue
+        if next_day in rows_by_date:
+            post_workout_dates.add(next_day)
+        elif w_day_str in rows_by_date:
+            post_workout_dates.add(w_day_str)
+
+    post_rows = [rows_by_date[d] for d in sorted(post_workout_dates) if d in rows_by_date]
+    rest_rows = [r for d, r in rows_by_date.items() if d not in post_workout_dates]
+    if not post_rows or not rest_rows:
+        return None
+
+    lag: dict[str, Any] = {
+        "workout_nights": len(post_rows),
+        "rest_nights": len(rest_rows),
+    }
+    summary_parts: list[str] = []
+
+    hrv_w = _mean([_row_value(r, "hrv") for r in post_rows])
+    hrv_r = _mean([_row_value(r, "hrv") for r in rest_rows])
+    if hrv_w is not None and hrv_r is not None:
+        delta = round(hrv_w - hrv_r, 1)
+        lag["hrv_after_workout_avg"] = hrv_w
+        lag["hrv_after_rest_avg"] = hrv_r
+        lag["hrv_delta"] = delta
+        summary_parts.append(f"HRV {hrv_w:.0f} мс ({delta:+.1f} к отдыху)")
+
+    rhr_w = _mean([_row_value(r, "resting_hr") for r in post_rows])
+    rhr_r = _mean([_row_value(r, "resting_hr") for r in rest_rows])
+    if rhr_w is not None and rhr_r is not None:
+        delta = round(rhr_w - rhr_r, 1)
+        lag["rhr_after_workout_avg"] = rhr_w
+        lag["rhr_after_rest_avg"] = rhr_r
+        lag["rhr_delta"] = delta
+        summary_parts.append(f"пульс покоя {rhr_w:.0f} ({delta:+.1f} к отдыху)")
+
+    score_w = _mean([_row_value(r, "sleep_score") for r in post_rows])
+    score_r = _mean([_row_value(r, "sleep_score") for r in rest_rows])
+    if score_w is not None and score_r is not None:
+        delta = round(score_w - score_r, 1)
+        lag["sleep_score_after_workout_avg"] = score_w
+        lag["sleep_score_after_rest_avg"] = score_r
+        lag["sleep_score_delta"] = delta
+        summary_parts.append(f"Sleep Score {score_w:.0f} ({delta:+.1f})")
+
+    stress_w = _mean([_row_value(r, "stress_avg") for r in post_rows])
+    stress_r = _mean([_row_value(r, "stress_avg") for r in rest_rows])
+    if stress_w is not None and stress_r is not None:
+        delta = round(stress_w - stress_r, 1)
+        lag["stress_after_workout_avg"] = stress_w
+        lag["stress_after_rest_avg"] = stress_r
+        lag["stress_delta"] = delta
+
+    if not summary_parts:
+        return None
+    lag["summary"] = "После тренировок vs дни отдыха: " + ", ".join(summary_parts)
+    return lag
+
+
 def _extended_metrics(
     rows: list[Any],
     series: dict[str, MetricSeries],
+    activity_rows: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Extract secondary physiological metrics from garmin_daily for AI context."""
     def _col_values(col: str) -> list[float]:
@@ -289,6 +453,11 @@ def _extended_metrics(
             if mean_hrv > 0:
                 cv_pct = round(statistics.pstdev(recent_hrv) / mean_hrv * 100.0, 1)
                 result["hrv_cv_7d_pct"] = cv_pct
+
+    result.update(_sleep_architecture_and_consistency(rows))
+    lag = _workout_to_sleep_lag(rows, activity_rows)
+    if lag is not None:
+        result["workout_to_sleep_lag"] = lag
     return result
 
 
@@ -476,6 +645,7 @@ def _causes(
     flags: list[Flag],
     *,
     event_correlations: list[dict[str, Any]] | None = None,
+    extended_metrics: dict[str, Any] | None = None,
 ) -> list[str]:
     codes = {flag.code for flag in flags}
     causes: list[str] = []
@@ -498,6 +668,29 @@ def _causes(
                 f"Контекст события ({corr['date']}, «{corr['title']}»): "
                 f"совпал с изменением метрик ({', '.join(devs)})."
             )
+    ext = extended_metrics or {}
+    arch = ext.get("sleep_architecture") or {}
+    deep_avg = arch.get("deep_pct_avg")
+    if isinstance(deep_avg, (int, float)) and deep_avg < 13.0:
+        causes.append(
+            f"Доля глубокого сна снижена (ср. {deep_avg:.1f}%) — возможны поздняя нагрузка, "
+            "стресс или влияние препаратов на структуру сна."
+        )
+    cons = ext.get("sleep_consistency") or {}
+    stdev_min = cons.get("midpoint_stdev_min")
+    if isinstance(stdev_min, (int, float)) and stdev_min >= 60.0:
+        causes.append(
+            f"Разброс середины сна ±{stdev_min:.0f} мин («социальный джетлаг») "
+            "снижает качество ночного восстановления."
+        )
+    lag = ext.get("workout_to_sleep_lag") or {}
+    hrv_delta = lag.get("hrv_delta")
+    rhr_delta = lag.get("rhr_delta")
+    if (isinstance(hrv_delta, (int, float)) and hrv_delta <= -5.0) or (
+        isinstance(rhr_delta, (int, float)) and rhr_delta >= 3.0
+    ):
+        causes.append(f"Лаг-эффект тренировок на сон: {lag.get('summary')}.")
+
     if "sleep_short" in codes or "sleep_debt" in codes:
         causes.append("Недосып или поздний отход ко сну — самый частый бытовой фактор.")
     if "hrv_below_baseline" in codes or "rhr_above_baseline" in codes:
@@ -571,9 +764,8 @@ def build_report(
         series=series,
         events=events,
     )
-    extended_metrics = _extended_metrics(rows, series)
-
     activity_rows = _activity_rows(conn, user_id=user_id, start=start, end=end)
+    extended_metrics = _extended_metrics(rows, series, activity_rows)
     activities = _activities(activity_rows)
     flags = _flags(
         series,
@@ -603,7 +795,12 @@ def build_report(
         dates=[day.isoformat() for day in dates],
         series=series,
         flags=flags,
-        causes=_causes(series, flags, event_correlations=event_correlations),
+        causes=_causes(
+            series,
+            flags,
+            event_correlations=event_correlations,
+            extended_metrics=extended_metrics,
+        ),
         weekly=weekly,
         activities=activities,
         missing_inputs=missing,
@@ -613,6 +810,103 @@ def build_report(
         event_correlations=event_correlations,
         extended_metrics=extended_metrics,
     )
+
+
+def workout_comparison(
+    conn,
+    *,
+    user_id: int,
+    activity_row: Any | None = None,
+    days: int = BASELINE_DAYS,
+) -> dict[str, Any] | None:
+    """Compare an activity against same-type activities in the prior `days` window."""
+    if activity_row is None:
+        activity_row = conn.execute(
+            "SELECT activity_id, activity_type, name, start_time, duration_min,"
+            " distance_m, calories, avg_hr, max_hr, training_load,"
+            " aerobic_te, anaerobic_te"
+            " FROM garmin_activities WHERE user_id = ?"
+            " ORDER BY start_time DESC LIMIT 1",
+            (int(user_id),),
+        ).fetchone()
+    if activity_row is None:
+        return None
+
+    act_type = str(activity_row["activity_type"] or "other")
+    start_time_str = str(activity_row["start_time"] or "")
+    try:
+        act_day = date.fromisoformat(start_time_str[:10])
+    except ValueError:
+        act_day = date.today()
+    window_start = (act_day - timedelta(days=days)).isoformat()
+
+    peers = conn.execute(
+        "SELECT duration_min, distance_m, avg_hr, training_load, aerobic_te, anaerobic_te"
+        " FROM garmin_activities"
+        " WHERE user_id = ? AND activity_type = ?"
+        " AND date(start_time) >= ? AND start_time < ?"
+        " ORDER BY start_time DESC",
+        (int(user_id), act_type, window_start, start_time_str),
+    ).fetchall()
+
+    cur_dur = _row_value(activity_row, "duration_min")
+    cur_dist = _row_value(activity_row, "distance_m")
+    cur_hr = _row_value(activity_row, "avg_hr")
+    cur_load = _row_value(activity_row, "training_load")
+    cur_aer = _row_value(activity_row, "aerobic_te")
+    cur_ana = _row_value(activity_row, "anaerobic_te")
+
+    peer_dur = _mean([_row_value(p, "duration_min") for p in peers])
+    peer_dist = _mean([_row_value(p, "distance_m") for p in peers])
+    peer_hr = _mean([_row_value(p, "avg_hr") for p in peers])
+    peer_load = _mean([_row_value(p, "training_load") for p in peers])
+
+    dur_delta_pct = _pct_change(peer_dur, cur_dur)
+    hr_delta = (
+        round(cur_hr - peer_hr, 1)
+        if cur_hr is not None and peer_hr is not None
+        else None
+    )
+    load_delta_pct = _pct_change(peer_load, cur_load)
+
+    parts: list[str] = []
+    if dur_delta_pct is not None:
+        parts.append(f"длительность {dur_delta_pct:+.0f}% (к ср. {peer_dur:.0f} мин)")
+    if hr_delta is not None:
+        parts.append(f"ЧСС ср. {hr_delta:+.0f} уд/мин (к ср. {peer_hr:.0f})")
+    if load_delta_pct is not None:
+        parts.append(f"нагрузка {load_delta_pct:+.0f}% (к ср. {peer_load:.0f})")
+
+    if peers and parts:
+        summary = (
+            f"К среднему по {len(peers)} тренировкам «{act_type}» за {days} дн.: "
+            + ", ".join(parts)
+        )
+    elif peers:
+        summary = f"Найдено {len(peers)} тренировок «{act_type}» за {days} дн."
+    else:
+        summary = f"Первая тренировка типа «{act_type}» за последние {days} дн."
+
+    return {
+        "activity_type": act_type,
+        "name": str(activity_row["name"] or act_type),
+        "start_time": start_time_str,
+        "duration_min": cur_dur,
+        "distance_m": cur_dist,
+        "avg_hr": cur_hr,
+        "training_load": cur_load,
+        "aerobic_te": cur_aer,
+        "anaerobic_te": cur_ana,
+        "peer_count": len(peers),
+        "peer_duration_min_avg": peer_dur,
+        "peer_distance_m_avg": peer_dist,
+        "peer_avg_hr": peer_hr,
+        "peer_training_load_avg": peer_load,
+        "duration_delta_pct": dur_delta_pct,
+        "hr_delta_bpm": hr_delta,
+        "load_delta_pct": load_delta_pct,
+        "summary": summary,
+    }
 
 
 def latest_extra_metric(conn, *, user_id: int, day: str, metric: str) -> float | None:

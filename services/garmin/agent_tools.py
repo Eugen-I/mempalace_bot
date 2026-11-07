@@ -12,7 +12,7 @@ from datetime import date
 
 from services.agent_tools import CAT_SYSTEM, register_tool, unregister_tool
 
-from .analytics import build_report
+from .analytics import build_report, workout_comparison
 from .config import get_config
 from .db import init_db
 from .errors import GarminError
@@ -46,6 +46,7 @@ def register_garmin_agent_tools() -> None:
         "garmin_health_summary",
         "garmin_recent_workouts",
         "garmin_training_plan",
+        "garmin_correlate_period",
     ):
         unregister_tool(tool_name)
 
@@ -109,12 +110,41 @@ def register_garmin_agent_tools() -> None:
         if report.extended_metrics:
             ext_parts = []
             for k, val in report.extended_metrics.items():
+                if k in {"sleep_architecture", "sleep_consistency", "workout_to_sleep_lag"}:
+                    continue
                 if isinstance(val, dict):
                     ext_parts.append(f"{k}: ср. {val.get('avg')} (посл. {val.get('latest')})")
                 else:
                     ext_parts.append(f"{k}: {val}")
             if ext_parts:
                 lines.append("\nДоп. физиология: " + "; ".join(ext_parts))
+
+            arch = report.extended_metrics.get("sleep_architecture")
+            if isinstance(arch, dict):
+                arch_parts = []
+                if arch.get("deep_pct_avg") is not None:
+                    arch_parts.append(f"глубокий {arch['deep_pct_avg']}%")
+                if arch.get("rem_pct_avg") is not None:
+                    arch_parts.append(f"REM {arch['rem_pct_avg']}%")
+                if arch.get("awake_min_avg") is not None:
+                    arch_parts.append(f"пробуждения {arch['awake_min_avg']} мин")
+                if arch_parts:
+                    lines.append("Структура сна (ср.): " + ", ".join(arch_parts))
+
+            cons = report.extended_metrics.get("sleep_consistency")
+            if isinstance(cons, dict) and cons.get("avg_midpoint"):
+                stdev_txt = (
+                    f" (±{cons['midpoint_stdev_min']} мин)"
+                    if cons.get("midpoint_stdev_min") is not None
+                    else ""
+                )
+                lines.append(
+                    f"Регулярность сна: середина сна {cons['avg_midpoint']}{stdev_txt}"
+                )
+
+            lag = report.extended_metrics.get("workout_to_sleep_lag")
+            if isinstance(lag, dict) and lag.get("summary"):
+                lines.append("Лаг-эффект тренировок: " + str(lag["summary"]))
 
         if checkins:
             moods = [c.mood for c in checkins if c.mood is not None]
@@ -188,6 +218,11 @@ def register_garmin_agent_tools() -> None:
                 " ORDER BY start_time DESC LIMIT ?",
                 (uid, limit),
             ).fetchall()
+            comp = (
+                workout_comparison(conn, user_id=uid, activity_row=rows[0])
+                if rows
+                else None
+            )
         finally:
             conn.close()
 
@@ -212,6 +247,8 @@ def register_garmin_agent_tools() -> None:
                 else ""
             )
             lines.append(f"- {day} · {atype} ({name}): {dur}{dist}{hr}{load}")
+        if comp and comp.get("summary"):
+            lines.append("\nПост-тренировочный разбор (посл. сессия): " + str(comp["summary"]))
         return "\n".join(lines)
 
     @register_tool(
@@ -242,6 +279,105 @@ def register_garmin_agent_tools() -> None:
                 week_num = week.week
                 break
         return plan_summary(plan) + "\n\n" + week_detail_text(plan, week_num)
+
+    @register_tool(
+        "garmin_correlate_period",
+        "Кросс-доменный срез физиологии Garmin, тренировок, чек-инов и событий "
+        "(болезнь/простуда/стресс) за произвольный интервал дат [start_date, end_date] "
+        "для сопоставления с заметками Apple Notes и записями MemPalace.",
+        schema={
+            "type": "object",
+            "required": ["start_date", "end_date"],
+            "properties": {
+                "start_date": {
+                    "type": "string",
+                    "description": "Начальная дата в формате YYYY-MM-DD",
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "Конечная дата в формате YYYY-MM-DD",
+                },
+            },
+        },
+        category=CAT_SYSTEM,
+        is_write=False,
+    )
+    def _garmin_correlate_period(args: dict) -> str:
+        start_raw = str(args.get("start_date") or "").strip()[:10]
+        end_raw = str(args.get("end_date") or "").strip()[:10]
+        try:
+            start_dt = date.fromisoformat(start_raw)
+            end_dt = date.fromisoformat(end_raw)
+        except ValueError:
+            return "Ошибка: укажите start_date и end_date в формате YYYY-MM-DD."
+        if end_dt < start_dt:
+            start_dt, end_dt = end_dt, start_dt
+        days = min(max((end_dt - start_dt).days + 1, 1), 365)
+
+        cfg = get_config()
+        conn = init_db(cfg.db_path)
+        try:
+            uid = _resolve_user_id(conn)
+            report = build_report(
+                conn, user_id=uid, days=days, end_date=end_dt.isoformat()
+            )
+            daily_rows = conn.execute(
+                "SELECT date, sleep_hours, sleep_score, hrv, resting_hr,"
+                " stress_avg, body_battery_morning, steps"
+                " FROM garmin_daily WHERE user_id = ? AND date BETWEEN ? AND ?"
+                " ORDER BY date",
+                (uid, start_dt.isoformat(), end_dt.isoformat()),
+            ).fetchall()
+            act_rows = conn.execute(
+                "SELECT start_time, activity_type, name, duration_min, training_load"
+                " FROM garmin_activities"
+                " WHERE user_id = ? AND date(start_time) BETWEEN ? AND ?"
+                " ORDER BY start_time",
+                (uid, start_dt.isoformat(), end_dt.isoformat()),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        lines = [
+            f"Срез Garmin за период {report.start} — {report.end} "
+            f"(дней с данными: {len(daily_rows)}, тренировок: {len(act_rows)}):"
+        ]
+        for key, item in report.series.items():
+            present = [v for v in item.values if v is not None]
+            if not present:
+                continue
+            avg_val = round(sum(present) / len(present), 1)
+            base_txt = (
+                f" (baseline {item.baseline})" if item.baseline is not None else ""
+            )
+            lines.append(
+                f"- {item.label}: ср. {avg_val} {item.unit}, "
+                f"мин {min(present)}, макс {max(present)}{base_txt}"
+            )
+
+        lag = report.extended_metrics.get("workout_to_sleep_lag")
+        if isinstance(lag, dict) and lag.get("summary"):
+            lines.append("Лаг-связь тренировок со сном: " + str(lag["summary"]))
+
+        if report.event_correlations:
+            lines.append("События в периоде:")
+            for corr in report.event_correlations:
+                lines.append(f"- {corr['summary']}")
+
+        if daily_rows:
+            lines.append("Посуточная динамика (до 14 дней):")
+            for r in daily_rows[-14:]:
+                d_parts = [str(r["date"])]
+                if r["sleep_hours"] is not None:
+                    d_parts.append(f"сон {float(r['sleep_hours']):.1f}ч")
+                if r["hrv"] is not None:
+                    d_parts.append(f"HRV {int(r['hrv'])}")
+                if r["resting_hr"] is not None:
+                    d_parts.append(f"ЧСС {int(r['resting_hr'])}")
+                if r["stress_avg"] is not None:
+                    d_parts.append(f"стресс {int(r['stress_avg'])}")
+                lines.append("  · " + ", ".join(d_parts))
+        return "\n".join(lines)
 
 
 register_garmin_agent_tools()

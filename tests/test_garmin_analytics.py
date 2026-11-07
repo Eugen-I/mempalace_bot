@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from services.garmin.analytics import build_report, latest_extra_metric
+from services.garmin.analytics import (
+    build_report,
+    latest_extra_metric,
+    workout_comparison,
+)
 from services.garmin.db import init_db
 from services.garmin.repository import upsert_daily, upsert_extra_metric
 
@@ -172,3 +176,94 @@ def test_event_correlations_and_extended_metrics(conn):
     assert any("Простуда / ОРВИ" in cause for cause in report.causes)
     assert "respiration_avg" in report.extended_metrics
     assert "vo2max" in report.extended_metrics
+
+
+def test_sleep_architecture_consistency_and_workout_lag(conn):
+    _seed_report_data(conn)
+    upsert_daily(
+        conn,
+        {
+            "user_id": 1,
+            "date": "2026-10-03",
+            "sleep_hours": 7.0,
+            "sleep_score": 68,
+            "sleep_stages_json": '{"deep": 40, "light": 280, "rem": 100, "awake": 25}',
+            "sleep_midpoint_min": 180,
+            "hrv": 34,
+            "resting_hr": 62,
+        },
+        source="manual",
+    )
+    upsert_daily(
+        conn,
+        {
+            "user_id": 1,
+            "date": "2026-10-04",
+            "sleep_hours": 7.5,
+            "sleep_score": 82,
+            "sleep_stages_json": '{"deep": 45, "light": 300, "rem": 105, "awake": 15}',
+            "sleep_midpoint_min": 310,
+            "hrv": 48,
+            "resting_hr": 54,
+        },
+        source="manual",
+    )
+    conn.execute(
+        "INSERT INTO garmin_activities"
+        " (user_id, activity_id, start_time, activity_type, name, duration_min,"
+        " training_load, source, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (1, "w1", "2026-10-02T18:00:00", "strength", "Gym", 65, 110, "manual", "x"),
+    )
+    conn.commit()
+
+    report = build_report(conn, user_id=1, days=7, end_date="2026-10-07")
+    arch = report.extended_metrics.get("sleep_architecture")
+    assert arch is not None
+    assert arch["deep_pct_avg"] < 13.0
+    assert arch["rem_pct_avg"] > 20.0
+    assert arch["awake_min_avg"] == 20.0
+
+    cons = report.extended_metrics.get("sleep_consistency")
+    assert cons is not None
+    assert cons["midpoint_stdev_min"] >= 60.0
+
+    lag = report.extended_metrics.get("workout_to_sleep_lag")
+    assert lag is not None
+    assert lag["hrv_delta"] < 0
+    assert "HRV" in lag["summary"]
+    assert any("Доля глубокого сна" in c for c in report.causes)
+    assert any("Разброс середины сна" in c for c in report.causes)
+
+
+def test_workout_comparison_against_peers(conn):
+    for idx, day in enumerate(("2026-09-20", "2026-09-25", "2026-10-01")):
+        conn.execute(
+            "INSERT INTO garmin_activities"
+            " (user_id, activity_id, start_time, activity_type, name, duration_min,"
+            " distance_m, avg_hr, training_load, source, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                1,
+                f"run_{idx}",
+                f"{day}T09:00:00",
+                "running",
+                "Morning Run",
+                40.0 if idx < 2 else 50.0,
+                7000.0 if idx < 2 else 9000.0,
+                145 if idx < 2 else 152,
+                80.0 if idx < 2 else 100.0,
+                "manual",
+                "x",
+            ),
+        )
+    conn.commit()
+
+    comp = workout_comparison(conn, user_id=1)
+    assert comp is not None
+    assert comp["activity_type"] == "running"
+    assert comp["peer_count"] == 2
+    assert comp["duration_delta_pct"] == 25.0
+    assert comp["hr_delta_bpm"] == 7.0
+    assert comp["load_delta_pct"] == 25.0
+    assert "running" in comp["summary"]
