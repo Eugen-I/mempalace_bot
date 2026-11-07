@@ -27,3 +27,15 @@ class GarminImportError(GarminError):
 
 class GarminValidationError(GarminError):
     """AI/plan payload failed validation."""
+
+
+class GarminOnlineError(GarminError):
+    """Online Garmin Connect API or session error."""
+
+
+class GarminAuthError(GarminOnlineError):
+    """Authentication or 2FA failure against Garmin Connect."""
+
+
+class GarminRateLimitError(GarminOnlineError):
+    """Garmin Connect returned HTTP 429 or sync cooldown is active."""
