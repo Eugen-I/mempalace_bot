@@ -172,6 +172,9 @@ async def process_user_message(message: types.Message):
     chat_id = getattr(message.chat, "id", None)
     logger.info(f"[USER_MSG] User {uid}: {text[:50]}...")
 
+    if text.lower() in {"/cancel", "отмена", "❌ отмена"}:
+        return await message.answer("❌ Действие отменено.")
+
     # 0a. Ожидание ссылки для YouTube
     if uid in _yt_waiting_url:
         mode = _yt_waiting_url.pop(uid)

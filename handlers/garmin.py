@@ -516,6 +516,20 @@ def _parse_medication_entries(text: str) -> list[MedicationEntry]:
 # entry points
 
 
+@router.message(Command("cancel"))
+@allowed_only
+async def cmd_cancel(message: types.Message):
+    user_id = _uid(message)
+    s1 = garmin_text_state.pop(user_id, None)
+    s2 = garmin_profile_draft.pop(user_id, None)
+    s3 = garmin_online_draft.pop(user_id, None)
+    had_state = bool(s1 or s2 or s3)
+    if had_state:
+        await message.answer("❌ Действие отменено.", reply_markup=_back_kb())
+    else:
+        await message.answer("Нет активного действия для отмены.", reply_markup=_back_kb())
+
+
 @router.message(Command("garmin"))
 @allowed_only
 async def cmd_garmin(message: types.Message):
@@ -872,6 +886,30 @@ async def cb_online_disconnect(cb: types.CallbackQuery):
     )
 
 
+def _start_login_sync(user_id: int, email: str, secret: str):
+    conn = _connect()
+    try:
+        return start_login(conn, user_id, email=email, secret=secret)
+    finally:
+        conn.close()
+
+
+def _submit_mfa_sync(user_id: int, mfa_code: str):
+    conn = _connect()
+    try:
+        return submit_mfa_code(conn, user_id, mfa_code=mfa_code)
+    finally:
+        conn.close()
+
+
+def _sync_online_sync(user_id: int, config):
+    conn = _connect()
+    try:
+        return sync_online_days(conn, user_id, config=config)
+    finally:
+        conn.close()
+
+
 @router.callback_query(F.data == "garmin:online:sync")
 @allowed_callback
 async def cb_online_sync(cb: types.CallbackQuery):
@@ -882,38 +920,34 @@ async def cb_online_sync(cb: types.CallbackQuery):
         "🔄 <i>Подключаюсь к Garmin Connect и загружаю свежие данные...</i>",
         parse_mode="HTML",
     )
-    conn = _connect()
     try:
+        result = await asyncio.to_thread(_sync_online_sync, user_id, cfg)
+    except GarminRateLimitError as exc:
+        await status_msg.edit_text(
+            f"⏳ <b>Ограничение частоты запросов</b>\n\n{_esc(str(exc))}",
+            reply_markup=_back_kb(),
+            parse_mode="HTML",
+        )
+        return
+    except GarminAuthError as exc:
+        conn = _connect()
         try:
-            result = await asyncio.to_thread(
-                sync_online_days,
-                conn,
-                user_id,
-                config=cfg,
-            )
-        except GarminRateLimitError as exc:
-            await status_msg.edit_text(
-                f"⏳ <b>Ограничение частоты запросов</b>\n\n{_esc(str(exc))}",
-                reply_markup=_back_kb(),
-                parse_mode="HTML",
-            )
-            return
-        except GarminAuthError as exc:
-            await status_msg.edit_text(
-                f"🔑 <b>Ошибка авторизации Garmin Connect</b>\n\n{_esc(str(exc))}",
-                reply_markup=_online_kb(get_account_state(conn, user_id)),
-                parse_mode="HTML",
-            )
-            return
-        except GarminOnlineError as exc:
-            await status_msg.edit_text(
-                f"❌ <b>Ошибка связи с Garmin Connect</b>\n\n{_esc(str(exc))}",
-                reply_markup=_back_kb(),
-                parse_mode="HTML",
-            )
-            return
-    finally:
-        conn.close()
+            account = get_account_state(conn, user_id)
+        finally:
+            conn.close()
+        await status_msg.edit_text(
+            f"🔑 <b>Ошибка авторизации Garmin Connect</b>\n\n{_esc(str(exc))}",
+            reply_markup=_online_kb(account),
+            parse_mode="HTML",
+        )
+        return
+    except GarminOnlineError as exc:
+        await status_msg.edit_text(
+            f"❌ <b>Ошибка связи с Garmin Connect</b>\n\n{_esc(str(exc))}",
+            reply_markup=_back_kb(),
+            parse_mode="HTML",
+        )
+        return
 
     lines = [
         "✅ <b>Онлайн-синхронизация завершена</b>",
@@ -3272,27 +3306,27 @@ async def handle_garmin_text(message: types.Message):
             "🔄 <i>Проверяю учетные данные Garmin Connect...</i>",
             parse_mode="HTML",
         )
-        conn = _connect()
         try:
+            outcome = await asyncio.to_thread(
+                _start_login_sync,
+                user_id,
+                email_val,
+                text,
+            )
+        except (GarminAuthError, GarminRateLimitError, GarminOnlineError) as exc:
+            conn = _connect()
             try:
-                outcome = await asyncio.to_thread(
-                    start_login,
-                    conn,
-                    user_id,
-                    email=email_val,
-                    secret=text,
-                )
-            except (GarminAuthError, GarminRateLimitError, GarminOnlineError) as exc:
                 account = get_account_state(conn, user_id)
-                await status_msg.edit_text(
-                    f"❌ <b>Не удалось подключить Garmin Connect</b>\n\n{_esc(str(exc))}",
-                    reply_markup=_online_kb(account),
-                    parse_mode="HTML",
-                )
-                return None
-            account = outcome.account
-        finally:
-            conn.close()
+            finally:
+                conn.close()
+            await status_msg.edit_text(
+                f"❌ <b>Не удалось подключить Garmin Connect</b>\n\n{_esc(str(exc))}",
+                reply_markup=_online_kb(account),
+                parse_mode="HTML",
+            )
+            return None
+
+        account = outcome.account
 
         if outcome.status == "mfa_required":
             garmin_text_state[user_id] = "garmin_online_mfa"
@@ -3325,26 +3359,26 @@ async def handle_garmin_text(message: types.Message):
         status_msg = await message.answer(
             "🔄 <i>Проверяю код 2FA...</i>", parse_mode="HTML"
         )
-        conn = _connect()
         try:
+            outcome = await asyncio.to_thread(
+                _submit_mfa_sync,
+                user_id,
+                text,
+            )
+        except (GarminAuthError, GarminRateLimitError, GarminOnlineError) as exc:
+            conn = _connect()
             try:
-                outcome = await asyncio.to_thread(
-                    submit_mfa_code,
-                    conn,
-                    user_id,
-                    mfa_code=text,
-                )
-            except (GarminAuthError, GarminRateLimitError, GarminOnlineError) as exc:
                 account = get_account_state(conn, user_id)
-                await status_msg.edit_text(
-                    f"❌ <b>Ошибка 2FA</b>\n\n{_esc(str(exc))}",
-                    reply_markup=_online_kb(account),
-                    parse_mode="HTML",
-                )
-                return None
-            account = outcome.account
-        finally:
-            conn.close()
+            finally:
+                conn.close()
+            await status_msg.edit_text(
+                f"❌ <b>Ошибка 2FA</b>\n\n{_esc(str(exc))}",
+                reply_markup=_online_kb(account),
+                parse_mode="HTML",
+            )
+            return None
+
+        account = outcome.account
 
         await status_msg.edit_text(
             f"✅ <b>Двухфакторная проверка пройдена!</b>\n\n"

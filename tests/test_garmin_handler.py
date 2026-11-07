@@ -1157,3 +1157,14 @@ async def test_garmin_online_connect_mfa_sync_and_disconnect(env, monkeypatch):
     disc_text, disc_kw = cb_disc.message.edits[0]
     assert "Сессия Garmin Connect отключена" in disc_text
     assert "garmin:online:connect" in _callback_ids(disc_kw["reply_markup"])
+
+
+@pytest.mark.asyncio
+async def test_cmd_cancel_resets_garmin_states(env):
+    garmin.garmin_text_state[UID] = "garmin_online_pass"
+    garmin.garmin_online_draft[UID] = {"email": "test@example.com"}
+    msg = FakeMessage(uid=UID, text="/cancel")
+    await garmin.cmd_cancel(msg)
+    assert garmin.garmin_text_state.get(UID) is None
+    assert garmin.garmin_online_draft.get(UID) is None
+    assert "отменено" in msg.answers[0][0].lower()
