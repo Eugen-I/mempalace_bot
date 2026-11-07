@@ -46,7 +46,11 @@ PALACE_MAP_TEMPLATE = """<!DOCTYPE html>
       user-select: none;
       -webkit-user-select: none;
     }}
-    #main-canvas {{
+    input, textarea, .notes-list, .note-card {{
+      user-select: text;
+      -webkit-user-select: text;
+    }}
+    #graph-canvas, #main-canvas {{
       position: absolute;
       top: 0;
       left: 0;
@@ -54,8 +58,10 @@ PALACE_MAP_TEMPLATE = """<!DOCTYPE html>
       height: 100%;
       display: block;
       cursor: grab;
+      touch-action: none;
+      z-index: 1;
     }}
-    #main-canvas.grabbing {{ cursor: grabbing; }}
+    #graph-canvas.grabbing, #main-canvas.grabbing {{ cursor: grabbing; }}
 
     /* Хедер (верхний левый угол) */
     #header {{
@@ -1152,82 +1158,109 @@ PALACE_MAP_TEMPLATE = """<!DOCTYPE html>
     let dragOffset = {{ x: 0, y: 0 }};
     let dragStartX = 0;
     let dragStartY = 0;
-    let didDragNode = false;
     let startMouseX = 0;
     let startMouseY = 0;
+    let isDragMovement = false;
+    const DRAG_THRESHOLD = 7;
 
-    canvas.addEventListener('mousedown', e => {{
-      startMouseX = e.clientX;
-      startMouseY = e.clientY;
-      didDragNode = false;
+    function getCanvasCoords(clientX, clientY) {{
+      const rect = canvas.getBoundingClientRect();
+      const cx = clientX - rect.left;
+      const cy = clientY - rect.top;
+      const worldX = (cx - panX) / zoom;
+      const worldY = (cy - panY) / zoom;
+      return {{ cx: cx, cy: cy, worldX: worldX, worldY: worldY }};
+    }}
 
-      const worldX = (e.clientX - panX) / zoom;
-      const worldY = (e.clientY - panY) / zoom;
+    function onPointerDown(clientX, clientY) {{
+      startMouseX = clientX;
+      startMouseY = clientY;
+      isDragMovement = false;
+
+      const coords = getCanvasCoords(clientX, clientY);
+      const cx = coords.cx;
+      const cy = coords.cy;
+      const worldX = coords.worldX;
+      const worldY = coords.worldY;
+
+      // Проверка клика по спутнику-ящику
+      for (let i = 0; i < activeSatellites.length; i++) {{
+        const sat = activeSatellites[i];
+        if (Math.hypot(sat.x - worldX, sat.y - worldY) <= (sat.r / zoom) * 1.5 + 6) {{
+          draggedNode = null;
+          isDragging = false;
+          return;
+        }}
+      }}
+
       const hit = findNodeAt(worldX, worldY, zoom);
-
       if (hit) {{
-        // Зажимаем узел (крыло или комнату) для перетаскивания!
         draggedNode = hit;
-        draggedNode.pinned = true;
         dragOffset.x = draggedNode.x - worldX;
         dragOffset.y = draggedNode.y - worldY;
-        canvas.classList.add('grabbing');
       }} else {{
-        // Панорамирование камеры
         isDragging = true;
-        dragStartX = e.clientX - panX;
-        dragStartY = e.clientY - panY;
-        canvas.classList.add('grabbing');
+        dragStartX = cx - panX;
+        dragStartY = cy - panY;
       }}
-    }});
+      canvas.classList.add('grabbing');
+    }}
 
-    window.addEventListener('mousemove', e => {{
-      const worldX = (e.clientX - panX) / zoom;
-      const worldY = (e.clientY - panY) / zoom;
+    function onPointerMove(clientX, clientY) {{
+      const coords = getCanvasCoords(clientX, clientY);
+      const cx = coords.cx;
+      const cy = coords.cy;
+      const worldX = coords.worldX;
+      const worldY = coords.worldY;
+      const moveDist = Math.hypot(clientX - startMouseX, clientY - startMouseY);
 
       if (draggedNode) {{
-        const targetX = worldX + dragOffset.x;
-        const targetY = worldY + dragOffset.y;
-        const deltaX = targetX - draggedNode.x;
-        const deltaY = targetY - draggedNode.y;
-
-        if (Math.hypot(e.clientX - startMouseX, e.clientY - startMouseY) > 4) {{
-          didDragNode = true;
+        if (!isDragMovement && moveDist > DRAG_THRESHOLD) {{
+          isDragMovement = true;
+          draggedNode.pinned = true;
         }}
 
-        draggedNode.x = targetX;
-        draggedNode.y = targetY;
-        draggedNode.vx = 0;
-        draggedNode.vy = 0;
+        if (isDragMovement) {{
+          const targetX = worldX + dragOffset.x;
+          const targetY = worldY + dragOffset.y;
+          const deltaX = targetX - draggedNode.x;
+          const deltaY = targetY - draggedNode.y;
 
-        // Если перетаскиваем крыло — сдвигаем вместе с ним всю его гроздь комнат!
-        if (draggedNode.type === 'wing') {{
-          for (let i = 0; i < roomNodes.length; i++) {{
-            const r = roomNodes[i];
-            if (r.wing === draggedNode.id) {{
-              r.x += deltaX;
-              r.y += deltaY;
-              r.vx = 0;
-              r.vy = 0;
+          draggedNode.x = targetX;
+          draggedNode.y = targetY;
+          draggedNode.vx = 0;
+          draggedNode.vy = 0;
+
+          // Если перетаскиваем крыло — сдвигаем вместе с ним всю его гроздь комнат!
+          if (draggedNode.type === 'wing') {{
+            for (let i = 0; i < roomNodes.length; i++) {{
+              const r = roomNodes[i];
+              if (r.wing === draggedNode.id || r.wing_name === draggedNode.label) {{
+                r.x += deltaX;
+                r.y += deltaY;
+                r.vx = 0;
+                r.vy = 0;
+              }}
             }}
           }}
-        }}
 
-        // Подогреваем симуляцию для мягкой адаптации связей
-        simAlpha = Math.max(simAlpha, 0.25);
-        if (!isSimRunning) {{
-          isSimRunning = true;
-          requestAnimationFrame(draw);
+          simAlpha = Math.max(simAlpha, 0.25);
+          if (!isSimRunning) {{
+            isSimRunning = true;
+            requestAnimationFrame(draw);
+          }}
+          updateSpatialGrid();
+          draw();
+          return;
         }}
-
-        updateSpatialGrid();
-        draw();
-        return;
       }}
 
       if (isDragging) {{
-        panX = e.clientX - dragStartX;
-        panY = e.clientY - dragStartY;
+        if (moveDist > DRAG_THRESHOLD) {{
+          isDragMovement = true;
+        }}
+        panX = cx - dragStartX;
+        panY = cy - dragStartY;
         draw();
         return;
       }}
@@ -1247,9 +1280,8 @@ PALACE_MAP_TEMPLATE = """<!DOCTYPE html>
         return;
       }}
 
-      // Определение узла под курсором (через пространственный хэш)
+      // Определение узла под курсором
       const hit = findNodeAt(worldX, worldY, zoom);
-
       if (hit !== hoveredNode) {{
         hoveredNode = hit;
         if (hit) {{
@@ -1259,42 +1291,31 @@ PALACE_MAP_TEMPLATE = """<!DOCTYPE html>
         }}
         draw();
       }}
-    }});
+    }}
 
-    window.addEventListener('mouseup', () => {{
-      if (draggedNode) {{
-        draggedNode.pinned = true;
-        // Сохраняем новые координаты в хранилище
-        const posMap = {{}};
-        nodes.forEach(n => {{ posMap[n.id] = {{ x: Math.round(n.x), y: Math.round(n.y) }}; }});
-        safeStorage.setItem('palace:pos:v1', JSON.stringify(posMap));
-        draggedNode = null;
-      }}
-      isDragging = false;
+    function onPointerUp(clientX, clientY) {{
       canvas.classList.remove('grabbing');
-    }});
+      const moveDist = Math.hypot(clientX - startMouseX, clientY - startMouseY);
 
-    canvas.addEventListener('wheel', e => {{
-      e.preventDefault();
-      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
-      const newZoom = Math.max(0.2, Math.min(4.5, zoom * zoomFactor));
+      if (isDragMovement) {{
+        if (draggedNode) {{
+          draggedNode.pinned = true;
+          const posMap = {{}};
+          nodes.forEach(n => {{ posMap[n.id] = {{ x: Math.round(n.x), y: Math.round(n.y) }}; }});
+          safeStorage.setItem('palace:pos:v1', JSON.stringify(posMap));
+          draggedNode = null;
+        }}
+        isDragging = false;
+        isDragMovement = false;
+        return;
+      }}
 
-      // Центрирование зума в точку курсора
-      const mouseX = e.clientX;
-      const mouseY = e.clientY;
-      panX = mouseX - (mouseX - panX) * (newZoom / zoom);
-      panY = mouseY - (mouseY - panY) * (newZoom / zoom);
-      zoom = newZoom;
-      draw();
-    }}, {{ passive: false }});
+      // Клик без значительного движения
+      const coords = getCanvasCoords(clientX, clientY);
+      const worldX = coords.worldX;
+      const worldY = coords.worldY;
 
-    // Клик по узлу — открытие панели инспектора (только если не было сдвига)
-    canvas.addEventListener('click', e => {{
-      if (didDragNode) return;
-      const worldX = (e.clientX - panX) / zoom;
-      const worldY = (e.clientY - panY) / zoom;
-
-      // Проверка клика по спутнику-ящику
+      // 1. Проверяем клик по спутнику-ящику
       for (let i = 0; i < activeSatellites.length; i++) {{
         const sat = activeSatellites[i];
         if (Math.hypot(sat.x - worldX, sat.y - worldY) <= (sat.r / zoom) * 1.5 + 6) {{
@@ -1305,12 +1326,14 @@ PALACE_MAP_TEMPLATE = """<!DOCTYPE html>
             noteCards[sat.idx].classList.add('expanded');
             noteCards[sat.idx].scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
           }}
+          draggedNode = null;
+          isDragging = false;
           return;
         }}
       }}
 
-      const hit = findNodeAt(worldX, worldY, zoom);
-
+      // 2. Проверяем клик по узлу (крылу или комнате)
+      const hit = draggedNode || findNodeAt(worldX, worldY, zoom);
       if (hit) {{
         selectNode(hit);
       }} else {{
@@ -1321,13 +1344,48 @@ PALACE_MAP_TEMPLATE = """<!DOCTYPE html>
         inspector.style.display = 'none';
         draw();
       }}
-    }});
+
+      draggedNode = null;
+      isDragging = false;
+      isDragMovement = false;
+    }}
+
+    canvas.addEventListener('mousedown', e => onPointerDown(e.clientX, e.clientY));
+    window.addEventListener('mousemove', e => onPointerMove(e.clientX, e.clientY));
+    window.addEventListener('mouseup', e => onPointerUp(e.clientX, e.clientY));
+
+    canvas.addEventListener('touchstart', e => {{
+      if (e.touches.length === 1) {{
+        onPointerDown(e.touches[0].clientX, e.touches[0].clientY);
+      }}
+    }}, {{ passive: true }});
+    window.addEventListener('touchmove', e => {{
+      if (e.touches.length === 1) {{
+        onPointerMove(e.touches[0].clientX, e.touches[0].clientY);
+      }}
+    }}, {{ passive: true }});
+    window.addEventListener('touchend', e => {{
+      const t = e.changedTouches[0] || e.touches[0];
+      onPointerUp(t ? t.clientX : startMouseX, t ? t.clientY : startMouseY);
+    }}, {{ passive: true }});
+
+    canvas.addEventListener('wheel', e => {{
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+      const newZoom = Math.max(0.2, Math.min(4.5, zoom * zoomFactor));
+      const coords = getCanvasCoords(e.clientX, e.clientY);
+      const cx = coords.cx;
+      const cy = coords.cy;
+      panX = cx - (cx - panX) * (newZoom / zoom);
+      panY = cy - (cy - panY) * (newZoom / zoom);
+      zoom = newZoom;
+      draw();
+    }}, {{ passive: false }});
 
     // Двойной клик — Zoom to fit поддерева
     canvas.addEventListener('dblclick', e => {{
-      const worldX = (e.clientX - panX) / zoom;
-      const worldY = (e.clientY - panY) / zoom;
-      const hit = findNodeAt(worldX, worldY, zoom);
+      const coords = getCanvasCoords(e.clientX, e.clientY);
+      const hit = findNodeAt(coords.worldX, coords.worldY, zoom);
       if (hit) {{
         if (hit.type === 'wing') focusOnWing(hit);
         else focusOnNode(hit);
