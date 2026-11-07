@@ -145,6 +145,28 @@ PROMPTS_FILE = os.path.join(DATA_DIR, "pdf_prompts.json")
 TRANSKRIPT_DIR = os.path.join(DATA_DIR, "transkript")
 PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
 
+# 🏰 Пути к MemPalace Core и базам данных
+MEMPALACE_CORE_DIR = os.path.expanduser(
+    (os.getenv("MEMPALACE_DIR") or "~/.mempalace").strip()
+)
+PALACE_DIR = os.path.expanduser(
+    (
+        os.getenv("MEMPALACE_PALACE_PATH")
+        or os.getenv("MEMPAL_PALACE_PATH")
+        or os.path.join(MEMPALACE_CORE_DIR, "palace")
+    ).strip()
+)
+CHROMA_DB_PATH = os.path.join(PALACE_DIR, "chroma.sqlite3")
+KG_DB_PATH = os.path.join(MEMPALACE_CORE_DIR, "knowledge_graph.sqlite3")
+
+# 🗄️ SQLite хранилища бота
+BOT_STATE_DB_PATH = os.path.join(PROJECT_ROOT, "bot_state.sqlite")
+FILE_INDEX_DB_PATH = os.path.join(DATA_DIR, "file_index.sqlite")
+NOTES_EMBEDDINGS_DB_PATH = os.path.join(DATA_DIR, "notes_embeddings.sqlite")
+MEMORY_EMBEDDINGS_DB_PATH = os.path.join(DATA_DIR, "memory_embeddings.sqlite")
+GARMIN_DATA_DIR = os.path.join(DATA_DIR, "garmin")
+GARMIN_DB_PATH = os.path.join(GARMIN_DATA_DIR, "garmin.sqlite")
+
 # 🛠️ Создание папок при старте
 for d in [
     CHATS_DIR,
@@ -156,6 +178,7 @@ for d in [
     TEMP_DIR,
     PHOTOS_DIR,
     TRANSKRIPT_DIR,
+    GARMIN_DATA_DIR,
 ]:
     os.makedirs(d, exist_ok=True)
 

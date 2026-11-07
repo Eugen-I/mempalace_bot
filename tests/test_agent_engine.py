@@ -385,7 +385,47 @@ async def test_generic_model_failure(monkeypatch):
 
 async def test_unsupported_engine_raises():
     with pytest.raises(ae.AgentEngineError):
-        await ae.run_agent("sys", "user", engine="gemini", model="gemini-flash")
+        await ae.run_agent("sys", "user", engine="unsupported", model="unsupported-model")
+
+
+async def test_openai_engine_success(fake_model, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+    _register_test_tool()
+    fake_model.script.append(_tool_call("test_tool", '{"value": "openai_val"}'))
+    fake_model.script.append(_content("OpenAI Готово"))
+
+    result = await ae.run_agent(
+        system_prompt="sys", user_prompt="user",
+        engine="openai", model="gpt-4o",
+    )
+    assert result.finished_reason == "answer"
+    assert result.final_answer == "OpenAI Готово"
+    assert result.steps[0].calls[0]["arguments"] == {"value": "openai_val"}
+
+
+async def test_gemini_engine_success(fake_model, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    _register_test_tool()
+    fake_model.script.append(_tool_call("test_tool", '{"value": "gemini_val"}'))
+    fake_model.script.append(_content("Gemini Готово"))
+
+    result = await ae.run_agent(
+        system_prompt="sys", user_prompt="user",
+        engine="gemini", model="gemini-2.0-flash",
+    )
+    assert result.finished_reason == "answer"
+    assert result.final_answer == "Gemini Готово"
+    assert result.steps[0].calls[0]["arguments"] == {"value": "gemini_val"}
+
+
+async def test_missing_api_key_returns_error(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    result = await ae.run_agent(
+        system_prompt="sys", user_prompt="user",
+        engine="openai", model="gpt-4o",
+    )
+    assert result.finished_reason == "error"
+    assert "OPENAI_API_KEY not set" in result.error
 
 
 # ─── Прочее ───

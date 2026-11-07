@@ -12,11 +12,16 @@ import threading
 import time
 from typing import Any
 
+from services.db_pool import apply_pragmas
+
 logger = logging.getLogger("KVStore")
 
-_DB_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot_state.sqlite",
-)
+try:
+    from config import BOT_STATE_DB_PATH as _DB_PATH
+except Exception:
+    _DB_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot_state.sqlite",
+    )
 
 
 class KVStore:
@@ -34,8 +39,7 @@ class KVStore:
     def _get_conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn") or self._local.conn is None:
             self._local.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self._local.conn.execute("PRAGMA journal_mode=WAL")
-            self._local.conn.execute("PRAGMA synchronous=NORMAL")
+            apply_pragmas(self._local.conn)
         return self._local.conn
 
     def close(self):

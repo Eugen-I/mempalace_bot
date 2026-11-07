@@ -266,3 +266,16 @@ def test_config_cleans_key_value_data_dir(monkeypatch):
     monkeypatch.setattr(config.os.path, "expanduser", lambda p: p)
     importlib.reload(config)
     assert config.DATA_DIR == "/tmp/configtest"
+
+
+def test_config_palace_and_core_paths(monkeypatch):
+    monkeypatch.setenv("MEMPALACE_DIR", "/custom/mempalace")
+    monkeypatch.setenv("MEMPALACE_PALACE_PATH", "/custom/mempalace/palace_override")
+    monkeypatch.setattr(config.os, "makedirs", lambda *a, **k: None)
+    monkeypatch.setattr(config.os.path, "expanduser", lambda p: p)
+    importlib.reload(config)
+    assert config.MEMPALACE_CORE_DIR == "/custom/mempalace"
+    assert config.PALACE_DIR == "/custom/mempalace/palace_override"
+    assert config.CHROMA_DB_PATH == "/custom/mempalace/palace_override/chroma.sqlite3"
+    assert config.KG_DB_PATH == "/custom/mempalace/knowledge_graph.sqlite3"
+    assert config.BOT_STATE_DB_PATH.endswith("bot_state.sqlite")

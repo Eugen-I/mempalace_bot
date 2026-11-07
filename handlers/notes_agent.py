@@ -11,6 +11,7 @@
 """
 
 import asyncio
+import json
 import logging
 import re
 import secrets
@@ -22,7 +23,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import allowed_callback
 from handlers.palace._utils import safe_edit_text, safe_send
 from services import agent_engine as ae
-from services.agent_tools import CAT_NOTES
+from services.agent_tools import CAT_NOTES, CAT_PALACE, CAT_SYSTEM
 from services.text_formatter import safe_html_format
 from services.ttl_dict import TtlDict
 
@@ -35,22 +36,25 @@ CONFIRM_TIMEOUT = 120  # секунд на подтверждение
 SURREAL_TRIGGERS = ("творческий штурм", "сюрреалистичный штурм", "сюрштурм")
 
 NOTES_AGENT_SYSTEM_PROMPT = (
-    "Ты — агент для работы с заметками Apple Notes в MemPalace. "
+    "Ты — интеллектуальный агент персональной базы знаний MemPalace и Apple Notes. "
     "Отвечай на русском языке.\n"
     "Правила:\n"
-    "- Работай ТОЛЬКО с заметками Apple Notes (notes_search, notes_list, "
+    "- Тебе доступны как заметки Apple Notes (notes_search, notes_list, "
     "notes_read, notes_create, notes_update, notes_delete, notes_move, "
-    "notes_list_folders). Дворец и другие базы знаний тебе недоступны.\n"
+    "notes_list_folders), так и база знаний Дворца Памяти (mp_search, mp_kg_query, "
+    "mp_drawer_read, mp_kg_timeline, mp_kg_stats, palace_create_tunnel, "
+    "palace_kg_add_fact, palace_summarize_room, palace_move_drawer). "
+    "Используй их согласованно для поиска, организации и синтеза знаний.\n"
     "- Перед вызовом любого write-инструмента (notes_create, notes_update, "
-    "notes_delete, notes_move) ВСЕГДА объясни пользователю, что собираешься "
-    "сделать, и попроси подтверждения.\n"
+    "notes_delete, notes_move, palace_create_tunnel, palace_kg_add_fact, palace_move_drawer) "
+    "ВСЕГДА объясни пользователю, что собираешься сделать, и попроси подтверждения.\n"
     "- Для notes_update/notes_delete сначала получи note_id через "
     "notes_search или notes_list.\n"
     "- Определяй язык текста пользователя автоматически: русский или "
     "немецкий. Азиатские языки (китайский, японский, корейский) НЕ "
     "поддерживаются — вежливо откажись от создания заметки на таком языке.\n"
     "- Цитируй дословные фрагменты из заметок в кавычках и указывай "
-    "название заметки — пользователь должен видеть, откуда взят ответ.\n"
+    "название заметки или источника во Дворце — пользователь должен видеть, откуда взят ответ.\n"
     "- Не выдумывай факты: если данных нет — честно скажи об этом.\n"
     "- Если инструмент вернул ошибку — сообщи о ней и предложи альтернативу.\n"
     "- Отвечай структурированно и по делу, не более 500 слов."
@@ -66,6 +70,8 @@ _notes_list_store: TtlDict = TtlDict(ttl=1800)
 _notes_discuss_ctx: TtlDict = TtlDict(ttl=900)
 # uid -> {"idx", "name", "folder", "pages": [...], "page"} — открытая заметка
 _notes_view_store: TtlDict = TtlDict(ttl=900)
+# uid -> {"idx", "note_id", "title", "body", "wing", "room"} — связывание с Дворцом
+_notes_link_store: TtlDict = TtlDict(ttl=900)
 
 _NOTE_ROW_RE = re.compile(
     r"^-\s*(.*?)\s*\[id=([^\]]+)\](?:\s*\(папка:\s*([^)]*)\))?"
@@ -219,6 +225,11 @@ def _build_note_view_kb(
             text="💾 В MemPalace", callback_data=f"notes_save:{idx}",
         ),
         types.InlineKeyboardButton(
+            text="🔗 Связать с Дворцом", callback_data=f"notes_link:{idx}",
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
             text="← К списку", callback_data=f"notes_back:{idx}",
         ),
     )
@@ -277,6 +288,31 @@ def _describe_action(name: str, arguments: dict) -> str:
         return (
             f"📂 <b>Переместить заметку</b>\n"
             f"ID: <code>{note_id}</code>\n→ Папка: <b>{folder}</b>"
+        )
+    if name == "palace_create_tunnel":
+        w_a = safe_html_format(str(args.get("wing_a", "")))
+        r_a = safe_html_format(str(args.get("room_a", "")))
+        w_b = safe_html_format(str(args.get("wing_b", "")))
+        r_b = safe_html_format(str(args.get("room_b", "")))
+        return (
+            f"🔄 <b>Создать туннель во Дворце</b>\n"
+            f"Откуда: <code>{w_a}/{r_a}</code>\nКуда: <code>{w_b}/{r_b}</code>"
+        )
+    if name == "palace_kg_add_fact":
+        sub = safe_html_format(str(args.get("subject", "")))
+        pred = safe_html_format(str(args.get("predicate", "")))
+        obj = safe_html_format(str(args.get("object", "")))
+        return (
+            f"🧠 <b>Добавить факт в Граф Знаний</b>\n"
+            f"<code>{sub} → {pred} → {obj}</code>"
+        )
+    if name == "palace_move_drawer":
+        did = safe_html_format(str(args.get("drawer_id", "")))
+        tw = safe_html_format(str(args.get("target_wing", "")))
+        tr = safe_html_format(str(args.get("target_room", "")))
+        return (
+            f"📦 <b>Переместить ящик во Дворце</b>\n"
+            f"Ящик: <code>{did}</code>\nВ: <code>{tw}/{tr}</code>"
         )
     return f"Инструмент <code>{name}</code>: {safe_html_format(str(arguments)[:200])}"
 
@@ -344,8 +380,9 @@ def _make_confirm_write(uid: int, status_msg):
 
 async def _run_notes_agent_reply(
     uid: int, status_msg, question: str,
+    allowed_categories: tuple | None = None,
 ) -> ae.AgentResult:
-    """Статус → run_agent (CAT_NOTES, confirm_write) → finalize_answer.
+    """Статус → run_agent (CAT_NOTES + CAT_PALACE + CAT_SYSTEM, confirm_write) → finalize_answer.
 
     Всегда возвращает AgentResult, включая ошибки (``ok=False``).
     """
@@ -354,11 +391,16 @@ async def _run_notes_agent_reply(
     async def status_cb(text: str):
         await _status_edit(status_msg, text)
 
+    cats = (
+        allowed_categories
+        if allowed_categories is not None
+        else (CAT_NOTES, CAT_PALACE, CAT_SYSTEM)
+    )
     try:
         result = await ae.run_agent(
             NOTES_AGENT_SYSTEM_PROMPT,
             question,
-            allowed_categories=(CAT_NOTES,),
+            allowed_categories=cats,
             include_write=True,
             confirm_write=_make_confirm_write(uid, status_msg),
             status_cb=status_cb,
@@ -834,6 +876,9 @@ async def cb_notes_save(cb: types.CallbackQuery):
         "room": "",
         "wings": [],
         "rooms": [],
+        "source_id": str(note["id"]),
+        "source_type": "apple_notes",
+        "source_title": note.get("name") or "Заметка",
     }
     # Заметка остаётся на месте: выбор крыла/комнаты идёт в новом сообщении.
     wings_msg = await safe_send(
@@ -847,6 +892,157 @@ async def cb_notes_save(cb: types.CallbackQuery):
     if wings_msg is None:
         return
     await _show_save_wings(wings_msg.edit_text, cb.from_user.id)
+
+
+@router.callback_query(F.data.startswith("notes_link:"))
+@allowed_callback
+async def cb_notes_link(cb: types.CallbackQuery):
+    """🔗 Автоматический подбор комнаты и связывание Apple Note с Дворцом."""
+    await cb.answer()
+    guard = await _note_action_guard(cb)
+    if guard is None:
+        return
+    idx, note = guard
+    note_id = note["id"]
+    from services import apple_notes
+
+    try:
+        data = await asyncio.to_thread(apple_notes.read_note, note_id)
+        body = str(data.get("body") or "")
+        title = str(note.get("name") or data.get("name") or "Заметка")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[NOTES-AGENT] link note %s read failed: %s", note_id, exc)
+        body = ""
+        title = "Заметка"
+
+    if not body.strip():
+        await safe_edit_text(
+            cb.message,
+            "❌ Текст заметки недоступен — связать нечего.",
+        )
+        return
+
+    await safe_edit_text(cb.message, "⏳ Анализирую заметку и структуру Дворца...")
+
+    from services.notes_sync import recommend_room_for_note
+
+    rec = await recommend_room_for_note(title, body)
+    wing = rec.get("wing", "my_notes")
+    room = rec.get("room", "inbox")
+    reason = rec.get("reason", "")
+
+    uid = cb.from_user.id
+    _notes_link_store[uid] = {
+        "idx": idx,
+        "note_id": note_id,
+        "title": title,
+        "body": body,
+        "wing": wing,
+        "room": room,
+    }
+
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text=f"✅ Привязать ({wing}/{room})",
+            callback_data=f"notes_link_confirm:{idx}",
+        )
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="✏️ Выбрать другое крыло",
+            callback_data=f"notes_save:{idx}",
+        ),
+        types.InlineKeyboardButton(
+            text="← К заметке",
+            callback_data=f"notes_view:{idx}",
+        ),
+    )
+
+    reason_part = f"\n<i>→ {safe_html_format(reason)}</i>" if reason else ""
+    msg = (
+        f"🔗 <b>Связывание с Дворцом Памяти</b>\n\n"
+        f"📄 <b>{safe_html_format(title)}</b>\n\n"
+        f"🏛 <b>Рекомендованная локация:</b>\n"
+        f"Крыло: <code>{safe_html_format(wing)}</code>\n"
+        f"Комната: <code>{safe_html_format(room)}</code>"
+        f"{reason_part}\n\n"
+        f"Создать ящик во Дворце с обратной ссылкой?"
+    )
+    await safe_edit_text(cb.message, msg, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("notes_link_confirm:"))
+@allowed_callback
+async def cb_notes_link_confirm(cb: types.CallbackQuery):
+    """Подтверждение связывания заметки с предложенной комнатой."""
+    await cb.answer()
+    uid = cb.from_user.id
+    st = _notes_link_store.pop(uid, None)
+    if not st:
+        await safe_edit_text(cb.message, "❌ Сессия истекла. Откройте заметку заново.")
+        return
+
+    idx = st["idx"]
+    note_id = st["note_id"]
+    title = st["title"]
+    body = st["body"]
+    wing = st["wing"]
+    room = st["room"]
+    full_content = f"📄 {title}\n\n{body}"
+
+    await safe_edit_text(cb.message, "⏳ Создаю ящик во Дворце и привязываю заметку...")
+
+    try:
+        from services.palace_mcp import get_mcp
+        from services.notes_sync import record_backlink
+
+        mcp = get_mcp()
+        raw = await mcp.call_tool(
+            "mempalace_add_drawer",
+            {
+                "wing": wing,
+                "room": room,
+                "content": full_content,
+                "source_id": str(note_id),
+                "source_type": "apple_notes",
+                "source_file": f"notes://showNote?identifier={note_id}",
+            },
+        )
+        parsed = json.loads(raw or "{}")
+        drawer_id = parsed.get("drawer_id", "")
+        if drawer_id:
+            record_backlink(
+                drawer_id=drawer_id,
+                source_type="apple_notes",
+                source_id=str(note_id),
+                wing=wing,
+                room=room,
+                content=full_content,
+                title=title,
+            )
+
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="← Вернуться к заметке",
+                callback_data=f"notes_view:{idx}",
+            )
+        )
+        await safe_edit_text(
+            cb.message,
+            f"✅ <b>Заметка успешно связана с Дворцом!</b>\n\n"
+            f"📄 <b>{safe_html_format(title)}</b>\n"
+            f"🏛 Локация: <code>{safe_html_format(wing)}/{safe_html_format(room)}</code>\n"
+            f"🆔 Ящик: <code>{safe_html_format(drawer_id)}</code>\n\n"
+            "<i>При изменении заметки в Apple Notes данные во Дворце "
+            "будут автоматически обновляться.</i>",
+            parse_mode="HTML",
+            reply_markup=kb.as_markup(),
+        )
+    except Exception as exc:
+        logger.error("[NOTES-AGENT] link confirm error: %s", exc, exc_info=True)
+        await safe_edit_text(cb.message, f"❌ Ошибка связывания: {exc}")
 
 
 @router.callback_query(F.data.startswith("notes_stop:"))

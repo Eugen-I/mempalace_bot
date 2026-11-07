@@ -33,6 +33,7 @@ from handlers.personal_note import (
 from handlers.reminder import handle_reminder_text
 from handlers.search import search_result_cache as _search_result_cache
 from handlers.transkript import _tr_ai_waiting, handle_tr_ai_question
+from services import ai_engine
 from services.ai_cache import cache_ai_response
 from services.ai_engine import (
     AIStreamEvent,
@@ -41,6 +42,7 @@ from services.ai_engine import (
 )
 from services.auto_sync import auto_sync_chat
 from services.bot_setup import bot
+from services.bot_setup import pending_room_filter as _pending_room_filter
 from services.bot_setup import pending_web_search as _pending_web_search
 from services.bot_setup import pending_wing_search as _pending_wing_search
 from services.bot_setup import sync_counter as _sync_counter
@@ -69,6 +71,7 @@ from services.note_linker import schedule_linking
 from services.palace_bridge import search_with_kg_status
 from services.palace_mcp import get_mcp as _get_mcp
 from services.prompts import get_smart_prompt
+from services.query_rewriter import rewrite_query_for_search
 from services.semantic_cache import get_cache
 from services.sender import send_response_with_mode
 from services.summary_service import SummaryMode, generate_summary
@@ -295,6 +298,65 @@ async def process_user_message(message: types.Message):
             get_kv_store(), uid, (data or {}).get("theme", ""), text,
         )
         return await message.answer(reply)
+
+    # 0c2. Ожидание текста для фильтрации комнат в крыле
+    if uid in _pending_room_filter:
+        wing = _pending_room_filter.pop(uid)
+        st = await message.answer(f"🔎 Ищу комнаты в крыле {wing}...")
+        try:
+            from services.palace_mcp import get_mcp
+            from handlers.palace.navigation import (
+                _build_room_callback_data,
+                _build_wing_callback_data,
+                render_breadcrumbs,
+            )
+            mcp = get_mcp()
+            raw = await mcp.call_tool("mempalace_list_rooms", {"wing": wing})
+            parsed = json.loads(raw) if raw else {}
+            rooms = parsed.get("rooms", {})
+            query_lower = text.strip().lower()
+            matched = {r: cnt for r, cnt in rooms.items() if query_lower in r.lower()}
+
+            kb = InlineKeyboardBuilder()
+            if not matched:
+                kb.row(types.InlineKeyboardButton(
+                    text="🔎 Попробовать снова", callback_data=f"p_rmsrch:{wing}",
+                ))
+                kb.row(types.InlineKeyboardButton(
+                    text=f"◀️ К комнатам {wing}", callback_data=_build_wing_callback_data(wing),
+                ))
+                await st.edit_text(
+                    f"❌ В крыле «<b>{wing}</b>» не найдено комнат, "
+                    f"содержащих «<code>{text.strip()}</code>».",
+                    parse_mode="HTML",
+                    reply_markup=kb.as_markup(),
+                )
+                return None
+
+            lines = [
+                render_breadcrumbs(wing=wing),
+                f"🔎 <b>Найдено комнат ({len(matched)}) по запросу «{text.strip()}»:</b>\n",
+            ]
+            sorted_matched = sorted(matched.items(), key=lambda x: x[1], reverse=True)
+            for i, (r, cnt) in enumerate(sorted_matched[:25], 1):
+                lines.append(f"  {i}. <b>{safe_html_format(r)}</b> — {cnt} записей")
+                kb.row(types.InlineKeyboardButton(
+                    text=f"📖 {r}", callback_data=_build_room_callback_data(wing, r),
+                ))
+            kb.row(types.InlineKeyboardButton(
+                text="🔎 Другой фильтр", callback_data=f"p_rmsrch:{wing}",
+            ))
+            kb.row(types.InlineKeyboardButton(
+                text=f"◀️ Все комнаты {wing}", callback_data=_build_wing_callback_data(wing),
+            ))
+
+            await st.edit_text(
+                "\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup(),
+            )
+        except Exception as e:
+            logger.warning("[ROOM_FILTER] Ошибка фильтрации комнат: %s", e, exc_info=True)
+            await st.edit_text(format_user_error(e, "room_filter"))
+        return None
 
     # 0d. Ожидание текста для поиска по крылу
     if uid in _pending_wing_search:
@@ -705,8 +767,18 @@ async def process_user_message(message: types.Message):
             logger.info("[USER_CONTEXT] No user context, using regular search")
 
         if not palace_context and deg.should_use_palace():
+            search_q = clean_q
+            if msgs and stream_ai_events_async is ai_engine.stream_ai_events_async:
+                try:
+                    search_q = await rewrite_query_for_search(
+                        clean_q,
+                        recent_messages=msgs[-4:],
+                    )
+                except Exception as rw_exc:
+                    logger.debug("[QUERY_REWRITE] rewrite skipped: %s", rw_exc)
+
             palace_context, palace_available = await search_with_kg_status(
-                clean_q, limit=5, wing=target_wing,
+                search_q, limit=5, wing=target_wing,
             )
             if not palace_available:
                 # Пустой ответ при available=True — это «нет данных», не отказ.

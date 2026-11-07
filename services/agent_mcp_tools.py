@@ -199,3 +199,153 @@ async def _mp_diary_read(args: dict) -> str:
 )
 async def _mp_check_duplicate(args: dict) -> str:
     return await _call("mempalace_check_duplicate", args)
+
+
+@register_tool(
+    "palace_create_tunnel",
+    "Создать туннель (смысловую связь) между двумя комнатами во Дворце памяти. "
+    "Например, связать концепцию из проекта А с архитектурой из проекта Б.",
+    schema={
+        "type": "object",
+        "properties": {
+            "wing_a": {"type": "string", "description": "Крыло источника"},
+            "room_a": {"type": "string", "description": "Комната источника"},
+            "wing_b": {"type": "string", "description": "Крыло назначения"},
+            "room_b": {"type": "string", "description": "Комната назначения"},
+            "reason": {
+                "type": "string",
+                "description": "Причина связи или описание туннеля (необязательно)",
+            },
+        },
+        "required": ["wing_a", "room_a", "wing_b", "room_b"],
+    },
+    category=CAT_PALACE,
+    is_write=True,
+)
+async def _palace_create_tunnel(args: dict) -> str:
+    mcp_args = {
+        "source_wing": args.get("wing_a", ""),
+        "source_room": args.get("room_a", ""),
+        "target_wing": args.get("wing_b", ""),
+        "target_room": args.get("room_b", ""),
+        "label": args.get("reason", ""),
+    }
+    return await _call("mempalace_create_tunnel", mcp_args)
+
+
+@register_tool(
+    "palace_kg_add_fact",
+    "Зафиксировать новый факт в графе знаний (KG). Например: "
+    "субъект='Алексей', предикат='работает_над', объект='проектом_Х'.",
+    schema={
+        "type": "object",
+        "properties": {
+            "subject": {"type": "string", "description": "Субъект (сущность)"},
+            "predicate": {
+                "type": "string",
+                "description": "Предикат (связь, например 'работает_над', 'создал')",
+            },
+            "object": {"type": "string", "description": "Объект (целевая сущность или значение)"},
+        },
+        "required": ["subject", "predicate", "object"],
+    },
+    category=CAT_PALACE,
+    is_write=True,
+)
+async def _palace_kg_add_fact(args: dict) -> str:
+    mcp_args = {
+        "subject": args.get("subject", ""),
+        "predicate": args.get("predicate", ""),
+        "object": args.get("object", ""),
+    }
+    return await _call("mempalace_kg_add", mcp_args)
+
+
+@register_tool(
+    "palace_summarize_room",
+    "Синтезировать и обобщить всё содержание комнаты во Дворце памяти.",
+    schema={
+        "type": "object",
+        "properties": {
+            "wing": {"type": "string", "description": "Крыло Дворца"},
+            "room": {"type": "string", "description": "Комната в крыле"},
+        },
+        "required": ["wing", "room"],
+    },
+    category=CAT_PALACE,
+    is_write=False,
+)
+async def _palace_summarize_room(args: dict) -> str:
+    wing = args.get("wing", "")
+    room = args.get("room", "")
+    try:
+        raw_list = await get_mcp().call_tool(
+            "mempalace_list_drawers",
+            {"wing": wing, "room": room, "limit": 100, "offset": 0},
+        )
+        import json
+        data = json.loads(raw_list) if raw_list else {}
+        drawers = data.get("drawers", [])
+        if not drawers:
+            return f"В комнате {wing}/{room} нет записей для обобщения."
+
+        texts = []
+        for d in drawers:
+            name = d.get("closet_name") or d.get("title") or d.get("name") or d.get("drawer_id")
+            preview = d.get("content") or d.get("snippet") or d.get("preview") or ""
+            texts.append(f"Запись «{name}»:\n{preview[:600]}")
+        notes_text = "\n\n---\n\n".join(texts)
+
+        from services.summary_service import SummaryMode, generate_summary
+        from services.ai_engine import get_current_ai
+        engine, model = get_current_ai()
+        summary = await generate_summary(
+            SummaryMode.ROOM,
+            engine=engine,
+            model=model,
+            text=notes_text,
+            wing=wing,
+            room=room,
+        )
+        return summary
+    except Exception as exc:
+        logger.warning("[AGENT] palace_summarize_room failed: %s", exc)
+        return f"Не удалось обобщить комнату {wing}/{room}: {exc}"
+
+
+@register_tool(
+    "palace_move_drawer",
+    "Переместить ящик (запись) в другое крыло или комнату во Дворце.",
+    schema={
+        "type": "object",
+        "properties": {
+            "drawer_id": {"type": "string", "description": "ID перемещаемого ящика"},
+            "target_wing": {"type": "string", "description": "Новое крыло"},
+            "target_room": {"type": "string", "description": "Новая комната"},
+        },
+        "required": ["drawer_id", "target_wing", "target_room"],
+    },
+    category=CAT_PALACE,
+    is_write=True,
+)
+async def _palace_move_drawer(args: dict) -> str:
+    did = args.get("drawer_id", "")
+    t_wing = args.get("target_wing", "")
+    t_room = args.get("target_room", "")
+    res = await _call("mempalace_update_drawer", {"drawer_id": did, "wing": t_wing, "room": t_room})
+    try:
+        from services.notes_sync import get_backlink_by_drawer, record_backlink
+        bl = get_backlink_by_drawer(did)
+        if bl:
+            record_backlink(
+                drawer_id=did,
+                source_type=bl["source_type"],
+                source_id=bl["source_id"],
+                wing=t_wing,
+                room=t_room,
+                content="",
+                title=bl.get("source_title", ""),
+            )
+    except Exception as exc:
+        logger.debug("[AGENT] failed updating backlink for moved drawer: %s", exc)
+    return res

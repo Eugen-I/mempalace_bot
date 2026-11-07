@@ -14,6 +14,7 @@ from services.palace_mcp import get_mcp
 from services.summary_service import SummaryMode, generate_summary
 from services.text_formatter import safe_html_format
 from services.ttl_dict import TtlDict
+from services.ui_cache import UICallbackCache
 
 from ._utils import safe_edit_text
 from .shared import (
@@ -32,8 +33,8 @@ logger = logging.getLogger(__name__)
 
 _drawer_list_state: TtlDict = TtlDict()
 _active_drawer: TtlDict = TtlDict()
-_room_callback_map: TtlDict = TtlDict()
-_wing_callback_map: TtlDict = TtlDict()
+_room_callback_map: UICallbackCache = UICallbackCache(namespace="palace_rooms")
+_wing_callback_map: UICallbackCache = UICallbackCache(namespace="palace_wings")
 
 
 def _encode_callback_part(value: str) -> str:
@@ -86,8 +87,8 @@ def _decode_room_callback_data(data: str):
     if data.startswith(prefix):
         key = data[len(prefix):]
         pair = _room_callback_map.get(key)
-        if pair:
-            return pair
+        if pair and len(pair) == 2:
+            return pair[0], pair[1]
         return _legacy_decode_room(data)
     return "", ""
 
@@ -100,6 +101,35 @@ def _legacy_decode_room(data: str):
         wing_payload, room_payload = payload.split(":", 1)
         return _decode_callback_part(wing_payload), _decode_callback_part(room_payload)
     return _decode_callback_part(payload), ""
+
+
+def render_breadcrumbs(
+    wing: str = "", room: str = "", drawer: str = "", section: str = ""
+) -> str:
+    """Формирует строку «хлебных крошек» для ориентации в Telegram UI.
+
+    Пример: 🏰 Дворец › 🕸️ Наука › 📁 Физика › 📄 Квантовая механика
+    """
+    parts = ["🏰 <b>Дворец</b>"]
+    if section:
+        parts.append(f"<b>{safe_html_format(section)}</b>")
+    if wing:
+        tag_w = (
+            f"🕸️ <b>{safe_html_format(wing)}</b>"
+            if not room
+            else f"🕸️ {safe_html_format(wing)}"
+        )
+        parts.append(tag_w)
+    if room:
+        tag_r = (
+            f"📁 <b>{safe_html_format(room)}</b>"
+            if not drawer
+            else f"📁 {safe_html_format(room)}"
+        )
+        parts.append(tag_r)
+    if drawer:
+        parts.append(f"📄 <b>{safe_html_format(drawer)}</b>")
+    return " › ".join(parts) + "\n\n"
 
 
 async def _report_ai_error(msg, exc: Exception) -> None:
@@ -153,7 +183,7 @@ async def cb_list_wings(cb: types.CallbackQuery):
             wing_names = list(wings)
         uid = cb.from_user.id
         _wing_cache[uid] = wing_names
-        lines = ["<b>🕸️ Крылья MemPalace:</b>\n"]
+        lines = [render_breadcrumbs(section="Крылья") + "<b>🕸️ Крылья MemPalace:</b>\n"]
 
         for w in wing_names:
             count = wings[w] if isinstance(wings, dict) else ""
@@ -187,7 +217,9 @@ async def cb_rooms_menu(cb: types.CallbackQuery):
         else:
             wing_names = list(wdata)
 
-        lines = ["<b>🪪 Все комнаты:</b>\n"]
+        lines = [
+            f"<b>🪪 Все комнаты:</b>\n<i>{render_breadcrumbs(section='Комнаты').strip()}</i>\n",
+        ]
         kb = InlineKeyboardBuilder()
         for w in wing_names:
             raw_rooms = await mcp.call_tool("mempalace_list_rooms", {"wing": w})
@@ -247,7 +279,9 @@ async def cb_rooms_select(cb: types.CallbackQuery):
     if truncated:
         sorted_rooms = sorted_rooms[:room_limit]
 
-    lines = [f"🪪 <b>Комнаты крыла {wing}:</b>\n"]
+    lines = [
+        f"🪪 <b>Комнаты крыла {wing}:</b>\n<i>{render_breadcrumbs(wing=wing).strip()}</i>\n",
+    ]
     kb = InlineKeyboardBuilder()
     for i, (r, count) in enumerate(sorted_rooms, 1):
         lines.append(f"  {i}. <b>{safe_html_format(r)}</b> — {count} записей")
@@ -256,6 +290,7 @@ async def cb_rooms_select(cb: types.CallbackQuery):
         ))
     if truncated:
         lines.append(f"\n... и ещё {len(rooms) - room_limit} комнат.")
+    kb.row(types.InlineKeyboardButton(text="🔎 Фильтр комнат", callback_data=f"p_rmsrch:{wing}"))
     kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_wing"))
     ok = await safe_edit_text(
         cb.message, "\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup()
@@ -264,6 +299,30 @@ async def cb_rooms_select(cb: types.CallbackQuery):
         await cb.message.answer(
             "\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup()
         )
+
+
+@router.callback_query(F.data.startswith("p_rmsrch:"))
+@allowed_callback
+async def cb_room_search_prompt(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    wing = cb.data.split(":", 1)[1]
+    from services.bot_setup import pending_room_filter
+    uid = cb.from_user.id
+    pending_room_filter[uid] = wing
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(
+        text="◀️ Назад к комнатам", callback_data=_build_wing_callback_data(wing),
+    ))
+    await safe_edit_text(
+        cb.message,
+        render_breadcrumbs(wing=wing)
+        + f"🔎 <b>Поиск комнаты в крыле «{safe_html_format(wing)}»</b>\n\n"
+        "Введите текст или часть названия комнаты в чат:",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
 
 
 @router.callback_query(F.data.startswith("p_rd_room:"))
@@ -497,7 +556,7 @@ async def cb_graph(cb: types.CallbackQuery):
         total_records = sum(rooms_per_wing.values()) if rooms_per_wing else 0
 
         lines = [
-            "<b>📊 Статистика графа:</b>",
+            render_breadcrumbs(section="Граф связей") + "<b>📊 Статистика графа:</b>",
             f"  • Крыльев: {total_wings}",
             f"  • Комнат: {total_rooms}",
             f"  • Записей: {total_records}",
@@ -512,6 +571,9 @@ async def cb_graph(cb: types.CallbackQuery):
         await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
         return
     kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(
+        text="🗺️ Скачать карту (.html)", callback_data="p_export_map",
+    ))
     if tunnel_rooms:
         kb.row(types.InlineKeyboardButton(text="🔗 Туннели", callback_data="p_tl"))
     kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_nav"))
@@ -519,6 +581,48 @@ async def cb_graph(cb: types.CallbackQuery):
         cb.message, "\n".join(lines),
         parse_mode="HTML", reply_markup=kb.as_markup(),
     )
+
+
+@router.callback_query(F.data == "p_export_map")
+@allowed_callback
+async def cb_export_map(cb: types.CallbackQuery):
+    await cb.answer("Генерирую интерактивную карту...")
+    try:
+        from services.palace_visualizer import generate_palace_map_html
+        mcp = get_mcp()
+        raw_wings = await mcp.call_tool("mempalace_list_wings")
+        parsed_w = json.loads(raw_wings) if raw_wings else {}
+        wdata = parsed_w.get("wings", parsed_w) if isinstance(parsed_w, dict) else parsed_w
+
+        raw_tunnels = await mcp.call_tool("mempalace_list_tunnels")
+        parsed_t = json.loads(raw_tunnels) if raw_tunnels else []
+        if isinstance(parsed_t, dict) and "tunnels" in parsed_t:
+            parsed_t = parsed_t["tunnels"]
+
+        rooms_by_wing = {}
+        for w in (wdata.keys() if isinstance(wdata, dict) else wdata):
+            try:
+                raw_r = await mcp.call_tool("mempalace_list_rooms", {"wing": w})
+                rp = json.loads(raw_r) if raw_r else {}
+                rooms_by_wing[w] = rp.get("rooms", {})
+            except Exception:
+                rooms_by_wing[w] = {}
+
+        html_content = generate_palace_map_html(wdata, rooms_by_wing, parsed_t)
+        html_bytes = html_content.encode("utf-8")
+
+        caption = (
+            "🗺️ <b>Интерактивная карта комнат и туннелей Дворца памяти</b>\n\n"
+            "Откройте файл в браузере для просмотра интерактивного графа."
+        )
+        await cb.message.answer_document(
+            types.BufferedInputFile(html_bytes, filename="palace_map.html"),
+            caption=caption,
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("[MAP_EXPORT] Ошибка экспорта карты: %s", e, exc_info=True)
+        await cb.message.answer(f"❌ Ошибка экспорта карты: {e}")
 
 
 # ─── DRAWERS ───
@@ -553,14 +657,28 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
                 reply_markup=kb.as_markup(),
             )
 
-        lines = [f"<b>📖 Записи в {wing}/{room}</b>  ({total} записей)\n"]
+        lines = [
+            f"<b>📖 Записи в {wing}/{room}</b>  ({total} записей)\n"
+            f"<i>{render_breadcrumbs(wing=wing, room=room).strip()}</i>\n",
+        ]
         for i, d in enumerate(drawers):
             name = (d.get("closet_name") or d.get("title") or d.get("name", ""))
-            preview = d.get("content_preview", "") or d.get("content", "")[:80]
+            preview = d.get("content_preview", "") or d.get("content", "")[:300]
+            date_val = d.get("created_at") or d.get("date") or d.get("timestamp") or ""
+            tags = d.get("tags") or d.get("keywords") or []
             safe_n = safe_html_format(name or preview[:60])
-            lines.append(f"{offset + i + 1}. <b>{safe_n}</b>")
+            lines.append(f"{offset + i + 1}. 📄 <b>{safe_n}</b>")
+            meta_chips = []
+            if date_val:
+                meta_chips.append(f"📅 {safe_html_format(str(date_val)[:10])}")
+            if tags:
+                tag_str = ", ".join(tags[:3]) if isinstance(tags, list) else str(tags)
+                meta_chips.append(f"🏷️ {safe_html_format(tag_str)}")
+            if meta_chips:
+                lines.append(f"   <i>{' · '.join(meta_chips)}</i>")
             if preview:
-                lines.append(f"   {safe_html_format(preview[:120])}")
+                clean_prev = preview.strip().replace("\n", " ")
+                lines.append(f"   {safe_html_format(clean_prev[:250])}")
 
         extra_rows = []
         for i, d in enumerate(drawers):
@@ -629,7 +747,7 @@ async def cb_read_drawer(cb: types.CallbackQuery):
                 if drawers and idx < len(drawers):
                     _drawer_list_state[uid] = {
                         "wing": ctx["wing"], "room": ctx["room"],
-                        "offset": 0, "total": parsed.get("count", 0),
+                        "offset": 0, "total": parsed.get("total") or parsed.get("count", 0),
                         "drawers": drawers,
                     }
                     state = _drawer_list_state.get(uid)
@@ -652,14 +770,32 @@ async def cb_read_drawer(cb: types.CallbackQuery):
         )
         parsed = json.loads(raw) if raw else {}
         text = ""
+        meta = {}
         if isinstance(parsed, dict) and "content" in parsed:
             text = parsed["content"]
+            meta = parsed.get("metadata") or {}
         elif isinstance(parsed, str):
             text = parsed
+
+        source_id = str(meta.get("source_id") or "")
+        source_type = str(meta.get("source_type") or "")
+        source_title = str(meta.get("source_title") or "")
+        if not source_id and drawer_id:
+            try:
+                from services.notes_sync import get_backlink_by_drawer
+                bl = get_backlink_by_drawer(drawer_id)
+                if bl:
+                    source_id = bl.get("source_id", "")
+                    source_type = bl.get("source_type", "")
+                    source_title = bl.get("source_title", "")
+            except Exception:
+                pass
+
         _read_state[uid] = {
             "room": room, "wing": wing, "drawer": drawer_name,
             "drawer_id": drawer_id, "source": "", "full_content": text,
             "offset": 0, "idx": idx,
+            "source_id": source_id, "source_type": source_type, "source_title": source_title,
         }
         _user_context[uid] = {"wing": wing, "room": room, "drawer": drawer_name}
 
@@ -683,14 +819,31 @@ async def _show_drawer_content(
             await cb.message.answer(content, **kwargs)
         return cb.message
 
-    extra_rows = [[
+    st = _read_state.get(uid) or {}
+    source_id = st.get("source_id", "")
+    source_type = st.get("source_type", "")
+
+    extra_rows = []
+    if source_id and source_type == "apple_notes":
+        extra_rows.append([
+            types.InlineKeyboardButton(
+                text="📝 Открыть в Apple Notes", callback_data=f"p_notesrc:{source_id}",
+            ),
+        ])
+    extra_rows.append([
         types.InlineKeyboardButton(
             text="🗑️ Удалить запись", callback_data=f"p_drdel:{idx}",
         ),
-    ]]
+    ])
     await finalize_answer(
         uid, _edit_or_answer, text or "📄 (пустая запись)",
-        ctx={"wing": wing, "room": room, "drawer": drawer_name, "parent_cb": "p_rdb"},
+        ctx={
+            "wing": wing,
+            "room": room,
+            "drawer": drawer_name,
+            "parent_cb": "p_rdb",
+            "breadcrumbs": render_breadcrumbs(wing=wing, room=room, drawer=drawer_name).strip(),
+        },
         title=f"📄 {safe_html_format(drawer_name or 'Запись')}",
         extra_rows=extra_rows,
     )
@@ -781,7 +934,13 @@ async def cb_drawer_delete_confirm(cb: types.CallbackQuery):
         if not await safe_edit_text(cb.message, f"❌ Не удалось удалить запись: {e}"):
             await cb.message.answer(f"❌ Не удалось удалить запись: {e}")
         return
+    did = st["drawer_id"]
     _read_state.pop(uid, None)
+    try:
+        from services.notes_sync import delete_backlink
+        delete_backlink(did)
+    except Exception:
+        pass
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="◀️ К списку записей", callback_data="p_rdb"))
     if not await safe_edit_text(

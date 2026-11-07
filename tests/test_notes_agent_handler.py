@@ -397,7 +397,7 @@ async def test_run_notes_agent_wiring(monkeypatch):
     result = await na._run_notes_agent_reply(4242, status, "найди про фудзи")
     assert result.ok is True
     assert result.final_answer == "Вот ваша заметка"
-    assert calls[0]["allowed_categories"] == (na.CAT_NOTES,)
+    assert calls[0]["allowed_categories"] == (na.CAT_NOTES, na.CAT_PALACE, na.CAT_SYSTEM)
     assert calls[0]["include_write"] is True
     assert callable(calls[0]["confirm_write"])
     assert fake_finalize.args[1] == "Вот ваша заметка"

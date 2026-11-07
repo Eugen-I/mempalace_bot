@@ -14,6 +14,7 @@ tool_timeout (по умолчанию 60с).
 import asyncio
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
@@ -109,6 +110,57 @@ def _qwen_tool_call(model: str, messages: list[dict], tools: list[dict]) -> dict
     }
 
 
+def _model_tool_call(engine: str, model: str, messages: list[dict], tools: list[dict]) -> dict:
+    """Синхронный вызов модели c tools для qwen/ollama, openai, gemini."""
+    engine = (engine or "").lower().strip()
+    if engine in ("qwen", "ollama"):
+        return _qwen_tool_call(model, messages, tools)
+
+    if OpenAI is None:
+        raise ImportError("Библиотека openai не установлена.")
+
+    if engine == "openai":
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY not set.")
+        client = OpenAI(base_url="https://api.openai.com/v1", api_key=api_key)
+        temperature = 0.4
+    elif engine == "gemini":
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY not set.")
+        client = OpenAI(
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            api_key=api_key,
+        )
+        temperature = 0.4
+    else:
+        raise AgentEngineError(f"Неподдерживаемый движок: '{engine}'.")
+
+    r = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        tools=tools or None,
+        tool_choice="auto",
+        temperature=temperature,
+        timeout=MODEL_TIMEOUT,
+    )  # type: ignore[call-overload]
+    choice = r.choices[0]
+    message = choice.message
+    tool_calls = []
+    for tc in message.tool_calls or []:
+        tool_calls.append({
+            "id": tc.id,
+            "name": tc.function.name,
+            "arguments": tc.function.arguments or "{}",
+        })
+    return {
+        "content": message.content,
+        "tool_calls": tool_calls,
+        "finish_reason": choice.finish_reason,
+    }
+
+
 def _extract_tool_call_from_content(content: str, tool_map: dict) -> dict | None:
     """Извлекает «инструмент, написанный текстом» из ответа модели.
 
@@ -176,10 +228,10 @@ async def run_agent(
     if engine is None or model is None:
         engine, model = get_current_ai()
     engine = (engine or "").lower().strip()
-    if engine not in ("qwen", "ollama"):
+    if engine not in ("qwen", "ollama", "openai", "gemini"):
         raise AgentEngineError(
-            "Агентный режим работает только с локальной моделью Ollama (qwen2.5). "
-            "Смените модель в /settings.",
+            f"Неподдерживаемый движок агента: '{engine}'. "
+            "Поддерживаются: qwen/ollama, openai, gemini. Смените модель в /settings.",
         )
 
     if confirm_write is None:
@@ -202,9 +254,9 @@ async def run_agent(
 
     for i in range(1, max_iterations + 1):
         try:
-            resp = await asyncio.to_thread(_qwen_tool_call, model, messages, openai_tools)
+            resp = await asyncio.to_thread(_model_tool_call, engine, model, messages, openai_tools)
         except Exception as exc:
-            if _is_ollama_unavailable(exc):
+            if engine in ("qwen", "ollama") and _is_ollama_unavailable(exc):
                 return AgentResult(
                     final_answer="",
                     steps=steps,
@@ -215,7 +267,7 @@ async def run_agent(
                         "Запустите Ollama или переключите модель в /settings."
                     ),
                 )
-            logger.error("[AGENT] model call failed: %s", exc, exc_info=True)
+            logger.error("[AGENT] model call failed (%s): %s", engine, exc, exc_info=True)
             return AgentResult(
                 final_answer="",
                 steps=steps,

@@ -1,5 +1,6 @@
 """handlers/palace/save.py — Save/quote handlers for palace notes"""
 import json
+import logging
 
 from aiogram import F, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -16,6 +17,8 @@ from .shared import (
     _wing_cache,
     router,
 )
+
+logger = logging.getLogger("PalaceSave")
 
 # ─── SAVE / QUOTE ───
 
@@ -254,9 +257,37 @@ async def cb_save_confirm_execute(cb: types.CallbackQuery):
         content = text
     try:
         mcp = get_mcp()
-        raw = await mcp.call_tool("mempalace_add_drawer", {
+        tool_args = {
             "wing": wing, "room": room, "content": content,
-        })
+        }
+        source_id = state.get("source_id")
+        source_type = state.get("source_type")
+        source_title = state.get("source_title", "")
+        if source_id:
+            tool_args["source_id"] = str(source_id)
+        if source_type:
+            tool_args["source_type"] = str(source_type)
+
+        raw = await mcp.call_tool("mempalace_add_drawer", tool_args)
+
+        if source_id and source_type:
+            try:
+                parsed_res = json.loads(raw or "{}")
+                did = parsed_res.get("drawer_id")
+                if did:
+                    from services.notes_sync import record_backlink
+                    record_backlink(
+                        drawer_id=did,
+                        source_type=source_type,
+                        source_id=str(source_id),
+                        wing=wing,
+                        room=room,
+                        content=content,
+                        title=source_title,
+                    )
+            except Exception as exc:
+                logger.warning("Failed to record backlink: %s", exc)
+
         await cb.message.edit_text(
             _format_save_result(raw, wing, room),
             parse_mode="HTML",
