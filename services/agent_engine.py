@@ -140,11 +140,12 @@ def _model_tool_call(engine: str, model: str, messages: list[dict], tools: list[
             api_key=api_key,
         )
         temperature = 0.4
-        # Google OpenAI-совместимый эндпоинт требует конкретных имён моделей
-        if model in ("gemini-flash-latest", "gemini", ""):
+        # Google OpenAI-совместимый эндпоинт: перенаправляем устаревшие/недоступные теги
+        if model in (
+            "gemini-flash-latest", "gemini", "gemini-2.5-pro",
+            "gemini-pro-latest", "gemini-pro", "",
+        ):
             model = "gemini-2.5-flash"
-        elif model in ("gemini-pro-latest", "gemini-pro"):
-            model = "gemini-2.5-pro"
     else:
         raise AgentEngineError(f"Неподдерживаемый движок: '{engine}'.")
 
