@@ -68,6 +68,14 @@ def _dump_client_session(client: Any) -> dict[str, Any]:
         if isinstance(dumped, dict):
             return dumped
 
+    client_sub = getattr(client, "client", None)
+    if client_sub is not None and hasattr(client_sub, "dumps") and callable(client_sub.dumps):
+        raw = client_sub.dumps()
+        return {"garmin_client_dumps": str(raw)}
+    if hasattr(client, "dumps") and callable(client.dumps):
+        raw = client.dumps()
+        return {"garmin_client_dumps": str(raw)}
+
     garth_obj = getattr(client, "garth", None)
     if garth_obj is not None:
         if hasattr(garth_obj, "dumps") and callable(garth_obj.dumps):
@@ -93,6 +101,25 @@ def _restore_client_session(client: Any, payload: dict[str, Any]) -> None:
     if hasattr(client, "load_session") and callable(client.load_session):
         client.load_session(payload)
         return
+
+    if "garmin_client_dumps" in payload:
+        raw = str(payload["garmin_client_dumps"])
+        client_sub = getattr(client, "client", None)
+        if client_sub is not None and hasattr(client_sub, "loads") and callable(client_sub.loads):
+            client_sub.loads(raw)
+            load_fn = getattr(client, "_load_profile_and_settings", None)
+            if callable(load_fn):
+                try:
+                    load_fn()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Could not load profile in restored session: %s", exc)
+            return
+        if hasattr(client, "loads") and callable(client.loads):
+            client.loads(raw)
+            return
+        if hasattr(client, "login") and callable(client.login):
+            client.login(tokenstore=raw)
+            return
 
     garth_obj = getattr(client, "garth", None)
     if garth_obj is not None:
@@ -137,7 +164,11 @@ def _classify_auth_exception(exc: Exception) -> None:
         raise GarminAuthError(
             "Неверный email или пароль Garmin Connect (либо сессия отозвана)."
         ) from exc
-    raise GarminAuthError("Ошибка авторизации в Garmin Connect.") from exc
+    if "mfa" in msg or "code" in msg or "token" in msg or "ticket" in msg:
+        raise GarminAuthError(
+            f"Неверный или просроченный код 2FA ({exc}). Запросите новый код или повторите вход."
+        ) from exc
+    raise GarminAuthError(f"Ошибка авторизации в Garmin Connect: {exc}") from exc
 
 
 def start_login(
@@ -160,7 +191,7 @@ def start_login(
     try:
         client = factory(email=clean_email, secret=secret, return_on_mfa=True)
         # Immediately drop local secret reference after client construction
-        secret = ""
+        del secret
         login_res = client.login()
     except GarminOnlineError:
         record_auth_failure(conn, user_id, "ошибка входа Garmin Connect")
@@ -176,17 +207,15 @@ def start_login(
     ):
         mfa_ctx = login_res[1]
         _PENDING_MFA_CLIENTS[int(user_id)] = (client, mfa_ctx)
-        serializable_state = {
+        serializable_state: dict[str, Any] = {
             "email": clean_email,
             "has_live_client": True,
             "mfa_meta": str(type(mfa_ctx).__name__),
         }
         if isinstance(mfa_ctx, dict):
-            serializable_state["mfa_dict"] = {
-                k: v
-                for k, v in mfa_ctx.items()
-                if isinstance(v, (str, int, float, bool))
-            }
+            serializable_state["mfa_dict"] = mfa_ctx
+        elif mfa_ctx is not None:
+            serializable_state["mfa_raw"] = str(mfa_ctx)
         save_mfa_state(
             conn,
             user_id,
@@ -241,6 +270,8 @@ def submit_mfa_code(
     pending = _PENDING_MFA_CLIENTS.get(int(user_id))
     if pending is not None:
         client, mfa_ctx = pending
+        if mfa_ctx is None and isinstance(stored_mfa, dict):
+            mfa_ctx = stored_mfa.get("mfa_dict")
     else:
         factory = client_factory or _default_client_factory
         client = factory(
@@ -248,7 +279,7 @@ def submit_mfa_code(
             secret=None,
             return_on_mfa=True,
         )
-        mfa_ctx = stored_mfa.get("mfa_dict") or {}
+        mfa_ctx = stored_mfa.get("mfa_dict") if isinstance(stored_mfa, dict) else None
 
     try:
         if hasattr(client, "resume_login") and callable(client.resume_login):
@@ -262,10 +293,11 @@ def submit_mfa_code(
             record_auth_failure(conn, user_id, "превышено число попыток 2FA")
         raise
     except Exception as exc:  # noqa: BLE001
+        logger.exception("Ошибка подтверждения 2FA Garmin Connect для user_id=%s: %s", user_id, exc)
         attempts = increment_mfa_attempts(conn, user_id)
         if attempts >= 3:
             _PENDING_MFA_CLIENTS.pop(int(user_id), None)
-            record_auth_failure(conn, user_id, "неверный код 2FA (3 попытки)")
+            record_auth_failure(conn, user_id, f"неверный код 2FA: {exc}")
         _classify_auth_exception(exc)
 
     session_payload = _dump_client_session(client)

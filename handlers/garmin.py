@@ -3355,7 +3355,6 @@ async def handle_garmin_text(message: types.Message):
             await message.delete()
         except Exception as exc:  # noqa: BLE001 - best-effort privacy cleanup
             logger.debug("Could not delete online MFA message: %s", exc)
-        garmin_text_state.pop(user_id, None)
         status_msg = await message.answer(
             "🔄 <i>Проверяю код 2FA...</i>", parse_mode="HTML"
         )
@@ -3369,15 +3368,42 @@ async def handle_garmin_text(message: types.Message):
             conn = _connect()
             try:
                 account = get_account_state(conn, user_id)
+                row = conn.execute(
+                    "SELECT attempts FROM garmin_mfa_state WHERE user_id = ?",
+                    (int(user_id),),
+                ).fetchone()
+                attempts = int(row["attempts"]) if row else 3
             finally:
                 conn.close()
+
+            remaining = 3 - attempts
+            exc_str = str(exc)
+            if (
+                remaining > 0
+                and "превышено" not in exc_str.lower()
+                and "истёк" not in exc_str.lower()
+                and "429" not in exc_str.lower()
+            ):
+                garmin_text_state[user_id] = "garmin_online_mfa"
+                retry_hint = (
+                    f"\n\n🔢 <b>Осталось попыток:</b> {remaining}.\n"
+                    "Введите правильный код из SMS/почты Garmin или нажмите /cancel для отмены."
+                )
+            else:
+                garmin_text_state.pop(user_id, None)
+                retry_hint = (
+                    "\n\nСессия ввода 2FA завершена. "
+                    "Начните подключение заново через /garmin_online."
+                )
+
             await status_msg.edit_text(
-                f"❌ <b>Ошибка 2FA</b>\n\n{_esc(str(exc))}",
+                f"❌ <b>Ошибка 2FA</b>\n\n{_esc(exc_str)}{retry_hint}",
                 reply_markup=_online_kb(account),
                 parse_mode="HTML",
             )
             return None
 
+        garmin_text_state.pop(user_id, None)
         account = outcome.account
 
         await status_msg.edit_text(

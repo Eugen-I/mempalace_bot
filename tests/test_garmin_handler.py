@@ -1168,3 +1168,30 @@ async def test_cmd_cancel_resets_garmin_states(env):
     assert garmin.garmin_text_state.get(UID) is None
     assert garmin.garmin_online_draft.get(UID) is None
     assert "отменено" in msg.answers[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_garmin_online_mfa_retry_keeps_state_on_first_failure(env, monkeypatch):
+    conn = init_db(env.db_path)
+    try:
+        from services.garmin.session_store import save_mfa_state
+        save_mfa_state(conn, UID, {"email": "test@example.com"}, email="test@example.com")
+    finally:
+        conn.close()
+
+    garmin.garmin_text_state[UID] = "garmin_online_mfa"
+
+    def fail_mfa(user_id, code):
+        from services.garmin.errors import GarminAuthError
+        raise GarminAuthError("Неверный код 2FA (1/3).")
+
+    monkeypatch.setattr(garmin, "_submit_mfa_sync", fail_mfa)
+    msg = FakeMessage(uid=UID, text="000000")
+    await garmin.handle_garmin_text(msg)
+
+    # State must be preserved so user can re-enter code without starting over
+    assert garmin.garmin_text_state.get(UID) == "garmin_online_mfa"
+    assert msg.status_edits
+    edit_text = msg.status_edits[0][0]
+    assert "Ошибка 2FA" in edit_text
+    assert "Осталось попыток" in edit_text
