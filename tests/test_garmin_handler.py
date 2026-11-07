@@ -1043,3 +1043,117 @@ async def test_cb_plan_ai_personalizes_and_saves_plan(env):
     text, kwargs = cb_ai.message.edits[0]
     assert "План персонализирован" in text
     assert "garmin:plan:accept" in _callback_ids(kwargs["reply_markup"])
+
+
+@pytest.mark.asyncio
+async def test_garmin_online_connect_mfa_sync_and_disconnect(env, monkeypatch):
+    # 1. Main menu and import screen advertise online sync
+    main_msg = FakeMessage(uid=UID, text="/garmin")
+    await garmin.cmd_garmin(main_msg)
+    assert "garmin:online" in _callback_ids(main_msg.answers[0][1]["reply_markup"])
+
+    import_msg = FakeMessage(uid=UID, text="/garmin_import")
+    await garmin.cmd_garmin_import(import_msg)
+    assert "garmin:online" in _callback_ids(import_msg.answers[0][1]["reply_markup"])
+
+    # 2. View online screen (initially disconnected)
+    online_msg = FakeMessage(uid=UID, text="/garmin_online")
+    await garmin.cmd_garmin_online(online_msg)
+    online_text, online_kw = online_msg.answers[0]
+    assert "Не подключён" in online_text
+    assert "garmin:online:connect" in _callback_ids(online_kw["reply_markup"])
+
+    # 3. Connect: Step 1 Email
+    cb_conn = FakeCb(data="garmin:online:connect")
+    await garmin.cb_online_connect(cb_conn)
+    assert garmin.garmin_text_state.get(UID) == "garmin_online_email"
+
+    email_msg = FakeMessage(uid=UID, text="athlete@example.com")
+    await garmin.handle_garmin_text(email_msg)
+    assert garmin.garmin_text_state.get(UID) == "garmin_online_pass"
+    assert garmin.garmin_online_draft.get(UID) == {"email": "athlete@example.com"}
+
+    # 4. Connect: Step 2 Password (with immediate deletion for privacy)
+    deleted_secret_calls: list[bool] = []
+    pass_msg = FakeMessage(uid=UID, text="MySecretPass123!")
+
+    async def fake_delete():
+        deleted_secret_calls.append(True)
+
+    pass_msg.delete = fake_delete  # type: ignore[attr-defined]
+
+    # Mock start_login returning MFA requirement
+    class _MockAccount:
+        masked_email = "a***@example.com"
+        session_status = "mfa_pending"
+        is_connected = False
+        last_sync_at = None
+        last_login_at = None
+        last_auth_error = None
+
+    class _MockOutcome:
+        status = "mfa_required"
+        account = _MockAccount()
+
+    def mock_start_login(*args, **kwargs):
+        return _MockOutcome()
+
+    monkeypatch.setattr(garmin, "start_login", mock_start_login)
+
+    await garmin.handle_garmin_text(pass_msg)
+    assert deleted_secret_calls == [True]
+    assert garmin.garmin_text_state.get(UID) == "garmin_online_mfa"
+
+    # 5. Connect: Step 3 MFA code (also immediately deleted)
+    deleted_mfa_calls: list[bool] = []
+    mfa_msg = FakeMessage(uid=UID, text="654321")
+    mfa_msg.delete = lambda: deleted_mfa_calls.append(True)  # type: ignore[assignment]
+
+    class _MockConnectedAccount:
+        masked_email = "a***@example.com"
+        session_status = "connected"
+        is_connected = True
+        last_sync_at = "2026-11-07T12:00:00"
+        last_login_at = "2026-11-07T12:00:00"
+        last_auth_error = None
+
+    class _MockMfaOutcome:
+        status = "connected"
+        account = _MockConnectedAccount()
+
+    def mock_submit_mfa(*args, **kwargs):
+        return _MockMfaOutcome()
+
+    monkeypatch.setattr(garmin, "submit_mfa_code", mock_submit_mfa)
+
+    await garmin.handle_garmin_text(mfa_msg)
+    assert deleted_mfa_calls == [True]
+    assert garmin.garmin_text_state.get(UID) is None
+
+    # 6. Online sync
+    class _MockSyncResult:
+        status = "ok"
+        days_synced = ["2026-11-06", "2026-11-07"]
+        daily_upserted = 2
+        activities_upserted = 1
+        errors = []
+
+    def mock_sync_days(*args, **kwargs):
+        return _MockSyncResult()
+
+    monkeypatch.setattr(garmin, "sync_online_days", mock_sync_days)
+
+    cb_sync = FakeCb(data="garmin:online:sync")
+    await garmin.cb_online_sync(cb_sync)
+    assert cb_sync.message.status_edits
+    sync_edit_text = cb_sync.message.status_edits[0][0]
+    assert "Онлайн-синхронизация завершена" in sync_edit_text
+    assert "Синхронизировано дней: 2" in sync_edit_text
+
+    # 7. Disconnect session
+    cb_disc = FakeCb(data="garmin:online:disconnect")
+    await garmin.cb_online_disconnect(cb_disc)
+    assert cb_disc.message.edits
+    disc_text, disc_kw = cb_disc.message.edits[0]
+    assert "Сессия Garmin Connect отключена" in disc_text
+    assert "garmin:online:connect" in _callback_ids(disc_kw["reply_markup"])

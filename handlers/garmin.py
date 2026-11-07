@@ -30,12 +30,18 @@ from services.bot_setup import (
 )
 import services.garmin.agent_tools  # noqa: F401 - register Garmin agent tools
 from services.garmin.analytics import build_report, workout_comparison
+from services.garmin.auth import start_login, submit_mfa_code
 from services.garmin.charts import render_charts
 from services.garmin.coach import coach_text, generate_causes_async
 from services.garmin.config import get_config
 from services.garmin.db import init_db
 from services.garmin.delta import apply_delta, compute_delta, delta_text, log_delta
-from services.garmin.errors import GarminError
+from services.garmin.errors import (
+    GarminAuthError,
+    GarminError,
+    GarminOnlineError,
+    GarminRateLimitError,
+)
 from services.garmin.importers import import_any_path, looks_like_full_export
 from services.garmin.medications import build_layer, doctor_questions
 from services.garmin.models import (
@@ -92,11 +98,19 @@ from services.garmin.safety import (
     merge_safety_flags,
     safety_text,
 )
+from services.garmin.session_store import (
+    AccountState,
+    disconnect_session,
+    get_account_state,
+)
 from services.garmin.status import data_status, status_text
+from services.garmin.sync import sync_online_days
 from services.garmin.training_plan_ai import enrich_plan_with_ai_async
 
 logger = logging.getLogger("GarminHandler")
 router = Router()
+
+garmin_online_draft: dict[int, dict[str, str]] = {}
 
 REPORT_DAYS = (7, 30, 90, 365)
 TELEGRAM_LIMIT_MB = 20
@@ -230,6 +244,9 @@ def _main_kb() -> types.InlineKeyboardMarkup:
     )
     kb.row(
         types.InlineKeyboardButton(text="📥 Импорт", callback_data="garmin:import"),
+        types.InlineKeyboardButton(text="🌐 Garmin Online", callback_data="garmin:online"),
+    )
+    kb.row(
         types.InlineKeyboardButton(text="⚙️ Настройки", callback_data="garmin:settings"),
     )
     return kb.as_markup()
@@ -536,7 +553,10 @@ async def _import_screen(message: types.Message) -> None:
     kb.row(
         types.InlineKeyboardButton(
             text="📂 Проверить папку import", callback_data="garmin:import:folder"
-        )
+        ),
+        types.InlineKeyboardButton(
+            text="🌐 Онлайн-синхронизация", callback_data="garmin:online"
+        ),
     )
     kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="garmin:main"))
     await message.answer(
@@ -686,6 +706,234 @@ async def cb_import_folder(cb: types.CallbackQuery):
     await status_msg.edit_text(
         "\n".join(lines), parse_mode="HTML", reply_markup=_import_done_kb()
     )
+
+
+# ---------------------------------------------------------------------------
+# Garmin Connect Online API sync
+# ---------------------------------------------------------------------------
+
+
+def _online_kb(account: AccountState) -> types.InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    if account.is_connected:
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🔄 Синхронизировать онлайн",
+                callback_data="garmin:online:sync",
+            )
+        )
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🔌 Отключить сессию",
+                callback_data="garmin:online:disconnect",
+            ),
+            types.InlineKeyboardButton(
+                text="🔑 Переподключить",
+                callback_data="garmin:online:connect",
+            ),
+        )
+    elif account.session_status == "mfa_pending":
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🔢 Ввести код 2FA",
+                callback_data="garmin:online:mfa",
+            )
+        )
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🔑 Начать заново",
+                callback_data="garmin:online:connect",
+            ),
+            types.InlineKeyboardButton(
+                text="🔌 Отменить",
+                callback_data="garmin:online:disconnect",
+            ),
+        )
+    else:
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🔑 Подключить Garmin Connect",
+                callback_data="garmin:online:connect",
+            )
+        )
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="garmin:main"))
+    return kb.as_markup()
+
+
+def _online_text(account: AccountState) -> str:
+    status_map = {
+        "connected": "🟢 Подключён",
+        "mfa_pending": "🟡 Ожидает код 2FA",
+        "rate_limited": "🔴 Ограничение частоты (HTTP 429)",
+        "auth_error": "❌ Ошибка авторизации",
+        "disconnected": "⚪ Не подключён",
+    }
+    status_str = status_map.get(account.session_status, account.session_status)
+    lines = [
+        "🌐 <b>Garmin Connect (Онлайн)</b>",
+        "",
+        f"Статус: <b>{status_str}</b>",
+        f"Аккаунт: <code>{_esc(account.masked_email)}</code>",
+    ]
+    if account.last_sync_at:
+        lines.append(f"Последняя синхронизация: {_esc(account.last_sync_at)}")
+    if account.last_login_at:
+        lines.append(f"Последний вход: {_esc(account.last_login_at)}")
+    if account.last_auth_error:
+        lines.append(f"Сообщение: <i>{_esc(account.last_auth_error)}</i>")
+    lines.append("")
+    lines.append(
+        "Токены авторизации шифруются локально (AES/Fernet) через macOS Keychain.\n"
+        "Пароль нигде не сохраняется и удаляется из чата Telegram сразу после ввода."
+    )
+    return "\n".join(lines)
+
+
+async def _send_online(
+    message: types.Message, user_id: int, *, edit: bool = False
+) -> None:
+    conn = _connect()
+    try:
+        account = get_account_state(conn, user_id)
+    finally:
+        conn.close()
+    text = _online_text(account)
+    markup = _online_kb(account)
+    if edit:
+        await _safe_edit(message, text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=markup, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "garmin:online")
+@allowed_callback
+async def cb_online(cb: types.CallbackQuery):
+    await cb.answer()
+    await _send_online(cb.message, _uid(cb), edit=True)
+
+
+@router.message(Command("garmin_online"))
+@allowed_only
+async def cmd_garmin_online(message: types.Message):
+    await _send_online(message, _uid(message), edit=False)
+
+
+@router.callback_query(F.data == "garmin:online:connect")
+@allowed_callback
+async def cb_online_connect(cb: types.CallbackQuery):
+    await cb.answer()
+    user_id = _uid(cb)
+    garmin_text_state[user_id] = "garmin_online_email"
+    garmin_online_draft[user_id] = {}
+    await cb.message.answer(
+        "📧 <b>Подключение Garmin Connect</b>\n\n"
+        "Шаг 1 из 2: Отправьте <b>email</b> вашего аккаунта Garmin Connect.\n"
+        "(Пароль будет запрошен на следующем шаге и сразу удалён из истории чата Telegram).\n\n"
+        "/cancel — отмена.",
+        reply_markup=_back_kb(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "garmin:online:mfa")
+@allowed_callback
+async def cb_online_mfa(cb: types.CallbackQuery):
+    await cb.answer()
+    user_id = _uid(cb)
+    garmin_text_state[user_id] = "garmin_online_mfa"
+    await cb.message.answer(
+        "🔢 <b>Ввод кода 2FA</b>\n\n"
+        "Отправьте одноразовый код подтверждения из SMS или почты Garmin.\n"
+        "(Сообщение с кодом будет сразу удалено из истории чата Telegram).\n\n"
+        "/cancel — отмена.",
+        reply_markup=_back_kb(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "garmin:online:disconnect")
+@allowed_callback
+async def cb_online_disconnect(cb: types.CallbackQuery):
+    await cb.answer("Отключаю онлайн-сессию...")
+    user_id = _uid(cb)
+    conn = _connect()
+    try:
+        disconnect_session(conn, user_id)
+        account = get_account_state(conn, user_id)
+    finally:
+        conn.close()
+    garmin_text_state.pop(user_id, None)
+    garmin_online_draft.pop(user_id, None)
+    await cb.message.edit_text(
+        "🔌 <b>Сессия Garmin Connect отключена.</b>\n\n"
+        "Зашифрованные токены удалены из базы. Сохранённые тренировки и отчёты остались на месте.",
+        reply_markup=_online_kb(account),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "garmin:online:sync")
+@allowed_callback
+async def cb_online_sync(cb: types.CallbackQuery):
+    await cb.answer("Запускаю синхронизацию...")
+    user_id = _uid(cb)
+    cfg = _cfg()
+    status_msg = await cb.message.answer(
+        "🔄 <i>Подключаюсь к Garmin Connect и загружаю свежие данные...</i>",
+        parse_mode="HTML",
+    )
+    conn = _connect()
+    try:
+        try:
+            result = await asyncio.to_thread(
+                sync_online_days,
+                conn,
+                user_id,
+                config=cfg,
+            )
+        except GarminRateLimitError as exc:
+            await status_msg.edit_text(
+                f"⏳ <b>Ограничение частоты запросов</b>\n\n{_esc(str(exc))}",
+                reply_markup=_back_kb(),
+                parse_mode="HTML",
+            )
+            return
+        except GarminAuthError as exc:
+            await status_msg.edit_text(
+                f"🔑 <b>Ошибка авторизации Garmin Connect</b>\n\n{_esc(str(exc))}",
+                reply_markup=_online_kb(get_account_state(conn, user_id)),
+                parse_mode="HTML",
+            )
+            return
+        except GarminOnlineError as exc:
+            await status_msg.edit_text(
+                f"❌ <b>Ошибка связи с Garmin Connect</b>\n\n{_esc(str(exc))}",
+                reply_markup=_back_kb(),
+                parse_mode="HTML",
+            )
+            return
+    finally:
+        conn.close()
+
+    lines = [
+        "✅ <b>Онлайн-синхронизация завершена</b>",
+        f"Статус: {result.status}",
+        f"Синхронизировано дней: {len(result.days_synced)}",
+        f"Обновлено дней: {result.daily_upserted}",
+        f"Обновлено тренировок: {result.activities_upserted}",
+    ]
+    if result.days_synced:
+        lines.append(
+            f"Период: {_fmt_day(result.days_synced[0])} — {_fmt_day(result.days_synced[-1])}"
+        )
+    if result.errors:
+        lines.append("\n⚠️ Замечания: " + "; ".join(_esc(e) for e in result.errors[:3]))
+    await status_msg.edit_text(
+        "\n".join(lines),
+        reply_markup=_import_done_kb(),
+        parse_mode="HTML",
+    )
+    await _maybe_send_delta(cb.message, user_id, trigger="online_sync")
 
 
 # ---------------------------------------------------------------------------
@@ -2981,7 +3229,130 @@ async def handle_garmin_text(message: types.Message):
     if text.lower() in {"/cancel", "отмена", "❌ отмена"}:
         garmin_text_state.pop(user_id, None)
         garmin_profile_draft.pop(user_id, None)
+        garmin_online_draft.pop(user_id, None)
         await message.answer("Отменено.", reply_markup=_back_kb())
+        return None
+
+    if state == "garmin_online_email":
+        clean_email = text.strip()
+        if "@" not in clean_email or len(clean_email) < 5:
+            await message.answer(
+                "⚠️ Введите корректный адрес email (например, user@example.com).\n"
+                "/cancel — отмена."
+            )
+            return None
+        garmin_online_draft[user_id] = {"email": clean_email}
+        garmin_text_state[user_id] = "garmin_online_pass"
+        await message.answer(
+            "🔑 <b>Шаг 2 из 2: Введите пароль от Garmin Connect</b>\n\n"
+            "⚠️ Сообщение с паролем будет <b>немедленно удалено</b> из истории чата Telegram.\n"
+            "Пароль используется однократно для получения токенов сессии "
+            "и нигде не сохраняется.\n\n"
+            "/cancel — отмена.",
+            parse_mode="HTML",
+        )
+        return None
+
+    if state == "garmin_online_pass":
+        try:
+            await message.delete()
+        except Exception as exc:  # noqa: BLE001 - best-effort privacy cleanup
+            logger.debug("Could not delete online auth message: %s", exc)
+        draft = garmin_online_draft.pop(user_id, {})
+        garmin_text_state.pop(user_id, None)
+        email_val = draft.get("email") or ""
+        if not email_val:
+            await message.answer(
+                "Сессия ввода устарела. Начните подключение заново.",
+                reply_markup=_back_kb(),
+            )
+            return None
+
+        status_msg = await message.answer(
+            "🔄 <i>Проверяю учетные данные Garmin Connect...</i>",
+            parse_mode="HTML",
+        )
+        conn = _connect()
+        try:
+            try:
+                outcome = await asyncio.to_thread(
+                    start_login,
+                    conn,
+                    user_id,
+                    email=email_val,
+                    secret=text,
+                )
+            except (GarminAuthError, GarminRateLimitError, GarminOnlineError) as exc:
+                account = get_account_state(conn, user_id)
+                await status_msg.edit_text(
+                    f"❌ <b>Не удалось подключить Garmin Connect</b>\n\n{_esc(str(exc))}",
+                    reply_markup=_online_kb(account),
+                    parse_mode="HTML",
+                )
+                return None
+            account = outcome.account
+        finally:
+            conn.close()
+
+        if outcome.status == "mfa_required":
+            garmin_text_state[user_id] = "garmin_online_mfa"
+            await status_msg.edit_text(
+                "🔢 <b>Требуется код двухфакторной аутентификации (2FA)</b>\n\n"
+                "Garmin отправил одноразовый код на ваш email или SMS.\n"
+                "Отправьте полученный код ответным сообщением "
+                "(оно также будет сразу удалено из чата Telegram).\n\n"
+                "/cancel — отмена.",
+                parse_mode="HTML",
+            )
+            return None
+
+        await status_msg.edit_text(
+            f"✅ <b>Garmin Connect успешно подключён!</b>\n\n"
+            f"Аккаунт: <code>{_esc(account.masked_email)}</code>\n"
+            "Сессия безопасно зашифрована. Теперь вы можете синхронизировать "
+            "данные в один клик кнопкой «🔄 Синхронизировать онлайн».",
+            reply_markup=_online_kb(account),
+            parse_mode="HTML",
+        )
+        return None
+
+    if state == "garmin_online_mfa":
+        try:
+            await message.delete()
+        except Exception as exc:  # noqa: BLE001 - best-effort privacy cleanup
+            logger.debug("Could not delete online MFA message: %s", exc)
+        garmin_text_state.pop(user_id, None)
+        status_msg = await message.answer(
+            "🔄 <i>Проверяю код 2FA...</i>", parse_mode="HTML"
+        )
+        conn = _connect()
+        try:
+            try:
+                outcome = await asyncio.to_thread(
+                    submit_mfa_code,
+                    conn,
+                    user_id,
+                    mfa_code=text,
+                )
+            except (GarminAuthError, GarminRateLimitError, GarminOnlineError) as exc:
+                account = get_account_state(conn, user_id)
+                await status_msg.edit_text(
+                    f"❌ <b>Ошибка 2FA</b>\n\n{_esc(str(exc))}",
+                    reply_markup=_online_kb(account),
+                    parse_mode="HTML",
+                )
+                return None
+            account = outcome.account
+        finally:
+            conn.close()
+
+        await status_msg.edit_text(
+            f"✅ <b>Двухфакторная проверка пройдена!</b>\n\n"
+            f"Аккаунт: <code>{_esc(account.masked_email)}</code>\n"
+            "Сессия подключена и зашифрована.",
+            reply_markup=_online_kb(account),
+            parse_mode="HTML",
+        )
         return None
 
     if state == "profile_meds":
