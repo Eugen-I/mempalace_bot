@@ -9,6 +9,7 @@
 """
 
 import datetime
+import json
 import os
 import re
 import shutil
@@ -761,7 +762,694 @@ def action_knowledge_graph():
         print(f"{C_RED}❌ Ошибка чтения Knowledge Graph: {e}{C_RESET}")
 
 
-# ── 7. УПРАВЛЕНИЕ TELEGRAM-БОТОМ ─────────────────────────────────────────────
+# ── 7. УПРАВЛЕНИЕ МОДЕЛЯМИ ИИ (OLLAMA & CLOUD) ──────────────────────────────
+def _get_models_json_path() -> str:
+    p_dir = PATHS["palace_dir"] or os.path.expanduser("~/Documents/mempalace")
+    return os.path.join(p_dir, "models.json")
+
+
+def _get_current_ai_path() -> str:
+    p_dir = PATHS["palace_dir"] or os.path.expanduser("~/Documents/mempalace")
+    return os.path.join(p_dir, ".current_ai")
+
+
+def load_models_config() -> dict:
+    fpath = _get_models_json_path()
+    if not os.path.isfile(fpath):
+        return {"ollama": [], "openai": [], "gemini": []}
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if not isinstance(data, dict):
+                return {"ollama": [], "openai": [], "gemini": []}
+            data.setdefault("ollama", [])
+            data.setdefault("openai", [])
+            data.setdefault("gemini", [])
+            return data
+    except Exception as e:
+        print(f"{C_RED}Ошибка чтения models.json: {e}{C_RESET}")
+        return {"ollama": [], "openai": [], "gemini": []}
+
+
+def save_models_config(cfg: dict) -> bool:
+    fpath = _get_models_json_path()
+    try:
+        os.makedirs(os.path.dirname(fpath), exist_ok=True)
+        with open(fpath, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print(f"{C_RED}Ошибка записи models.json: {e}{C_RESET}")
+        return False
+
+
+def get_current_ai_model() -> str:
+    fpath = _get_current_ai_path()
+    if os.path.isfile(fpath):
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except Exception:
+            pass
+    return "Не установлена"
+
+
+def set_current_ai_model(tag: str) -> bool:
+    fpath = _get_current_ai_path()
+    try:
+        with open(fpath, "w", encoding="utf-8") as f:
+            f.write(tag.strip() + "\n")
+        return True
+    except Exception as e:
+        print(f"{C_RED}Ошибка сохранения .current_ai: {e}{C_RESET}")
+        return False
+
+
+def get_ollama_installed_tags() -> list[str]:
+    try:
+        res = subprocess.run(["ollama", "list"], capture_output=True, text=True)
+        if res.returncode != 0:
+            return []
+        lines = res.stdout.strip().split("\n")
+        tags = []
+        for line in lines[1:]:
+            parts = line.split()
+            if parts:
+                tags.append(parts[0])
+        return tags
+    except Exception:
+        return []
+
+
+def action_manage_ai_models():
+    while True:
+        cfg = load_models_config()
+        current_ai = get_current_ai_model()
+
+        print(f"\n{C_BOLD}======================================================={C_RESET}")
+        print(f"  {C_CYAN}🎛️  УПРАВЛЕНИЕ МОДЕЛЯМИ ИИ (Ollama & Cloud){C_RESET}")
+        print(f"{C_BOLD}======================================================={C_RESET}")
+        print(f"Текущая активная модель: {C_GREEN}{C_BOLD}{current_ai}{C_RESET}\n")
+
+        print("1. 🎯 Переключить активную модель")
+        print("2. ⬇️  Скачать и установить модель Ollama (ollama pull)")
+        print("3. 🔄 Синхронизировать с 'ollama list' (найти неучтённые)")
+        print("4. ➕ Добавить облачную модель (Gemini / OpenAI)")
+        print("5. 🗑️  Удалить модель из списка (и опционально с диска)")
+        print("0. ◀️ Назад")
+
+        choice = input(f"\n{C_BOLD}Выберите действие (0-5): {C_RESET}").strip()
+        if choice in ("0", ""):
+            break
+
+        # 1. Переключение
+        if choice == "1":
+            all_models = []
+            for m in cfg.get("ollama", []):
+                all_models.append((f"🦙 Ollama: {m.get('name', m['tag'])}", m["tag"]))
+            for m in cfg.get("gemini", []):
+                all_models.append((f"💎 Gemini: {m.get('name', m['tag'])}", m["tag"]))
+            for m in cfg.get("openai", []):
+                all_models.append((f"🟢 OpenAI: {m.get('name', m['tag'])}", m["tag"]))
+
+            if not all_models:
+                print(f"{C_YELLOW}Список моделей пуст.{C_RESET}")
+                continue
+
+            print(f"\n{C_BOLD}Доступные модели:{C_RESET}")
+            for idx, (label, tag) in enumerate(all_models, 1):
+                active = f" {C_GREEN}◀ [АКТИВНА]{C_RESET}" if tag == current_ai else ""
+                print(f"  {idx:2d}) {label} {C_DIM}({tag}){C_RESET}{active}")
+
+            c = input(f"\n{C_BOLD}Выберите номер (1-{len(all_models)}): {C_RESET}").strip()
+            if c.isdigit() and 1 <= int(c) <= len(all_models):
+                chosen_tag = all_models[int(c) - 1][1]
+                if set_current_ai_model(chosen_tag):
+                    print(f"\n{C_GREEN}✅ Активная модель переключена на: {chosen_tag}{C_RESET}")
+
+        # 2. Ollama pull
+        elif choice == "2":
+            print(f"\n{C_BOLD}Рекомендуемые модели для скачивания:{C_RESET}")
+            recs = [
+                ("qwen2.5:7b", "Быстрая, отличный русский язык, 4.7 GB"),
+                ("qwen2.5:14b", "Глубокое мышление, высокая точность, 9.0 GB"),
+                ("llama3.2:3b", "Сверхлёгкая, моментальный отклик, 2.0 GB"),
+                ("mistral:7b", "Классика открытых моделей, 4.1 GB"),
+                ("phi4:14b", "Сильная логика и рассуждения от Microsoft, 9.1 GB"),
+            ]
+            for idx, (rtag, rdesc) in enumerate(recs, 1):
+                print(f"  {idx}) {C_CYAN}{rtag:14}{C_RESET} — {rdesc}")
+            print("  0) Ввести другой тег вручную")
+
+            r_choice = input(f"\n{C_BOLD}Ваш выбор (0-{len(recs)}): {C_RESET}").strip()
+            if r_choice.isdigit() and 1 <= int(r_choice) <= len(recs):
+                tag_to_pull = recs[int(r_choice) - 1][0]
+            else:
+                prompt_tag = f"{C_BOLD}Введите тег Ollama (напр., llama3.2:latest): {C_RESET}"
+                tag_to_pull = input(prompt_tag).strip()
+
+            if not tag_to_pull:
+                continue
+
+            print(f"\n⬇️  Запускаю скачивание {C_BOLD}{tag_to_pull}{C_RESET} через Ollama...")
+            res = subprocess.run(["ollama", "pull", tag_to_pull])
+            if res.returncode == 0:
+                print(f"\n{C_GREEN}✅ Модель {tag_to_pull} успешно скачана!{C_RESET}")
+                existing_tags = [m["tag"] for m in cfg.get("ollama", [])]
+                if tag_to_pull not in existing_tags:
+                    name_input = input(f"Название для меню (Enter = '{tag_to_pull}'): ").strip()
+                    cfg["ollama"].append({
+                        "name": name_input or tag_to_pull,
+                        "tag": tag_to_pull,
+                        "desc": "Загружено через PalaceMaster",
+                    })
+                    save_models_config(cfg)
+                act = input("Сделать эту модель активной прямо сейчас? (Y/n): ").strip().lower()
+                if act in ("y", "yes", ""):
+                    set_current_ai_model(tag_to_pull)
+                    print(f"{C_GREEN}✅ Модель {tag_to_pull} установлена активной!{C_RESET}")
+            else:
+                print(f"{C_RED}❌ Ошибка скачивания модели {tag_to_pull}.{C_RESET}")
+
+        # 3. Синхронизация с ollama list
+        elif choice == "3":
+            installed = get_ollama_installed_tags()
+            if not installed:
+                print(f"{C_YELLOW}Ollama не запущена или список моделей пуст.{C_RESET}")
+                continue
+
+            existing_tags = set(m["tag"] for m in cfg.get("ollama", []))
+            untracked = [t for t in installed if t not in existing_tags]
+
+            if not untracked:
+                total_cnt = len(installed)
+                print(f"{C_GREEN}✅ Все модели Ollama ({total_cnt} шт.) уже есть в меню.{C_RESET}")
+            else:
+                total_u = len(untracked)
+                print(
+                    f"\n{C_BOLD}Найдено моделей на диске, отсутствующих в меню "
+                    f"({total_u} шт.):{C_RESET}"
+                )
+                for idx, t in enumerate(untracked, 1):
+                    print(f"  {idx}) {t}")
+                add_all = input("\nДобавить все эти модели в меню? (Y/n): ").strip().lower()
+                if add_all in ("y", "yes", ""):
+                    for t in untracked:
+                        cfg["ollama"].append({
+                            "name": t,
+                            "tag": t,
+                            "desc": "Обнаружено через ollama list",
+                        })
+                    save_models_config(cfg)
+                    print(f"{C_GREEN}✅ Добавлено {len(untracked)} моделей в меню!{C_RESET}")
+
+        # 4. Добавление облачной модели
+        elif choice == "4":
+            print("\n1. 💎 Google Gemini")
+            print("2. 🟢 OpenAI / ChatGPT")
+            provider_ch = input("Выберите провайдера (1-2): ").strip()
+            group = "gemini" if provider_ch == "1" else "openai" if provider_ch == "2" else None
+            if not group:
+                continue
+
+            name = input("Название модели (например, 'Gemini 3 Flash'): ").strip()
+            prompt_c_tag = "Тег модели (например, 'gemini-3.1-pro-preview'): "
+            tag = input(prompt_c_tag).strip()
+            if name and tag:
+                cfg[group].append({
+                    "name": name,
+                    "tag": tag,
+                    "desc": "Облачная модель",
+                })
+                save_models_config(cfg)
+                print(f"{C_GREEN}✅ Модель {name} ({tag}) добавлена!{C_RESET}")
+                act = input("Сделать её активной сейчас? (Y/n): ").strip().lower()
+                if act in ("y", "yes", ""):
+                    set_current_ai_model(tag)
+
+        # 5. Удаление модели
+        elif choice == "5":
+            all_entries = []
+            for m in cfg.get("ollama", []):
+                all_entries.append(("ollama", m))
+            for m in cfg.get("gemini", []):
+                all_entries.append(("gemini", m))
+            for m in cfg.get("openai", []):
+                all_entries.append(("openai", m))
+
+            if not all_entries:
+                print(f"{C_YELLOW}Список моделей пуст.{C_RESET}")
+                continue
+
+            print(f"\n{C_BOLD}Какую модель удалить из меню?{C_RESET}")
+            for idx, (group, m) in enumerate(all_entries, 1):
+                print(f"  {idx}) [{group.upper()}] {m.get('name', m['tag'])} ({m['tag']})")
+
+            del_ch = input(f"\nВыберите номер (1-{len(all_entries)}, 0 для отмены): ").strip()
+            if del_ch.isdigit() and 1 <= int(del_ch) <= len(all_entries):
+                group, m = all_entries[int(del_ch) - 1]
+                tag = m["tag"]
+                cfg[group] = [x for x in cfg[group] if x.get("tag") != tag]
+                save_models_config(cfg)
+                print(f"{C_GREEN}✅ Модель {tag} удалена из меню.{C_RESET}")
+
+                if group == "ollama":
+                    rm_disk_prompt = (
+                        f"Удалить также файл весов с диска через 'ollama rm {tag}'? (y/N): "
+                    )
+                    rm_disk = input(rm_disk_prompt).strip().lower()
+                    if rm_disk == "y":
+                        subprocess.run(["ollama", "rm", tag])
+                        print(f"{C_GREEN}✅ Модель {tag} удалена с диска.{C_RESET}")
+
+
+# ── 8. АРХИВАЦИЯ ЧАТОВ И ДОБАВЛЕНИЕ МЫСЛЕЙ В БАЗУ ────────────────────────────
+def action_chats_and_thoughts():
+    while True:
+        print(f"\n{C_BOLD}======================================================={C_RESET}")
+        print(f"  {C_CYAN}💬 АРХИВАЦИЯ ЧАТОВ И ДОБАВЛЕНИЕ МЫСЛЕЙ В БАЗУ{C_RESET}")
+        print(f"{C_BOLD}======================================================={C_RESET}")
+
+        print("1. 💬 Архивировать Telegram-чат в заметку Дворца")
+        print("2. 💡 Быстрая запись мысли / инсайта в Дворец Памяти")
+        print("3. 📦 Перенести обработанные JSON-чаты в архив")
+        print("0. ◀️ Назад")
+
+        sub = input(f"\n{C_BOLD}Ваш выбор (0-3): {C_RESET}").strip()
+        if sub in ("0", ""):
+            break
+        elif sub == "1":
+            _archive_chat_dialog()
+        elif sub == "2":
+            _quick_add_thought()
+        elif sub == "3":
+            _archive_raw_chats()
+
+
+def _archive_chat_dialog():
+    chats_dir = os.path.join(PATHS["palace_dir"] or "", "chats")
+    notes_dir = PATHS["notes_dir"] or os.path.join(PATHS["palace_dir"] or "", "my_notes")
+
+    if not os.path.isdir(chats_dir):
+        print(f"{C_YELLOW}Папка чатов не найдена: {chats_dir}{C_RESET}")
+        return
+
+    json_files = [f for f in os.listdir(chats_dir) if f.endswith(".json")]
+    if not json_files:
+        print(f"{C_YELLOW}В папке chats пока нет JSON-файлов диалогов.{C_RESET}")
+        return
+
+    json_files.sort(key=lambda x: -os.path.getmtime(os.path.join(chats_dir, x)))
+
+    print(f"\n{C_BOLD}Найденные диалоги:{C_RESET}")
+    for idx, jf in enumerate(json_files[:15], 1):
+        fpath = os.path.join(chats_dir, jf)
+        size_kb = os.path.getsize(fpath) / 1024
+        mtime = datetime.datetime.fromtimestamp(os.path.getmtime(fpath)).strftime("%Y-%m-%d %H:%M")
+        print(f"  {idx:2d}) {jf:35} {C_CYAN}{size_kb:5.1f} KB{C_RESET} {C_DIM}({mtime}){C_RESET}")
+
+    c = input(f"\n{C_BOLD}Выберите номер чата (1-{min(15, len(json_files))}): {C_RESET}").strip()
+    if not c.isdigit() or not (1 <= int(c) <= min(15, len(json_files))):
+        return
+
+    chosen_file = json_files[int(c) - 1]
+    chosen_path = os.path.join(chats_dir, chosen_file)
+
+    try:
+        with open(chosen_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception as e:
+        print(f"{C_RED}Ошибка чтения {chosen_file}: {e}{C_RESET}")
+        return
+
+    if isinstance(raw, dict):
+        messages = raw.get("messages", [])
+    elif isinstance(raw, list):
+        messages = raw
+    else:
+        messages = []
+
+    if not messages:
+        print(f"{C_YELLOW}В выбранном чате нет сообщений.{C_RESET}")
+        return
+
+    out_lines = [
+        f"--- АРХИВ ДИАЛОГА: {chosen_file} ---",
+        f"Дата переноса: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Всего реплик: {len(messages)}",
+        "",
+    ]
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        role_label = "ВЫ" if role in ("user", "human") else "AI"
+        content = msg.get("content", "").strip()
+        out_lines.append(f"[{role_label}]:\n{content}\n" + "-" * 30 + "\n")
+
+    target_sub = os.path.join(notes_dir, "Мои мысли и размышления")
+    os.makedirs(target_sub, exist_ok=True)
+    target_name = f"Диалог_{os.path.splitext(chosen_file)[0]}.txt"
+    target_path = os.path.join(target_sub, target_name)
+
+    with open(target_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out_lines))
+
+    print(f"\n{C_GREEN}✅ Диалог успешно сохранён в заметку:{C_RESET} {target_path}")
+
+    archive_dir = os.path.join(chats_dir, "archive")
+    os.makedirs(archive_dir, exist_ok=True)
+    shutil.move(chosen_path, os.path.join(archive_dir, chosen_file))
+    print(f"{C_DIM}📁 Исходный JSON перемещён в chats/archive/{chosen_file}{C_RESET}")
+
+    mine_now = input("\nЗамайнить эту заметку в память Дворца? (Y/n): ").strip().lower()
+    if mine_now in ("y", "yes", ""):
+        venv_py = PATHS["venv_python"]
+        palace_dir = PATHS["palace_dir"]
+        cmd = [
+            venv_py, "-m", "mempalace", "mine", target_path,
+            "--wing", "personal",
+            "--mode", "projects",
+        ]
+        subprocess.run(cmd, cwd=palace_dir)
+        print(f"{C_GREEN}✅ Память обновлена!{C_RESET}")
+
+
+def _quick_add_thought():
+    print(f"\n{C_BOLD}💡 БЫСТРАЯ ЗАПИСЬ МЫСЛИ / ИНСАЙТА В ДВОРЕЦ ПАМЯТИ{C_RESET}")
+    print(f"{C_DIM}Заметка будет сохранена и автоматически замайнена в нужную комнату.{C_RESET}\n")
+
+    title = input(f"{C_BOLD}Заголовок мысли (например, 'О природе сознания'): {C_RESET}").strip()
+    if not title:
+        print(f"{C_YELLOW}Заголовок не может быть пустым.{C_RESET}")
+        return
+
+    print(f"{C_BOLD}Текст мысли (введите текст, пустая строка для завершения):{C_RESET}")
+    lines = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if line == "":
+            break
+        lines.append(line)
+
+    text = "\n".join(lines).strip()
+    if not text:
+        print(f"{C_YELLOW}Текст пуст, запись отменена.{C_RESET}")
+        return
+
+    print("\nВыберите категорию заметки:")
+    print("  1. 👤 Личные мысли и размышления (personal)")
+    print("  2. 🏛️ Философия (philosophy)")
+    print("  3. 🧠 Психология и архетипы (psychology)")
+    print("  4. 📷 Фотография и визуальное искусство (photography)")
+    print("  5. 🎨 Творчество и сценарии (creative)")
+    print("  6. 💡 Инсайт (insights)")
+
+    c = input(f"{C_BOLD}Ваш выбор (1-6, Enter = 1): {C_RESET}").strip()
+    cat_map = {
+        "1": ("personal", "Мои мысли и размышления"),
+        "2": ("philosophy", "Философия"),
+        "3": ("psychology", "Проект Архитипы Юнга Социальная Маска"),
+        "4": ("photography", "Фотографы"),
+        "5": ("creative", "Мои стихи"),
+        "6": ("insights", "insights"),
+    }
+    wing, folder = cat_map.get(c, ("personal", "Мои мысли и размышления"))
+
+    notes_dir = PATHS["notes_dir"] or os.path.join(PATHS["palace_dir"] or "", "my_notes")
+    if folder != "insights":
+        target_dir = os.path.join(notes_dir, folder)
+    else:
+        target_dir = os.path.join(PATHS["palace_dir"] or "", "insights")
+    os.makedirs(target_dir, exist_ok=True)
+
+    safe_title = re.sub(r'[^\w\s\-]', '', title).strip()
+    target_file = os.path.join(target_dir, f"{safe_title}.txt")
+
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    content = f"# {title}\nДата: {now_str}\nКатегория: {wing}\n\n{text}\n"
+
+    with open(target_file, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    print(f"\n{C_GREEN}✅ Мысль сохранена в файл:{C_RESET} {target_file}")
+
+    mine_now = input("Добавить в память Дворца Памяти прямо сейчас? (Y/n): ").strip().lower()
+    if mine_now in ("y", "yes", ""):
+        venv_py = PATHS["venv_python"]
+        palace_dir = PATHS["palace_dir"]
+        cmd = [
+            venv_py, "-m", "mempalace", "mine", target_file,
+            "--wing", wing,
+            "--mode", "projects",
+        ]
+        subprocess.run(cmd, cwd=palace_dir)
+        print(f"{C_GREEN}✅ Мысль оцифрована и добавлена во Дворец!{C_RESET}")
+
+
+def _archive_raw_chats():
+    chats_dir = os.path.join(PATHS["palace_dir"] or "", "chats")
+    if not os.path.isdir(chats_dir):
+        print(f"{C_YELLOW}Папка чатов не найдена.{C_RESET}")
+        return
+
+    json_files = [f for f in os.listdir(chats_dir) if f.endswith(".json")]
+    if not json_files:
+        print(f"{C_GREEN}Все чаты уже перемещены в архив.{C_RESET}")
+        return
+
+    archive_dir = os.path.join(chats_dir, "archive")
+    os.makedirs(archive_dir, exist_ok=True)
+    for jf in json_files:
+        shutil.move(os.path.join(chats_dir, jf), os.path.join(archive_dir, jf))
+    print(f"{C_GREEN}✅ Перемещено {len(json_files)} файлов чатов в chats/archive/{C_RESET}")
+
+
+# ── 9. ОЧИСТКА, СЖАТИЕ И ОПТИМИЗАЦИЯ ПАМЯТИ ──────────────────────────────────
+def action_memory_cleanup_and_optimize():
+    while True:
+        print(f"\n{C_BOLD}======================================================={C_RESET}")
+        print(f"  {C_CYAN}🧹 ОЧИСТКА, СЖАТИЕ И ОПТИМИЗАЦИЯ ПАМЯТИ{C_RESET}")
+        print(f"{C_BOLD}======================================================={C_RESET}")
+
+        print("1. 🗜️  Сжатие базы данных (SQLite VACUUM) — экономит 30-50% места")
+        print("2. 🧼 Санитарная чистка текстовой базы — удаление 0-байтных файлов")
+        print("3. 🎯 Очистить ТОЛЬКО векторную базу — заметки в my_notes НЕ трогаются")
+        print("4. 🗂️  Архивировать и очистить my_notes (с обязательным бэкапом)")
+        print("5. 💣 Полный сброс всей памяти MemPalace (с автобэкапом)")
+        print("6. 🧹 Очистить временные кэши и логи")
+        print("7. 📦 Создать полную резервную копию базы (.tar.gz)")
+        print("0. ◀️ Назад")
+
+        sub = input(f"\n{C_BOLD}Ваш выбор (0-7): {C_RESET}").strip()
+        if sub in ("0", ""):
+            break
+        elif sub == "1":
+            _vacuum_databases()
+        elif sub == "2":
+            _clean_empty_and_system_files()
+        elif sub == "3":
+            _wipe_vector_db_only()
+        elif sub == "4":
+            _archive_and_wipe_notes()
+        elif sub == "5":
+            _full_reset_palace()
+        elif sub == "6":
+            _clean_temp_caches()
+        elif sub == "7":
+            _create_full_backup()
+
+
+def _vacuum_databases():
+    print(f"\n{C_BOLD}🗜️  СЖАТИЕ БАЗ ДАННЫХ (SQLITE VACUUM)...{C_RESET}")
+    dbs = [PATHS["chroma_db"], PATHS["kg_db"]]
+    total_saved = 0
+
+    for db_path in dbs:
+        if not os.path.isfile(db_path):
+            continue
+        fname = os.path.basename(db_path)
+        size_before = os.path.getsize(db_path)
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.execute("VACUUM;")
+            conn.close()
+            size_after = os.path.getsize(db_path)
+            diff = size_before - size_after
+            total_saved += max(0, diff)
+            pct = (diff / size_before * 100) if size_before else 0
+            b_mb = size_before / 1024 / 1024
+            a_mb = size_after / 1024 / 1024
+            print(
+                f"  • {fname:25}: {b_mb:5.1f} MB ➔ "
+                f"{C_GREEN}{a_mb:5.1f} MB{C_RESET} "
+                f"({C_CYAN}сжато на {pct:.1f}%{C_RESET})"
+            )
+        except Exception as e:
+            print(f"  • {fname}: {C_RED}Ошибка: {e}{C_RESET}")
+
+    saved_mb = total_saved / 1024 / 1024
+    print(f"\n{C_GREEN}✅ Сжатие завершено! Освобождено: {saved_mb:.1f} MB.{C_RESET}")
+
+
+def _clean_empty_and_system_files():
+    notes_dir = PATHS["notes_dir"]
+    if not notes_dir or not os.path.isdir(notes_dir):
+        print(f"{C_RED}Папка my_notes не найдена.{C_RESET}")
+        return
+
+    empty_files = []
+    junk_files = []
+
+    for root, _, files in os.walk(notes_dir):
+        for f in files:
+            p = os.path.join(root, f)
+            if f in (".DS_Store", "Thumbs.db") or f.startswith("._"):
+                junk_files.append(p)
+            elif os.path.isfile(p) and os.path.getsize(p) == 0:
+                empty_files.append(p)
+
+    total_junk = len(empty_files) + len(junk_files)
+    if total_junk == 0:
+        print(f"{C_GREEN}✅ База заметок чиста! Пустых и мусорных файлов не обнаружено.{C_RESET}")
+        return
+
+    print(f"\n{C_BOLD}Найдено для санитарной очистки:{C_RESET}")
+    print(f"  • Пустых файлов (0 байт): {C_YELLOW}{len(empty_files)}{C_RESET}")
+    print(f"  • Системного мусора (.DS_Store): {C_YELLOW}{len(junk_files)}{C_RESET}")
+
+    if empty_files:
+        print(f"\n{C_DIM}Примеры пустых файлов (0 байт):{C_RESET}")
+        for p in empty_files[:5]:
+            print(f"  • {os.path.relpath(p, notes_dir)}")
+
+    confirm = input(
+        f"\n{C_BOLD}Удалить эти {total_junk} пустых/мусорных файлов? (y/N): {C_RESET}"
+    ).strip().lower()
+
+    if confirm == "y":
+        deleted = 0
+        for p in empty_files + junk_files:
+            try:
+                os.remove(p)
+                deleted += 1
+            except Exception:
+                pass
+        print(f"{C_GREEN}✅ Удалено {deleted} файлов. Текстовая база оптимизирована!{C_RESET}")
+    else:
+        print(f"{C_DIM}Очистка отменена.{C_RESET}")
+
+
+def _wipe_vector_db_only():
+    palace_vector_dir = os.path.join(PATHS["data_dir"], "palace")
+    print(f"\n{C_YELLOW}⚠️  ВНИМАНИЕ: Очистка ТОЛЬКО векторной базы{C_RESET}")
+    print(f"Путь: {palace_vector_dir}")
+    print(f"{C_GREEN}Заметки в my_notes НЕ пострадают и останутся нетронутыми.{C_RESET}")
+
+    confirm = input(f"\n{C_BOLD}Сбросить векторную базу ChromaDB? (y/N): {C_RESET}").strip().lower()
+    if confirm == "y":
+        if os.path.isdir(palace_vector_dir):
+            shutil.rmtree(palace_vector_dir, ignore_errors=True)
+            print(f"{C_GREEN}✅ Векторная база сброшена.{C_RESET}")
+            remine = input("Запустить быстрый майнинг my_notes заново? (Y/n): ").strip().lower()
+            if remine in ("y", "yes", ""):
+                action_sync_mine()
+
+
+def _archive_and_wipe_notes():
+    notes_dir = PATHS["notes_dir"]
+    if not notes_dir or not os.path.isdir(notes_dir):
+        print(f"{C_RED}Папка my_notes не найдена.{C_RESET}")
+        return
+
+    print(f"\n{C_RED}{C_BOLD}⚠️  ВНИМАНИЕ: ОЧИСТКА ПАПКИ MY_NOTES!{C_RESET}")
+    print("Перед очисткой будет АВТОМАТИЧЕСКИ создан полный архив всех заметок.")
+
+    prompt_wipe = f"{C_BOLD}Архивировать и очистить my_notes? (y/N): {C_RESET}"
+    confirm = input(prompt_wipe).strip().lower()
+    if confirm != "y":
+        print(f"{C_DIM}Отменено.{C_RESET}")
+        return
+
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_tar = os.path.expanduser(f"~/Documents/my_notes_archive_{ts}.tar.gz")
+
+    print(f"📦 Создаю резервный архив в {backup_tar}...")
+    try:
+        with tarfile.open(backup_tar, "w:gz") as tar:
+            tar.add(notes_dir, arcname="my_notes")
+        print(f"{C_GREEN}✅ Резервный архив создан успешно!{C_RESET}")
+    except Exception as e:
+        print(f"{C_RED}❌ Ошибка создания архива: {e}. Очистка отменена.{C_RESET}")
+        return
+
+    for item in os.listdir(notes_dir):
+        p = os.path.join(notes_dir, item)
+        if os.path.isdir(p):
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
+    print(f"{C_GREEN}✅ Папка my_notes очищена. Архив сохранён в:{C_RESET} {backup_tar}")
+
+
+def _full_reset_palace():
+    data_dir = PATHS["data_dir"]
+    print(f"\n{C_RED}{C_BOLD}💣 ПОЛНЫЙ СБРОС ВСЕЙ ПАМЯТИ MEMPALACE (~/.mempalace){C_RESET}")
+    print("Будут удалены ChromaDB, Knowledge Graph и системные кэши.")
+
+    phrase = input(f"Для подтверждения введите слово '{C_BOLD}RESET{C_RESET}': ").strip()
+    if phrase != "RESET":
+        print(f"{C_DIM}Сброс отменён.{C_RESET}")
+        return
+
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = os.path.expanduser(f"~/Documents/mempalace_full_backup_{ts}.tar.gz")
+    print(f"📦 Создаю полный защитный архив в {backup_file}...")
+    try:
+        with tarfile.open(backup_file, "w:gz") as tar:
+            tar.add(data_dir, arcname=".mempalace")
+        print(f"{C_GREEN}✅ Защитный архив создан.{C_RESET}")
+    except Exception as e:
+        print(f"{C_RED}❌ Ошибка архивации: {e}. Сброс отменён ради безопасности.{C_RESET}")
+        return
+
+    shutil.rmtree(data_dir, ignore_errors=True)
+    os.makedirs(data_dir, exist_ok=True)
+    print(f"{C_GREEN}✅ Все данные MemPalace сброшены. Память чиста.{C_RESET}")
+
+
+def _clean_temp_caches():
+    print("🧹 Очищаю кэши...")
+    for cache_folder in [
+        os.path.join(PATHS["palace_dir"] or "", "web_search_cache"),
+        os.path.join(PATHS["palace_dir"] or "", "temp_media"),
+    ]:
+        if os.path.isdir(cache_folder):
+            shutil.rmtree(cache_folder, ignore_errors=True)
+            os.makedirs(cache_folder, exist_ok=True)
+    print(f"{C_GREEN}✅ Временные файлы очищены.{C_RESET}")
+
+
+def _create_full_backup():
+    data_dir = PATHS["data_dir"]
+    palace_dir = os.path.join(data_dir, "palace")
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = os.path.expanduser(f"~/Documents/mempalace_backup_{ts}.tar.gz")
+    print(f"📦 Архивирую {palace_dir}...")
+    try:
+        with tarfile.open(backup_file, "w:gz") as tar:
+            tar.add(palace_dir, arcname="palace")
+        print(f"{C_GREEN}✅ Резервная копия создана:{C_RESET} {backup_file}")
+    except Exception as e:
+        print(f"{C_RED}❌ Ошибка создания бэкапа: {e}{C_RESET}")
+
+
+# ── 10. УПРАВЛЕНИЕ TELEGRAM-БОТОМ ────────────────────────────────────────────
 def action_bot_manager():
     print(f"\n{C_BOLD}======================================================={C_RESET}")
     print(f"  {C_CYAN}🤖 УПРАВЛЕНИЕ TELEGRAM-БОТОМ MEMPALACE{C_RESET}")
@@ -784,42 +1472,6 @@ def action_bot_manager():
         print(f"{C_RED}❌ Скрипт PalaceManager_TelegrammBot.command не найден.{C_RESET}")
 
 
-# ── 8. ОБСЛУЖИВАНИЕ И РЕЗЕРВНАЯ КОПИЯ ─────────────────────────────────────────
-def action_maintenance():
-    print(f"\n{C_BOLD}======================================================={C_RESET}")
-    print(f"  {C_CYAN}🧹 ОБСЛУЖИВАНИЕ И РЕЗЕРВНОЕ КОПИРОВАНИЕ{C_RESET}")
-    print(f"{C_BOLD}======================================================={C_RESET}")
-
-    data_dir = PATHS["data_dir"]
-    palace_dir = os.path.join(data_dir, "palace")
-
-    print("1. 📦 Создать резервную копию базы (Backup .tar.gz)")
-    print("2. 🧹 Очистить временные кэши и логи")
-    print("0. ◀️ Назад")
-
-    sub = input(f"\n{C_BOLD}Ваш выбор (0-2): {C_RESET}").strip()
-    if sub == "1":
-        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = os.path.expanduser(f"~/Documents/mempalace_backup_{ts}.tar.gz")
-        print(f"📦 Архивирую {palace_dir}...")
-        try:
-            with tarfile.open(backup_file, "w:gz") as tar:
-                tar.add(palace_dir, arcname="palace")
-            print(f"{C_GREEN}✅ Резервная копия создана:{C_RESET} {backup_file}")
-        except Exception as e:
-            print(f"{C_RED}❌ Ошибка создания бэкапа: {e}{C_RESET}")
-    elif sub == "2":
-        print("🧹 Очищаю кэши...")
-        for cache_folder in [
-            os.path.join(PATHS["palace_dir"] or "", "web_search_cache"),
-            os.path.join(PATHS["palace_dir"] or "", "temp_media"),
-        ]:
-            if os.path.isdir(cache_folder):
-                shutil.rmtree(cache_folder, ignore_errors=True)
-                os.makedirs(cache_folder, exist_ok=True)
-        print(f"{C_GREEN}✅ Временные файлы очищены.{C_RESET}")
-
-
 # ── ГЛАВНОЕ МЕНЮ ─────────────────────────────────────────────────────────────
 def main_menu():
     while True:
@@ -829,19 +1481,23 @@ def main_menu():
         print(f"{border}")
         palace_p = PATHS["palace_dir"] or "Не найдена"
         bot_p = PATHS["bot_dir"] or "Не найден"
-        print(f"{C_DIM}  Папка: {palace_p} | Бот: {bot_p}{C_RESET}\n")
+        cur_ai = get_current_ai_model()
+        print(f"{C_DIM}  Папка: {palace_p} | Бот: {bot_p}{C_RESET}")
+        print(f"{C_DIM}  Активная модель: {C_GREEN}{cur_ai}{C_RESET}\n")
 
-        print(f"  {C_GREEN}[1]{C_RESET} 📊 {C_BOLD}Статус и Дерево Памяти{C_RESET}")
-        print(f"  {C_GREEN}[2]{C_RESET} 📥 {C_BOLD}Умный импорт из Apple Notes{C_RESET}")
-        print(f"  {C_GREEN}[3]{C_RESET} ⚡ {C_BOLD}Быстрая синхронизация и майнинг{C_RESET}")
-        print(f"  {C_GREEN}[4]{C_RESET} 🧠 {C_BOLD}AI-Реорганизация базы (Комнаты){C_RESET}")
-        print(f"  {C_GREEN}[5]{C_RESET} 🔍 {C_BOLD}Интерактивный поиск по Дворцу{C_RESET}")
-        print(f"  {C_GREEN}[6]{C_RESET} 🕸️  {C_BOLD}Граф Знаний (Tunnels, сущности){C_RESET}")
-        print(f"  {C_GREEN}[7]{C_RESET} 🤖 {C_BOLD}Управление Telegram-Ботом{C_RESET}")
-        print(f"  {C_GREEN}[8]{C_RESET} 🧹 {C_BOLD}Обслуживание и Резервная копия{C_RESET}")
-        print(f"  {C_RED}[0]{C_RESET} 🚪 {C_BOLD}Выход{C_RESET}\n")
+        print(f"  {C_GREEN}[1]{C_RESET}  📊 {C_BOLD}Статус и Дерево Памяти{C_RESET}")
+        print(f"  {C_GREEN}[2]{C_RESET}  📥 {C_BOLD}Умный импорт из Apple Notes{C_RESET}")
+        print(f"  {C_GREEN}[3]{C_RESET}  ⚡ {C_BOLD}Быстрая синхронизация и майнинг{C_RESET}")
+        print(f"  {C_GREEN}[4]{C_RESET}  🧠 {C_BOLD}AI-Реорганизация базы (Комнаты){C_RESET}")
+        print(f"  {C_GREEN}[5]{C_RESET}  🔍 {C_BOLD}Интерактивный поиск по Дворцу{C_RESET}")
+        print(f"  {C_GREEN}[6]{C_RESET}  🕸️  {C_BOLD}Граф Знаний (Tunnels, сущности){C_RESET}")
+        print(f"  {C_GREEN}[7]{C_RESET}  🎛️  {C_BOLD}Модели ИИ (Ollama & Cloud){C_RESET}")
+        print(f"  {C_GREEN}[8]{C_RESET}  💬 {C_BOLD}Архивация чатов и мысли в базу{C_RESET}")
+        print(f"  {C_GREEN}[9]{C_RESET}  🧹 {C_BOLD}Очистка, Сжатие и Оптимизация памяти{C_RESET}")
+        print(f"  {C_GREEN}[10]{C_RESET} 🤖 {C_BOLD}Управление Telegram-Ботом{C_RESET}")
+        print(f"  {C_RED}[0]{C_RESET}  🚪 {C_BOLD}Выход{C_RESET}\n")
 
-        choice = input(f"{C_BOLD}Выберите пункт (0-8): {C_RESET}").strip()
+        choice = input(f"{C_BOLD}Выберите пункт (0-10): {C_RESET}").strip()
 
         if choice == "1":
             action_status()
@@ -856,9 +1512,13 @@ def main_menu():
         elif choice == "6":
             action_knowledge_graph()
         elif choice == "7":
-            action_bot_manager()
+            action_manage_ai_models()
         elif choice == "8":
-            action_maintenance()
+            action_chats_and_thoughts()
+        elif choice == "9":
+            action_memory_cleanup_and_optimize()
+        elif choice == "10":
+            action_bot_manager()
         elif choice in ("0", "exit", "q"):
             print(f"\n{C_CYAN}До встречи в Дворце Памяти! 👋{C_RESET}\n")
             break
@@ -883,10 +1543,14 @@ if __name__ == "__main__":
             action_search()
         elif arg in ("graph", "tunnels", "6"):
             action_knowledge_graph()
-        elif arg in ("bot", "7"):
+        elif arg in ("models", "ai", "7"):
+            action_manage_ai_models()
+        elif arg in ("chats", "thoughts", "8"):
+            action_chats_and_thoughts()
+        elif arg in ("cleanup", "clean", "vacuum", "9"):
+            action_memory_cleanup_and_optimize()
+        elif arg in ("bot", "10"):
             action_bot_manager()
-        elif arg in ("maintenance", "backup", "8"):
-            action_maintenance()
         else:
             main_menu()
     else:
