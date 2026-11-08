@@ -854,7 +854,8 @@ def test_show_drawers_page_integration(monkeypatch):
     asyncio.run(navigation._show_drawers_page(
         msg.edit_text, TEST_UID, "dreams", "r1", 0,
     ))
-    assert "Записи в dreams/r1" in msg.edited[-1]
+    expected_wing = navigation.format_wing_label("dreams")
+    assert f"Записи в {expected_wing}/r1" in msg.edited[-1]
     data = _markup_data(msg)
     assert "p_rd:0" in data
     assert "p_rd:1" in data

@@ -857,8 +857,7 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
         w_label = format_wing_label(wing)
         r_label = format_room_label(room)
         lines = [
-            f"<b>📖 Записи в {w_label}/{r_label}</b><!-- Записи в {wing}/{room} -->  "
-            f"({total} записей)\n"
+            f"<b>📖 Записи в {w_label}/{r_label}</b>  ({total} записей)\n"
             f"<i>{render_breadcrumbs(wing=wing, room=room).strip()}</i>\n",
         ]
         for i, d in enumerate(drawers):
