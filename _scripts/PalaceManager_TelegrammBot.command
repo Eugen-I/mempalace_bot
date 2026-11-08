@@ -174,11 +174,20 @@ while true; do
                     # Проверка наличия активной модели в .current_ai
                     CURRENT_MODEL=$(cat "$DATA_DIR/.current_ai" 2>/dev/null || echo "none")
                     if [ "$CURRENT_MODEL" != "none" ]; then
-                        echo "🔍 Проверка модели Ollama: $CURRENT_MODEL"
-                        if ! ollama list | grep -q "$CURRENT_MODEL"; then
-                            echo -e "${YELLOW}⚠️ Модель $CURRENT_MODEL не найдена в Ollama. Скачиваю...${NC}"
-                            ollama pull "$CURRENT_MODEL"
-                        fi
+                        case "$CURRENT_MODEL" in
+                            gemini*|gpt*|claude*|openai*)
+                                echo -e "🌐 Облачная модель: ${CYAN}$CURRENT_MODEL${NC} (Ollama не требуется)"
+                                ;;
+                            *)
+                                echo "🔍 Проверка модели Ollama: $CURRENT_MODEL"
+                                if command -v ollama >/dev/null 2>&1; then
+                                    if ! ollama list | grep -q "$CURRENT_MODEL"; then
+                                        echo -e "${YELLOW}⚠️ Модель $CURRENT_MODEL не найдена в Ollama. Скачиваю...${NC}"
+                                        ollama pull "$CURRENT_MODEL"
+                                    fi
+                                fi
+                                ;;
+                        esac
                     fi
 
                     # Запуск бота в фоновом режиме, записываем PID, затем ждем завершения
