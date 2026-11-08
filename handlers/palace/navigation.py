@@ -1104,7 +1104,7 @@ async def cb_read_drawer(cb: types.CallbackQuery):
                 Path(NOTES_DIR) / source_file,
                 Path(NOTES_DIR) / os.path.basename(source_file),
                 Path(PALACE_DIR) / source_file,
-                Path("/Users/evg.pit/Documents/mempalace") / source_file,
+                Path(PALACE_DIR) / os.path.basename(source_file),
             ]
             for p in candidates:
                 try:

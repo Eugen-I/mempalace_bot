@@ -45,6 +45,8 @@ bot.pid
 # Сгенерированные артефакты
 exports/
 mempalace_bot.egg-info/
+palace_graph_data.json
+palace-graph.html
 
 # Логи
 *.log
