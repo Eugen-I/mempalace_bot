@@ -217,14 +217,14 @@ async def _search_via_api(
         if not hits:
             return {"text": "", "sources": []}
 
-        # Filter irrelevant results (BM25 score = 0.0 or distance too high)
+        # Filter irrelevant results (distance too high or zero lexical/semantic signal)
         filtered = []
         for h in hits:
             bm25 = h.get("bm25_score")
             distance = h.get("distance")
-            if bm25 is not None and bm25 == 0.0:
-                continue
             if distance is not None and distance > 0.7:
+                continue
+            if distance is None and bm25 is not None and bm25 <= 0.0:
                 continue
             filtered.append(h)
 

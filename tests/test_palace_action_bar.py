@@ -493,10 +493,10 @@ def test_cb_ab_ai_success(monkeypatch):
     _seed_answer(text="текст", ctx={"wing": "w", "room": "r"})
     cb = FakeCb(data="ab_ai:abcd")
     asyncio.run(ab.cb_ab_ai(cb))
-    text = cb.message.edits[-1][0]
-    assert text == "🤖 <b>Режим анализа:</b>"
-    assert _kb_data(cb.message.edits[-1][2]) == [
-        "ab_ai_m:a:abcd", "ab_ai_m:c:abcd", "ab_back:abcd",
+    text = cb.message.answers[-1][0]
+    assert "Режим анализа" in text
+    assert _kb_data(cb.message.answers[-1][2]) == [
+        "ab_ai_m:a:abcd", "ab_ai_m:c:abcd", "ab_ai_cancel:abcd",
     ]
 
 
@@ -603,7 +603,7 @@ def test_cb_ab_ai_run_mode_a(monkeypatch):
     assert "результат анализа" in captured["text"]
     assert "текст ответа" in captured["prompt"]
     assert captured["ctx"]["_origin_sid"] == "abcd"
-    assert cb.message.answers[0][0] == "🧠 Анализирую..."
+    assert cb.message.edits[0][0] == "🧠 Анализирую..."
 
 
 def test_cb_ab_ai_run_mode_a_error(monkeypatch):

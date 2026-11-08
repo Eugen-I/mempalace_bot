@@ -103,11 +103,18 @@ async def cb_wing_search_select(callback: types.CallbackQuery):
 @router.message(F.text.regex(r"^/search\b.*"))
 @allowed_only
 async def cmd_search(message: types.Message):
-    text = message.text
-    query_raw = text[8:].strip()
+    text = message.text or ""
+    m = re.match(r"^/search(?:@\w+)?(?:\s+(.*))?$", text.strip(), re.DOTALL)
+    query_raw = (m.group(1) or "").strip() if m else ""
     if not query_raw:
+        kb = InlineKeyboardBuilder()
+        kb.row(types.InlineKeyboardButton(text="🔍 По всей базе", callback_data="search:all"))
+        kb.row(types.InlineKeyboardButton(text="🕸️ Поиск по крылу", callback_data="search:wing"))
+        kb.row(types.InlineKeyboardButton(text="🌐 Поиск в интернете", callback_data="search:web"))
         return await message.answer(
-            "❌ Укажите запрос: /search <текст> или /search --wing dreams <текст>",
+            "❌ Укажите запрос: /search <текст> или /search --wing dreams <текст>\n"
+            "Или выберите тип поиска ниже:",
+            reply_markup=kb.as_markup(),
         )
     wing = ""
     search_text = query_raw

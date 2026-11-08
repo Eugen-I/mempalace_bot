@@ -188,12 +188,27 @@ async def cmd_sync_button(message: types.Message):
 async def cmd_search_button(message: types.Message):
     kb = InlineKeyboardBuilder()
     kb.row(
-        types.InlineKeyboardButton(text="🔍 Поиск по крылу", callback_data="search:wing"),
+        types.InlineKeyboardButton(text="🔍 По всей базе", callback_data="search:all"),
+    )
+    kb.row(
+        types.InlineKeyboardButton(text="🕸️ Поиск по крылу", callback_data="search:wing"),
     )
     kb.row(
         types.InlineKeyboardButton(text="🌐 Поиск в интернет", callback_data="search:web"),
     )
     await message.answer("Выберите тип поиска:", reply_markup=kb.as_markup())
+
+
+@fallback_router.callback_query(F.data == "search:all")
+@allowed_callback
+async def cb_search_all(callback: types.CallbackQuery):
+    from services.bot_setup import pending_wing_search as _pending_wing_search
+    _pending_wing_search[callback.from_user.id] = ""
+    await callback.message.answer(
+        "🔍 Введите текст для поиска по всей базе (Дворец, заметки, файлы):",
+        reply_markup=types.ForceReply(selective=True, input_field_placeholder="Запрос..."),
+    )
+    await callback.answer()
 
 
 @fallback_router.callback_query(F.data == "search:wing")

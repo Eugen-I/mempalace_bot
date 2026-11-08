@@ -387,7 +387,7 @@ async def test_api_no_results(monkeypatch):
 async def test_api_filters_bad_hits(monkeypatch):
     _patch_mempalace_modules(monkeypatch)
     hits = [
-        {"bm25_score": 0.0, "distance": 0.1, "text": "drop"},
+        {"bm25_score": 0.0, "distance": None, "text": "drop"},
         {"bm25_score": 5.0, "distance": 0.9, "text": "drop2"},
         {"bm25_score": 4.0, "distance": 0.2, "text": "keep"},
     ]
@@ -404,7 +404,7 @@ async def test_api_filters_bad_hits(monkeypatch):
 async def test_api_filters_all_hits_out(monkeypatch):
     _patch_mempalace_modules(monkeypatch)
     hits = [
-        {"bm25_score": 0.0, "distance": 0.1, "text": "drop1"},
+        {"bm25_score": 0.0, "distance": None, "text": "drop1"},
         {"bm25_score": 5.0, "distance": 0.9, "text": "drop2"},
     ]
     monkeypatch.setattr(

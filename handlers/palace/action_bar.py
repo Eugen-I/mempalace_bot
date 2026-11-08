@@ -352,13 +352,24 @@ async def cb_ab_ai(cb: types.CallbackQuery):
         text="🏰 С контекстом комнаты", callback_data=f"ab_ai_m:c:{sid}",
     ))
     kb.row(types.InlineKeyboardButton(
-        text="◀️ Назад к ответу", callback_data=f"ab_back:{sid}",
+        text="❌ Отмена", callback_data=f"ab_ai_cancel:{sid}",
     ))
-    await cb.message.edit_text(
-        "🤖 <b>Режим анализа:</b>",
+    await cb.message.answer(
+        "🤖 <b>Режим анализа:</b>\n"
+        "<i>Исходный текст остаётся в сообщении выше.</i>",
         parse_mode="HTML",
         reply_markup=kb.as_markup(),
     )
+
+
+@router.callback_query(F.data.startswith("ab_ai_cancel:"))
+@allowed_callback
+async def cb_ab_ai_cancel(cb: types.CallbackQuery):
+    await cb.answer("Анализ отменён")
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
 
 
 async def _build_ai_context(answer: Answer, uid: int) -> str:
@@ -420,7 +431,12 @@ async def cb_ab_ai_run(cb: types.CallbackQuery):
         await cb.answer("Сессия истекла. Откройте заново.", show_alert=True)
         return
     uid = cb.from_user.id
-    status = await cb.message.answer("🧠 Анализирую...")
+    try:
+        await cb.message.edit_text("🧠 Анализирую...")
+        status_edit = cb.message.edit_text
+    except Exception:
+        status = await cb.message.answer("🧠 Анализирую...")
+        status_edit = status.edit_text
     try:
         engine, model = get_current_ai()
         if mode == "c":
@@ -449,14 +465,14 @@ async def cb_ab_ai_run(cb: types.CallbackQuery):
         ctx["_origin_sid"] = answer.sid
         await finalize_answer(
             uid,
-            status.edit_text,
+            status_edit,
             result or "❌ Пустой ответ.",
             ctx=ctx,
             title="<b>🤖 Анализ</b>",
             is_html=False,
         )
     except Exception as e:
-        await status.edit_text(format_user_error(e, "action_bar_analysis"))
+        await status_edit(format_user_error(e, "action_bar_analysis"))
 
 
 # ─── 🌐 Поиск в интернете ───

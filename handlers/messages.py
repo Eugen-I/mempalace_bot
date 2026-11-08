@@ -308,6 +308,7 @@ async def process_user_message(message: types.Message):
             from handlers.palace.navigation import (
                 _build_room_callback_data,
                 _build_wing_callback_data,
+                format_room_label,
                 render_breadcrumbs,
             )
             mcp = get_mcp()
@@ -315,7 +316,10 @@ async def process_user_message(message: types.Message):
             parsed = json.loads(raw) if raw else {}
             rooms = parsed.get("rooms", {})
             query_lower = text.strip().lower()
-            matched = {r: cnt for r, cnt in rooms.items() if query_lower in r.lower()}
+            matched = {
+                r: cnt for r, cnt in rooms.items()
+                if query_lower in r.lower() or query_lower in format_room_label(r).lower()
+            }
 
             kb = InlineKeyboardBuilder()
             if not matched:
@@ -374,19 +378,49 @@ async def process_user_message(message: types.Message):
 
             kb = InlineKeyboardBuilder()
             for s in sources:
-                loc = f"{s['wing']}/{s['room']}"
-                kb.row(types.InlineKeyboardButton(
-                    text=f"📄 [{s['id']}] {loc}",
-                    callback_data=f"p_src:{s['id']}",
-                ))
+                stype = s.get("source_type", "palace")
+                sid = str(s.get("id", ""))
+                if stype == "notes":
+                    title = s.get("title") or s.get("location") or "Заметка"
+                    kb.row(types.InlineKeyboardButton(
+                        text=f"📝 [{sid}] {title[:28]}",
+                        callback_data=f"p_notesrc:{sid}",
+                    ))
+                elif stype == "files":
+                    title = s.get("title") or s.get("location") or "Файл"
+                    kb.row(types.InlineKeyboardButton(
+                        text=f"📁 [{sid}] {title[:28]}",
+                        callback_data=f"p_filesrc:{sid}",
+                    ))
+                else:
+                    loc = (
+                        f"{s.get('wing', '')}/{s.get('room', '')}"
+                        if s.get("wing") or s.get("room")
+                        else s.get("file", "")
+                    )
+                    kb.row(types.InlineKeyboardButton(
+                        text=f"📄 [{sid}] {loc}",
+                        callback_data=f"p_src:{sid}",
+                    ))
             kb.row(types.InlineKeyboardButton(
                 text="🔍 Новый поиск", callback_data="search:wing",
             ))
 
-            await st.edit_text(
-                result_text, parse_mode="HTML",
-                reply_markup=kb.as_markup(),
-            )
+            from services.text_formatter import split_message
+            parts = split_message(result_text)
+            first_part = parts[0] if parts else result_text
+            try:
+                await st.edit_text(
+                    first_part, parse_mode="HTML",
+                    reply_markup=kb.as_markup(),
+                )
+            except Exception:
+                await st.edit_text(
+                    first_part,
+                    reply_markup=kb.as_markup(),
+                )
+            for p in parts[1:]:
+                await message.answer(p)
         except Exception as e:
             logger.warning("[WING_SEARCH] Ошибка поиска: %s", e, exc_info=True)
             await st.edit_text(format_user_error(e, "wing_search"))
