@@ -686,27 +686,77 @@ def action_search():
 # ── 6. ГРАФ ЗНАНИЙ (KNOWLEDGE GRAPH) ─────────────────────────────────────────
 def action_knowledge_graph():
     print(f"\n{C_BOLD}======================================================={C_RESET}")
-    print(f"  {C_CYAN}🕸️  ГРАФ ЗНАНИЙ И СУЩНОСТИ MEMPALACE{C_RESET}")
+    print(f"  {C_CYAN}🕸️  ГРАФ ЗНАНИЙ И ТУННЕЛИ MEMPALACE{C_RESET}")
     print(f"{C_BOLD}======================================================={C_RESET}")
 
     kg_db = PATHS["kg_db"]
     if not os.path.isfile(kg_db):
-        print(f"{C_YELLOW}ℹ️ База Knowledge Graph не найдена.{C_RESET}")
+        print(f"{C_YELLOW}ℹ️ База Knowledge Graph не найдена по пути: {kg_db}{C_RESET}")
         return
 
     try:
         conn = sqlite3.connect(kg_db)
         cur = conn.cursor()
-        cur.execute("SELECT count(*) FROM facts;")
-        fact_count = cur.fetchone()[0]
-        cur.execute("SELECT DISTINCT subject FROM facts LIMIT 25;")
-        entities = [r[0] for r in cur.fetchall()]
-        conn.close()
 
-        print(f"📊 Всего связей (фактов) в графе: {C_GREEN}{fact_count:,}{C_RESET}")
-        print(f"\n{C_BOLD}Примеры сущностей и авторов:{C_RESET}")
-        for e in entities:
-            print(f"  • {e}")
+        cur.execute("SELECT count(*) FROM entities;")
+        ent_count = cur.fetchone()[0]
+
+        cur.execute("SELECT count(*) FROM triples;")
+        triple_count = cur.fetchone()[0]
+
+        print(f"📊 Концептов и сущностей (Entities): {C_GREEN}{ent_count:,}{C_RESET}")
+        print(f"🔗 Смысловых связей (Triples / Tunnels): {C_GREEN}{triple_count:,}{C_RESET}\n")
+
+        # Примеры сущностей
+        cur.execute("SELECT name, type FROM entities ORDER BY created_at DESC LIMIT 10;")
+        recent_ents = cur.fetchall()
+        if recent_ents:
+            print(f"{C_BOLD}Примеры сущностей:{C_RESET}")
+            for name, etype in recent_ents:
+                type_badge = f"{C_DIM}[{etype}]{C_RESET}" if etype and etype != "unknown" else ""
+                print(f"  • {C_BOLD}{name}{C_RESET} {type_badge}")
+            print()
+
+        # Примеры связей
+        cur.execute("""
+            SELECT subject, predicate, object
+            FROM triples
+            ORDER BY extracted_at DESC
+            LIMIT 6;
+        """)
+        sample_triples = cur.fetchall()
+        if sample_triples:
+            print(f"{C_BOLD}Примеры семантических связей (Туннелей):{C_RESET}")
+            for s, p, o in sample_triples:
+                rel = f"{C_CYAN}{s}{C_RESET} ─({C_YELLOW}{p}{C_RESET})─▶ {C_GREEN}{o}{C_RESET}"
+                print(f"  • {rel}")
+            print()
+
+        # Интерактивный поиск связей
+        while True:
+            q = input(
+                f"\n{C_BOLD}Поиск связей сущности (или Enter для выхода): {C_RESET}"
+            ).strip()
+            if not q:
+                break
+
+            cur.execute("""
+                SELECT subject, predicate, object
+                FROM triples
+                WHERE subject LIKE ? OR object LIKE ? OR predicate LIKE ?
+                LIMIT 15;
+            """, (f"%{q}%", f"%{q}%", f"%{q}%"))
+            results = cur.fetchall()
+
+            if results:
+                print(f"\n{C_GREEN}Найдено связей: {len(results)}{C_RESET}")
+                for s, p, o in results:
+                    rel = f"{C_CYAN}{s}{C_RESET} ─({C_YELLOW}{p}{C_RESET})─▶ {C_GREEN}{o}{C_RESET}"
+                    print(f"  • {rel}")
+            else:
+                print(f"{C_YELLOW}Связей по запросу '{q}' не найдено.{C_RESET}")
+
+        conn.close()
     except Exception as e:
         print(f"{C_RED}❌ Ошибка чтения Knowledge Graph: {e}{C_RESET}")
 
