@@ -271,6 +271,35 @@ def test_finalize_answer_is_html(monkeypatch):
     assert edits[0] == "<b>x</b>"
 
 
+def test_render_page_caps_at_4000(monkeypatch):
+    _enable(monkeypatch)
+    answer = _seed_answer(text="A" * 4500)
+    answer.pages = ["A" * 4500]
+    rendered = ab._render_page(answer, 0)
+    assert len(rendered) <= 4000
+    assert rendered.endswith("...")
+
+
+def test_finalize_answer_html_fallback(monkeypatch):
+    _enable(monkeypatch)
+    attempts = []
+
+    async def edit_func(text, parse_mode=None, reply_markup=None):
+        attempts.append((text, parse_mode))
+        if parse_mode == "HTML":
+            raise RuntimeError("TelegramBadRequest: Can't parse entities")
+
+    answer = asyncio.run(
+        ab.finalize_answer(4242, edit_func, "plain text", title="<b>Title</b>"),
+    )
+    assert answer is not None
+    assert len(attempts) == 2
+    assert attempts[0][1] == "HTML"
+    assert attempts[1][1] is None
+    assert "Title" in attempts[1][0]
+    assert "plain text" in attempts[1][0]
+
+
 def test_finalize_answer_error(monkeypatch):
     _enable(monkeypatch)
 

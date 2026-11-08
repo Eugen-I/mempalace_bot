@@ -275,7 +275,21 @@ def _extract_delta_text(chunk: Any) -> str:
 
 def _extract_gemini_text(response: Any) -> str:
     """Достаёт текст Gemini-ответа; ``None`` превращается в ``""``."""
-    return getattr(response, "text", None) or ""
+    text = getattr(response, "text", None) or ""
+    try:
+        candidates = getattr(response, "candidates", None)
+        if candidates and len(candidates) > 0:
+            c = candidates[0]
+            finish_reason = getattr(c, "finish_reason", None)
+            fr_str = str(finish_reason).upper()
+            if "MAX_TOKENS" in fr_str:
+                logger.warning("[GEMINI] Ответ был обрезан по MAX_TOKENS")
+                notice = "\n\n⚠️ <i>(Ответ модели был обрезан из-за лимита токенов)</i>"
+                if text and notice not in text:
+                    text += notice
+    except Exception as e:
+        logger.debug("Failed checking finish_reason: %s", e)
+    return text
 
 
 def _strip_thinking_tags(text: str) -> str:
@@ -470,13 +484,20 @@ def _iter_ai_chunks(
             include_images=not stream,
             skip_system=not stream,
         )
+        sampling_dict = sampling or {}
+        max_output_tokens = (
+            sampling_dict.get("max_tokens")
+            or sampling_dict.get("max_output_tokens")
+            or 8192
+        )
+        temperature = sampling_dict.get("temperature", 0.7)
         config = genai_types.GenerateContentConfig(
             system_instruction=(
                 system_prompt if stream
                 else _system_instruction(messages, system_prompt)
             ),
-            temperature=0.7,
-            max_output_tokens=2048,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
         )
 
         if stream:

@@ -17,6 +17,7 @@
 
 import logging
 import os
+import re
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -106,6 +107,8 @@ def _render_page(answer: Answer, idx: int) -> str:
         page = safe_html_format(page)
     if idx == 0 and answer.title:
         page = answer.title + "\n\n" + page
+    if len(page) > 4000:
+        page = page[:3990] + "..."
     return page
 
 
@@ -179,11 +182,28 @@ async def finalize_answer(
             answer.pages = paginate(text, PAGE_LIMIT)
         answer_store[sid] = answer
         kb = build_action_bar(answer, 0)
-        await edit_func(
-            _render_page(answer, 0),
-            parse_mode="HTML",
-            reply_markup=kb.as_markup(),
-        )
+        try:
+            await edit_func(
+                _render_page(answer, 0),
+                parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
+        except Exception as edit_err:
+            logger.warning(
+                "[ACTION_BAR] HTML edit failed (%s), fallback plain", edit_err,
+            )
+            plain_page = answer.pages[0]
+            if answer.title:
+                clean_title = re.sub(r"<[^>]+>", "", answer.title)
+                plain_page = clean_title + "\n\n" + plain_page
+            clean_text = re.sub(r"<[^>]+>", "", plain_page)
+            if len(clean_text) > 4000:
+                clean_text = clean_text[:3990] + "..."
+            await edit_func(
+                clean_text,
+                parse_mode=None,
+                reply_markup=kb.as_markup(),
+            )
         return answer
     except Exception as e:
         logger.error("[ACTION_BAR] finalize_answer error: %s", e, exc_info=True)
@@ -274,7 +294,22 @@ async def cb_ab_page(cb: types.CallbackQuery):
             reply_markup=kb.as_markup(),
         )
     except Exception as e:
-        logger.error("[ACTION_BAR] page edit error: %s", e)
+        logger.warning("[ACTION_BAR] page edit error (%s), fallback plain", e)
+        try:
+            raw_text = answer.pages[idx]
+            if idx == 0 and answer.title:
+                clean_title = re.sub(r"<[^>]+>", "", answer.title)
+                raw_text = clean_title + "\n\n" + raw_text
+            clean_text = re.sub(r"<[^>]+>", "", raw_text)
+            if len(clean_text) > 4000:
+                clean_text = clean_text[:3990] + "..."
+            await cb.message.edit_text(
+                clean_text,
+                parse_mode=None,
+                reply_markup=kb.as_markup(),
+            )
+        except Exception as e2:
+            logger.error("[ACTION_BAR] page edit fallback error: %s", e2)
 
 
 @router.callback_query(F.data.startswith("ab_back:"))

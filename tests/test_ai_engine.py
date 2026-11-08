@@ -488,6 +488,20 @@ def test_extract_gemini_text_handles_none_and_missing():
     assert ai_engine._extract_gemini_text(object()) == ""
 
 
+def test_extract_gemini_text_max_tokens_warning():
+    class Candidate:
+        finish_reason = "MAX_TOKENS"
+
+    class Response:
+        text = "Hello world"
+        candidates = [Candidate()]
+
+    res = ai_engine._extract_gemini_text(Response())
+    assert "Hello world" in res
+    assert "⚠️" in res
+    assert "лимита токенов" in res
+
+
 def test_strip_thinking_tags_removes_deepseek_and_service_tokens():
     assert ai_engine._strip_thinking_tags("a<think>x</think>b") == "ab"
     assert ai_engine._strip_thinking_tags(
@@ -956,6 +970,7 @@ def test_sync_gemini_uses_system_message_and_images(monkeypatch):
     assert out == "gemini answer"
     call = FakeGenAI.Client.last_call
     assert call["config"].system_instruction == "CUSTOM_SYSTEM"
+    assert call["config"].max_output_tokens == 8192
     assert [c.role for c in call["contents"]] == ["user"]
     parts = call["contents"][0].parts
     assert parts[0].text == "look"
