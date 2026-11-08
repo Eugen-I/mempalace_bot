@@ -268,6 +268,35 @@ def test_config_cleans_key_value_data_dir(monkeypatch):
     assert config.DATA_DIR == "/tmp/configtest"
 
 
+def test_config_cleans_duplicate_equals_data_dir(monkeypatch):
+    monkeypatch.setenv(
+        "MEMPALACE_DATA_DIR", "MEMPALACE_DATA_DIR=MEMPALACE_DATA_DIR=/tmp/clean_test"
+    )
+    monkeypatch.setattr(config.os, "makedirs", lambda *a, **k: None)
+    monkeypatch.setattr(config.os.path, "expanduser", lambda p: p)
+    importlib.reload(config)
+    assert config.DATA_DIR == "/tmp/clean_test"
+
+
+def test_config_redirects_dot_mempalace_to_documents_mempalace(monkeypatch, tmp_path):
+    dot_dir = tmp_path / ".mempalace"
+    doc_dir = tmp_path / "Documents" / "mempalace"
+    dot_dir.mkdir(parents=True)
+    doc_dir.mkdir(parents=True)
+
+    monkeypatch.setenv("MEMPALACE_DATA_DIR", str(dot_dir))
+    monkeypatch.setattr(
+        config.os.path,
+        "expanduser",
+        lambda p: str(doc_dir) if "Documents/mempalace" in p else (
+            str(dot_dir) if ".mempalace" in p else p
+        ),
+    )
+    monkeypatch.setattr(config.os, "makedirs", lambda *a, **k: None)
+    importlib.reload(config)
+    assert config.DATA_DIR == str(doc_dir)
+
+
 def test_config_palace_and_core_paths(monkeypatch):
     monkeypatch.setenv("MEMPALACE_DIR", "/custom/mempalace")
     monkeypatch.setenv("MEMPALACE_PALACE_PATH", "/custom/mempalace/palace_override")

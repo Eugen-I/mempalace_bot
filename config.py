@@ -119,17 +119,30 @@ GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 BING_SEARCH_API_KEY = os.getenv("BING_SEARCH_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
-# 📂 Пути к данным (с защитой от битых .env строк)
+# 📂 Пути к данным (с защитой от битых .env строк и ошибочных путей)
 raw_dir = os.getenv("MEMPALACE_DATA_DIR", "~/Documents/mempalace")
 
 # 🧹 Авто-очистка: если переменная считалась как "KEY=VALUE", берем только VALUE
-if "=" in raw_dir:
+while "=" in raw_dir:
     raw_dir = raw_dir.split("=", 1)[1]
 
-DATA_DIR = os.path.expanduser(raw_dir.strip())
+cand = os.path.expanduser(raw_dir.strip())
+
+# 🛡️ Защита: если MEMPALACE_DATA_DIR ошибочно указывает на ~/.mempalace (Chroma / core DB),
+# перенаправляем на настоящую пользовательскую директорию ~/Documents/mempalace
+norm_cand = os.path.abspath(cand)
+norm_dot = os.path.abspath(os.path.expanduser("~/.mempalace"))
+if norm_cand == norm_dot or os.path.basename(norm_cand) == ".mempalace":
+    doc_cand = os.path.expanduser("~/Documents/mempalace")
+    if os.path.isdir(doc_cand):
+        cand = doc_cand
+
+DATA_DIR = cand
 
 # 🔒 Privacy: auto-attach photos to AI context (default: False)
-AUTO_ATTACH_PHOTOS = os.getenv("AUTO_ATTACH_PHOTOS", "false").lower() in ("1", "true", "yes", "on")
+AUTO_ATTACH_PHOTOS = os.getenv(
+    "AUTO_ATTACH_PHOTOS", "false"
+).lower() in ("1", "true", "yes", "on")
 
 CHATS_DIR = os.path.join(DATA_DIR, "chats")
 NOTES_DIR = os.path.join(DATA_DIR, "my_notes")
@@ -144,6 +157,19 @@ VOICE_REPLY_CONFIG = os.path.join(DATA_DIR, ".voice_reply_users.json")
 PROMPTS_FILE = os.path.join(DATA_DIR, "pdf_prompts.json")
 TRANSKRIPT_DIR = os.path.join(DATA_DIR, "transkript")
 PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
+
+# 🛡️ Fallback: если CONFIG_AI_FILE или MODELS_CONFIG_PATH отсутствуют по DATA_DIR,
+# но есть в ~/Documents/mempalace, используем их
+_doc_fallback = os.path.expanduser("~/Documents/mempalace")
+if not os.path.exists(CONFIG_AI_FILE):
+    _alt_ai = os.path.join(_doc_fallback, ".current_ai")
+    if os.path.exists(_alt_ai):
+        CONFIG_AI_FILE = _alt_ai
+
+if not os.path.exists(MODELS_CONFIG_PATH):
+    _alt_models = os.path.join(_doc_fallback, "models.json")
+    if os.path.exists(_alt_models):
+        MODELS_CONFIG_PATH = _alt_models
 
 # 🏰 Пути к MemPalace Core и базам данных
 MEMPALACE_CORE_DIR = os.path.expanduser(

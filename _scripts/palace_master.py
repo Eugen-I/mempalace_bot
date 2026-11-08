@@ -174,8 +174,16 @@ def detect_system_paths() -> dict:
         None,
     )
 
-    # 3. DATA_DIR
-    data_dir = os.environ.get("MEMPALACE_DATA_DIR") or os.path.join(home, ".mempalace")
+    # 3. CORE_DIR (Chroma and KG)
+    core_candidates = [
+        os.environ.get("MEMPALACE_DIR"),
+        os.environ.get("MEMPALACE_CORE_DIR"),
+        os.path.join(home, ".mempalace"),
+    ]
+    data_dir = next(
+        (c for c in core_candidates if c and os.path.isdir(c)),
+        os.path.join(home, ".mempalace"),
+    )
 
     # 4. CHROMA_DB
     chroma_db = os.path.join(data_dir, "palace", "chroma.sqlite3")

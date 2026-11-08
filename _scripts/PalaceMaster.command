@@ -65,10 +65,11 @@ fi
 
 if [ -d "$HOME/Documents/mempalace" ]; then
     export PALACE_DIR="$HOME/Documents/mempalace"
+    export MEMPALACE_DATA_DIR="$HOME/Documents/mempalace"
 fi
 
 if [ -d "$HOME/.mempalace" ]; then
-    export MEMPALACE_DATA_DIR="$HOME/.mempalace"
+    export MEMPALACE_DIR="$HOME/.mempalace"
 fi
 
 # 4. Запуск Python скрипта
