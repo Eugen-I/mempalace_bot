@@ -317,3 +317,108 @@ async def test_enrich_plan_with_ai_preserves_skeleton_and_rejects_unsafe(conn):
     assert unsafe_res.ok is False
     assert unsafe_res.source == "fallback"
     assert unsafe_res.plan.weeks[0].sessions[0].title == plan.weeks[0].sessions[0].title
+
+
+def test_plan_single_day_and_two_days():
+    # 1 day plan
+    prof_1 = _profile(
+        plan_type="fullbody",
+        availability=[AvailabilitySlot(day_of_week=5, minutes=60)],
+    )
+    plan_1 = build_skeleton(prof_1, _status(), start_date=date(2026, 11, 9))
+    assert validate_plan(plan_1, prof_1) == []
+    w0 = plan_1.weeks[0]
+    assert len(w0.sessions) == 7
+    # Saturday is strength, others rest or mobility
+    active_sessions = [s for s in w0.sessions if s.type != "rest"]
+    assert any("Силовая" in s.title for s in active_sessions)
+
+    # 2 day plan
+    prof_2 = _profile(
+        plan_type="fullbody",
+        availability=[
+            AvailabilitySlot(day_of_week=1, minutes=50),
+            AvailabilitySlot(day_of_week=5, minutes=60),
+        ],
+    )
+    plan_2 = build_skeleton(prof_2, _status(), start_date=date(2026, 11, 9))
+    assert validate_plan(plan_2, prof_2) == []
+    w0_2 = plan_2.weeks[0]
+    strength_sessions = [s for s in w0_2.sessions if s.type == "strength"]
+    assert len(strength_sessions) == 2
+
+
+def test_plan_hybrid_double_workout_in_single_day():
+    # Hybrid with double workout
+    prof_hybrid = _profile(
+        plan_type="hybrid",
+        availability=[
+            AvailabilitySlot(day_of_week=1, minutes=45),
+            AvailabilitySlot(day_of_week=5, minutes=75),
+        ],
+    )
+    plan = build_skeleton(prof_hybrid, _status(), start_date=date(2026, 11, 9))
+    assert validate_plan(plan, prof_hybrid) == []
+    w0 = plan.weeks[0]
+    titles = [s.title for s in w0.sessions]
+    assert any("Сдвоенная" in t and "Вело" in t and "Зал" in t for t in titles)
+
+
+def test_plan_split_upper_lower_and_ppl():
+    # Upper/Lower 4 days
+    prof_ul = _profile(
+        plan_type="upper_lower",
+        availability=[
+            AvailabilitySlot(day_of_week=0, minutes=45),
+            AvailabilitySlot(day_of_week=1, minutes=45),
+            AvailabilitySlot(day_of_week=3, minutes=45),
+            AvailabilitySlot(day_of_week=4, minutes=45),
+        ],
+    )
+    plan_ul = build_skeleton(prof_ul, _status(), start_date=date(2026, 11, 9))
+    assert validate_plan(plan_ul, prof_ul) == []
+    w0 = plan_ul.weeks[0]
+    titles = [s.title for s in w0.sessions if s.type == "strength"]
+    assert any("Верх тела" in t for t in titles)
+    assert any("Низ тела" in t for t in titles)
+
+    # PPL 3 days
+    prof_ppl = _profile(
+        plan_type="ppl",
+        availability=[
+            AvailabilitySlot(day_of_week=0, minutes=45),
+            AvailabilitySlot(day_of_week=2, minutes=45),
+            AvailabilitySlot(day_of_week=4, minutes=45),
+        ],
+    )
+    plan_ppl = build_skeleton(prof_ppl, _status(), start_date=date(2026, 11, 9))
+    assert validate_plan(plan_ppl, prof_ppl) == []
+    w0_ppl = plan_ppl.weeks[0]
+    ppl_titles = [s.title for s in w0_ppl.sessions if s.type == "strength"]
+    assert any("Жим" in t for t in ppl_titles)
+    assert any("Тяга" in t for t in ppl_titles)
+    assert any("Ноги" in t for t in ppl_titles)
+
+
+def test_plan_functional_format():
+    prof_func = _profile(
+        plan_type="functional",
+        availability=[
+            AvailabilitySlot(day_of_week=1, minutes=40),
+            AvailabilitySlot(day_of_week=3, minutes=40),
+        ],
+    )
+    plan_func = build_skeleton(prof_func, _status(), start_date=date(2026, 11, 9))
+    assert validate_plan(plan_func, prof_func) == []
+    w0 = plan_func.weeks[0]
+    assert any("Функциональный" in s.title for s in w0.sessions)
+
+
+def test_plan_glossary_and_localization():
+    from services.garmin.plan_engine import week_detail_text
+    plan = build_skeleton(_profile(), _status(), start_date=date(2026, 11, 9))
+    text = week_detail_text(plan, 1)
+    assert "Справка по терминам" in text
+    assert "RPE" in text
+    assert "Зона 2 (Z2)" in text
+    assert "ACWR" in text

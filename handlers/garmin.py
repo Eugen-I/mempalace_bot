@@ -128,6 +128,13 @@ EXPERIENCE = {
     "regular": "регулярно 6+ мес",
     "advanced": "продвинутый",
 }
+PLAN_TYPES = {
+    "fullbody": "🏋️ Фуллбади",
+    "upper_lower": "🌗 Верх / Низ",
+    "ppl": "💪 Жим/Тяга/Ноги",
+    "hybrid": "🚴+🏋️ Гибрид (Вело+Зал)",
+    "functional": "⚡ Функциональный",
+}
 EQUIPMENT = {"gym": "зал", "home": "дом", "bike": "велосипед"}
 
 
@@ -445,6 +452,7 @@ def _draft(user_id: int) -> dict:
         draft = {
             "primary_goal": "fat_loss",
             "secondary_goals": ["strength", "cycling", "health"],
+            "plan_type": "fullbody",
             "experience": "returning",
             "availability_days": 3,
             "equipment": ["gym", "bike"],
@@ -457,9 +465,12 @@ def _draft(user_id: int) -> dict:
 
 def _availability(days: int) -> list[AvailabilitySlot]:
     plans = {
+        1: ((5, 60),),
+        2: ((1, 50), (5, 60)),
         3: ((0, 45), (2, 45), (4, 45)),
         4: ((0, 45), (1, 40), (3, 45), (5, 60)),
         5: ((0, 45), (1, 40), (2, 45), (4, 45), (5, 60)),
+        6: ((0, 45), (1, 40), (2, 45), (3, 40), (4, 45), (5, 60)),
     }
     return [
         AvailabilitySlot(day_of_week=weekday, minutes=minutes)
@@ -480,6 +491,7 @@ def _profile_from_draft(draft: dict) -> UserProfile:
         goals=[primary, *secondary],
         primary_goal=primary,
         secondary_goals=secondary,
+        plan_type=draft.get("plan_type", "fullbody"),
         horizon_weeks=6,
         experience=draft.get("experience", "returning"),
         availability=_availability(int(draft.get("availability_days", 3))),
@@ -1413,8 +1425,24 @@ async def cb_profile(cb: types.CallbackQuery):
 @allowed_callback
 async def cb_profile_new(cb: types.CallbackQuery):
     await cb.answer()
-    garmin_profile_draft.pop(_uid(cb), None)
-    await _profile_screen1(cb.message, _uid(cb), edit=True)
+    user_id = _uid(cb)
+    garmin_profile_draft.pop(user_id, None)
+    conn = _connect()
+    try:
+        stored = _profile(conn, user_id)
+        if stored is not None:
+            draft = _draft(user_id)
+            draft["primary_goal"] = stored.profile.primary_goal
+            draft["secondary_goals"] = list(stored.profile.secondary_goals)
+            draft["plan_type"] = getattr(stored.profile, "plan_type", "fullbody")
+            draft["experience"] = stored.profile.experience
+            draft["availability_days"] = len(stored.profile.availability) or 3
+            draft["equipment"] = list(stored.profile.equipment)
+            draft["stress_level"] = stored.profile.stress_level
+            draft["medications"] = list(stored.profile.medications)
+    finally:
+        conn.close()
+    await _profile_screen1(cb.message, user_id, edit=True)
 
 
 async def _profile_screen1(message: types.Message, user_id: int, *, edit: bool) -> None:
@@ -1474,16 +1502,22 @@ async def cb_profile_exp(cb: types.CallbackQuery):
 async def _profile_screen2(message: types.Message, user_id: int) -> None:
     draft = _draft(user_id)
     kb = InlineKeyboardBuilder()
-    for days in (3, 4, 5):
-        kb.button(
-            text=f"{days} дня" if days < 5 else "5 дней",
-            callback_data=f"garmin:profile:days:{days}",
-        )
-    kb.adjust(3)
+    cur_type = draft.get("plan_type", "fullbody")
+    for key, label in PLAN_TYPES.items():
+        mark = "✅ " if key == cur_type else ""
+        kb.button(text=f"{mark}{label}", callback_data=f"garmin:profile:type:{key}")
+
+    cur_days = int(draft.get("availability_days", 3))
+    for days in (1, 2, 3, 4, 5, 6):
+        mark = "✅ " if days == cur_days else ""
+        label = f"{mark}{days} день" if days == 1 else f"{mark}{days} дн."
+        kb.button(text=label, callback_data=f"garmin:profile:days:{days}")
+
     for key, label in EQUIPMENT.items():
         mark = "✅ " if key in draft["equipment"] else ""
         kb.button(text=f"{mark}{label}", callback_data=f"garmin:profile:equip:{key}")
-    kb.adjust(3, 3)
+    kb.adjust(2, 2, 1, 3, 3, 3)
+
     kb.row(
         types.InlineKeyboardButton(
             text="😌 Низкий стресс", callback_data="garmin:profile:stress:low"
@@ -1498,15 +1532,27 @@ async def _profile_screen2(message: types.Message, user_id: int) -> None:
         )
     )
     kb.row(types.InlineKeyboardButton(text="➡️ Далее", callback_data="garmin:profile:next3"))
+    type_name = PLAN_TYPES.get(cur_type, cur_type)
     await _safe_edit(
         message,
         "🧩 <b>Профиль · шаг 2/3</b>\n"
-        f"Дней в неделю: {draft['availability_days']} · "
-        f"стресс: {draft['stress_level']}\n"
-        "Отметьте оборудование и нажмите «Далее».",
+        f"Формат: {type_name}\n"
+        f"Дней в неделю: {cur_days} · стресс: {draft['stress_level']}\n"
+        "Выберите формат, дни и оборудование, затем нажмите «Далее».",
         reply_markup=kb.as_markup(),
         parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data.startswith("garmin:profile:type:"))
+@allowed_callback
+async def cb_profile_type(cb: types.CallbackQuery):
+    await cb.answer()
+    ptype = cb.data.rsplit(":", 1)[1]
+    if ptype not in PLAN_TYPES:
+        return
+    _draft(_uid(cb))["plan_type"] = ptype
+    await _profile_screen2(cb.message, _uid(cb))
 
 
 @router.callback_query(F.data.startswith("garmin:profile:days:"))
@@ -1632,9 +1678,11 @@ async def _profile_preview(
     profile = _profile_from_draft(draft)
     layer = build_layer(profile)
     meds = ", ".join(entry.name for entry in layer.entries) or "не указаны"
+    type_name = PLAN_TYPES.get(profile.plan_type, profile.plan_type)
     text = (
         "🧩 <b>Проверьте профиль</b>\n"
         f"Цель: {PROFILE_GOALS.get(profile.primary_goal, profile.primary_goal)}\n"
+        f"Формат: {type_name}\n"
         f"Опыт: {EXPERIENCE.get(profile.experience, profile.experience)}\n"
         f"Дней в неделю: {draft.get('availability_days', 3)}\n"
         f"Оборудование: {', '.join(profile.equipment) or '—'}\n"

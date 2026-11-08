@@ -29,6 +29,21 @@ WEEK_FOCUS = ("base", "build", "build", "deload", "build", "consolidation")
 VOLUME_FACTOR = (1.0, 1.05, 1.11, 0.65, 1.16, 0.88)
 DAY_NAMES = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 
+FOCUS_LABELS = {
+    "base": "базовая",
+    "build": "нагрузочная",
+    "deload": "разгрузочная",
+    "taper": "подводящая",
+    "test": "тестовая",
+    "consolidation": "консолидация",
+}
+
+CONFIDENCE_LABELS = {
+    "low": "базовая",
+    "medium": "умеренная",
+    "high": "высокая",
+}
+
 # Default week: three full-body strength sessions, two Zone-2 rides,
 # one mobility day and one full rest day.
 DEFAULT_LAYOUT = (
@@ -74,11 +89,327 @@ def _layout(profile: UserProfile) -> tuple[str, ...]:
     return DEFAULT_LAYOUT
 
 
+def _build_weekly_slots(profile: UserProfile) -> list[str]:
+    """Return a 7-element tuple/list of session kinds for weekdays 0..6."""
+    if not profile.availability:
+        return list(_layout(profile))
+
+    avail_map = {slot.day_of_week: slot.minutes for slot in profile.availability}
+    sorted_avail = sorted(avail_map.keys())
+    n = len(sorted_avail)
+    ptype = getattr(profile, "plan_type", "fullbody")
+
+    day_kinds: dict[int, str] = {}
+    if ptype == "upper_lower":
+        if n == 1:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+        elif n == 2:
+            day_kinds[sorted_avail[0]] = "upper_1"
+            day_kinds[sorted_avail[1]] = "lower_1"
+        elif n == 3:
+            day_kinds[sorted_avail[0]] = "upper_1"
+            day_kinds[sorted_avail[1]] = "lower_1"
+            day_kinds[sorted_avail[2]] = "cycling"
+        elif n == 4:
+            day_kinds[sorted_avail[0]] = "upper_1"
+            day_kinds[sorted_avail[1]] = "lower_1"
+            day_kinds[sorted_avail[2]] = "upper_2"
+            day_kinds[sorted_avail[3]] = "lower_2"
+        elif n == 5:
+            day_kinds[sorted_avail[0]] = "upper_1"
+            day_kinds[sorted_avail[1]] = "lower_1"
+            day_kinds[sorted_avail[2]] = "cycling"
+            day_kinds[sorted_avail[3]] = "upper_2"
+            day_kinds[sorted_avail[4]] = "lower_2"
+        else:
+            day_kinds[sorted_avail[0]] = "upper_1"
+            day_kinds[sorted_avail[1]] = "lower_1"
+            day_kinds[sorted_avail[2]] = "cycling"
+            day_kinds[sorted_avail[3]] = "upper_2"
+            day_kinds[sorted_avail[4]] = "lower_2"
+            day_kinds[sorted_avail[5]] = "cycling"
+
+    elif ptype == "ppl":
+        if n == 1:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+        elif n == 2:
+            day_kinds[sorted_avail[0]] = "push"
+            day_kinds[sorted_avail[1]] = "pull_legs"
+        elif n == 3:
+            day_kinds[sorted_avail[0]] = "push"
+            day_kinds[sorted_avail[1]] = "pull"
+            day_kinds[sorted_avail[2]] = "legs"
+        elif n == 4:
+            day_kinds[sorted_avail[0]] = "push"
+            day_kinds[sorted_avail[1]] = "pull"
+            day_kinds[sorted_avail[2]] = "legs"
+            day_kinds[sorted_avail[3]] = "cycling"
+        elif n == 5:
+            day_kinds[sorted_avail[0]] = "push"
+            day_kinds[sorted_avail[1]] = "pull"
+            day_kinds[sorted_avail[2]] = "legs"
+            day_kinds[sorted_avail[3]] = "cycling"
+            day_kinds[sorted_avail[4]] = "fullbody_1"
+        else:
+            day_kinds[sorted_avail[0]] = "push"
+            day_kinds[sorted_avail[1]] = "pull"
+            day_kinds[sorted_avail[2]] = "legs"
+            day_kinds[sorted_avail[3]] = "push"
+            day_kinds[sorted_avail[4]] = "pull"
+            day_kinds[sorted_avail[5]] = "legs"
+
+    elif ptype == "hybrid":
+        if n == 1:
+            day_kinds[sorted_avail[0]] = "hybrid_double"
+        elif n == 2:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+            day_kinds[sorted_avail[1]] = "hybrid_double"
+        elif n == 3:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "hybrid_double"
+        elif n == 4:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "fullbody_2"
+            day_kinds[sorted_avail[3]] = "hybrid_double"
+        elif n == 5:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "fullbody_2"
+            day_kinds[sorted_avail[3]] = "cycling"
+            day_kinds[sorted_avail[4]] = "hybrid_double"
+        else:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "fullbody_2"
+            day_kinds[sorted_avail[3]] = "cycling"
+            day_kinds[sorted_avail[4]] = "hybrid_double"
+            day_kinds[sorted_avail[5]] = "cycling"
+
+    elif ptype == "functional":
+        if n == 1:
+            day_kinds[sorted_avail[0]] = "functional"
+        elif n == 2:
+            day_kinds[sorted_avail[0]] = "functional"
+            day_kinds[sorted_avail[1]] = "cycling"
+        elif n == 3:
+            day_kinds[sorted_avail[0]] = "functional"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "functional"
+        elif n == 4:
+            day_kinds[sorted_avail[0]] = "functional"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "functional"
+            day_kinds[sorted_avail[3]] = "cycling"
+        elif n == 5:
+            day_kinds[sorted_avail[0]] = "functional"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "functional"
+            day_kinds[sorted_avail[3]] = "cycling"
+            day_kinds[sorted_avail[4]] = "functional"
+        else:
+            day_kinds[sorted_avail[0]] = "functional"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "functional"
+            day_kinds[sorted_avail[3]] = "cycling"
+            day_kinds[sorted_avail[4]] = "functional"
+            day_kinds[sorted_avail[5]] = "cycling"
+
+    else:
+        if n == 1:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+        elif n == 2:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+            day_kinds[sorted_avail[1]] = "fullbody_2"
+        elif n == 3:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "fullbody_2"
+        elif n == 4:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "fullbody_2"
+            day_kinds[sorted_avail[3]] = "cycling"
+        elif n == 5:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "fullbody_2"
+            day_kinds[sorted_avail[3]] = "cycling"
+            day_kinds[sorted_avail[4]] = "fullbody_1"
+        else:
+            day_kinds[sorted_avail[0]] = "fullbody_1"
+            day_kinds[sorted_avail[1]] = "cycling"
+            day_kinds[sorted_avail[2]] = "fullbody_2"
+            day_kinds[sorted_avail[3]] = "cycling"
+            day_kinds[sorted_avail[4]] = "fullbody_1"
+            day_kinds[sorted_avail[5]] = "cycling"
+
+    result: list[str] = []
+    mobility_placed = False
+    for day_i in range(7):
+        if day_i in day_kinds:
+            result.append(day_kinds[day_i])
+        elif day_i == 6:
+            result.append("rest")
+        elif not mobility_placed and day_i in (2, 3):
+            result.append("mobility")
+            mobility_placed = True
+        else:
+            result.append("rest")
+
+    return result
+
+
 def _minutes_for(profile: UserProfile, weekday: int, default: int) -> int:
     for slot in profile.availability:
         if slot.day_of_week == weekday:
             return max(10, min(slot.minutes, default))
     return default
+
+
+def _strength_details(kind: str) -> tuple[str, SessionStructure]:
+    if kind == "upper_1":
+        return (
+            "Силовая: Верх тела (А)",
+            SessionStructure(
+                warmup="5–8 мин: суставная разминка плеч и грудного отдела",
+                main="Жим штанги/гантелей лежа, тяга штанги к поясу, жим гантелей, подтягивания",
+                cooldown="5 мин: растяжка грудных мышц и широчайших",
+            ),
+        )
+    if kind == "lower_1":
+        return (
+            "Силовая: Низ тела (А)",
+            SessionStructure(
+                warmup="5–8 мин: мобильность тазобедренных суставов и голеностопа",
+                main="Приседания со штангой, румынская тяга, выпады на месте, подъем на носки",
+                cooldown="5 мин: растяжка передней и задней поверхности бедра",
+            ),
+        )
+    if kind == "upper_2":
+        return (
+            "Силовая: Верх тела (Б)",
+            SessionStructure(
+                warmup="5–8 мин: разминка ротаторов плеча и лопаток",
+                main="Армейский жим стоя, тяга верхнего блока, отжимания на брусьях/полу, разводка",
+                cooldown="5 мин: растяжка плечевого пояса и шеи",
+            ),
+        )
+    if kind == "lower_2":
+        return (
+            "Силовая: Низ тела (Б)",
+            SessionStructure(
+                warmup="5–8 мин: разминка коленей и активация ягодичных",
+                main="Жим ногами, сгибания ног лежа/сидя, ягодичный мостик, гиперэкстензия",
+                cooldown="5 мин: мягкая растяжка и дыхание",
+            ),
+        )
+    if kind == "push":
+        return (
+            "Силовая: Жим (Push)",
+            SessionStructure(
+                warmup="5–8 мин: суставная разминка плеч и груди",
+                main="Жим штанги/гантелей лежа, армейский жим стоя, брусья/отжимания, трицепс",
+                cooldown="5 мин: растяжка грудных мышц и дельт",
+            ),
+        )
+    if kind == "pull":
+        return (
+            "Силовая: Тяга (Pull)",
+            SessionStructure(
+                warmup="5–8 мин: разминка грудного отдела и плечевого пояса",
+                main="Подтягивания/тяга верхнего блока, тяга штанги в наклоне, пулловер, бицепс",
+                cooldown="5 мин: растяжка широчайших мышц и предплечий",
+            ),
+        )
+    if kind == "legs":
+        return (
+            "Силовая: Ноги (Legs)",
+            SessionStructure(
+                warmup="5–8 мин: мобильность таза и коленных суставов",
+                main="Приседания со штангой, румынская тяга, жим ногами, икры в тренажере",
+                cooldown="5 мин: растяжка ног и поясницы",
+            ),
+        )
+    if kind == "pull_legs":
+        return (
+            "Силовая: Тяга и Ноги",
+            SessionStructure(
+                warmup="5–8 мин: динамическая разминка",
+                main="Приседания, румынская тяга, подтягивания, тяга к поясу",
+                cooldown="5 мин: растяжка",
+            ),
+        )
+    if kind == "fullbody_2":
+        return (
+            "Силовая: всё тело (Б)",
+            SessionStructure(
+                warmup="5–8 мин: суставная разминка, легкое кардио",
+                main="Румынская тяга, отжимания на брусьях, подтягивания, выпады; отдых 90 с",
+                cooldown="5 мин: спокойная ходьба и растяжка",
+            ),
+        )
+    return (
+        "Силовая: всё тело (А)",
+        SessionStructure(
+            warmup="5–8 мин: суставная разминка, лёгкое кардио",
+            main="Присед/жим/тяга + 1–2 вспомогательных; отдых 90–120 с",
+            cooldown="5 мин: спокойная ходьба, растяжка",
+        ),
+    )
+
+
+def _hybrid_double_session(
+    day: date,
+    *,
+    duration: int,
+    medication_note: str | None,
+) -> PlanSession:
+    return PlanSession(
+        date=day.isoformat(),
+        type="strength",
+        title="Сдвоенная: Вело (Z2) + Зал",
+        duration_min=duration,
+        intensity="Утро: Z2 (разговорный темп) · Вечер: RPE 6–7, запас 2–3 повт.",
+        structure=SessionStructure(
+            warmup="Утро: 5 мин вращение педалей; Вечер: суставная разминка",
+            main="Утро (30–35 мин): Вело Z2 аэробная база.\n"
+                 "Вечер (35–40 мин): Силовая в зале — жим, тяга, приседания (2–3 подхода)",
+            cooldown="Вечер: 5 мин спокойная ходьба и мягкая растяжка",
+        ),
+        purpose="Совмещение аэробной выносливости и силовой гипертрофии в один тренировочный день.",
+        alternatives=[
+            "Разделить тренировки на два разных дня при утомлении",
+            "Оставить только кардио Z2 при недосыпе",
+        ],
+        safety=medication_note,
+        citations=["E2", "E5"],
+    )
+
+
+def _functional_session(
+    day: date,
+    *,
+    duration: int,
+    medication_note: str | None,
+) -> PlanSession:
+    return PlanSession(
+        date=day.isoformat(),
+        type="aerobic",
+        title="Функциональный тренинг / круговая",
+        duration_min=duration,
+        intensity="RPE 5–6, непрерывный комфортный темп, без закисления",
+        structure=SessionStructure(
+            warmup="6–8 мин: динамическая разминка, мобильность суставов",
+            main="3–4 круга: махи гирей/гантелью, выпады, тяга к поясу, планка; отдых 60 с",
+            cooldown="5 мин: растяжка и дыхательные упражнения",
+        ),
+        purpose="Развитие общей выносливости, координации и функциональной силы.",
+        alternatives=["Снизить вес отягощений", "Использовать резиновые петли"],
+        safety=medication_note,
+        citations=["E1", "E2"],
+    )
 
 
 def _strength_session(
@@ -87,19 +418,23 @@ def _strength_session(
     duration: int,
     rpe: str,
     medication_note: str | None,
+    title: str = "Силовая: всё тело",
+    structure: SessionStructure | None = None,
+    purpose: str | None = None,
 ) -> PlanSession:
+    default_structure = SessionStructure(
+        warmup="5–8 мин: суставная разминка, лёгкое кардио",
+        main="Присед/жим/тяга + 1–2 вспомогательных; отдых 90–120 с",
+        cooldown="5 мин: спокойная ходьба, растяжка",
+    )
     return PlanSession(
         date=day.isoformat(),
         type="strength",
-        title="Силовая: всё тело",
+        title=title,
         duration_min=duration,
         intensity=f"RPE {rpe}, 2–3 подхода, 6–12 повторений, не до отказа",
-        structure=SessionStructure(
-            warmup="5–8 мин: суставная разминка, лёгкое кардио",
-            main="Присед/жим/тяга + 1–2 вспомогательных; отдых 90–120 с",
-            cooldown="5 мин: спокойная ходьба, растяжка",
-        ),
-        purpose="Сохранить мышцы и силу при снижении веса.",
+        structure=structure or default_structure,
+        purpose=purpose or "Сохранить мышцы и силу при снижении веса.",
         alternatives=["Гантели вместо штанги", "Резинки, если нет зала"],
         safety=medication_note,
         citations=["E2", "E8"],
@@ -179,7 +514,7 @@ def _week_sessions(
     profile: UserProfile,
     layer: MedicationLayer,
 ) -> list[PlanSession]:
-    layout = _layout(profile)
+    layout = _build_weekly_slots(profile)
     medication_note = None
     if layer.intensity_caution:
         medication_note = (
@@ -196,16 +531,51 @@ def _week_sessions(
     cycling_seen = 0
     for weekday, kind in enumerate(layout):
         day = start + timedelta(days=offset * 7 + weekday)
-        if kind == "strength":
+        if kind == "hybrid_double":
+            base = 65 if focus != "deload" else 45
+            dur = max(35, round(base * factor))
+            sessions.append(
+                _hybrid_double_session(
+                    day,
+                    duration=_minutes_for(profile, weekday, dur),
+                    medication_note=medication_note,
+                )
+            )
+        elif kind == "functional":
+            base = 40 if focus != "deload" else 30
+            dur = max(20, round(base * factor))
+            sessions.append(
+                _functional_session(
+                    day,
+                    duration=_minutes_for(profile, weekday, dur),
+                    medication_note=medication_note,
+                )
+            )
+        elif kind in {
+            "strength",
+            "fullbody_1",
+            "fullbody_2",
+            "upper_1",
+            "lower_1",
+            "upper_2",
+            "lower_2",
+            "push",
+            "pull",
+            "legs",
+            "pull_legs",
+        }:
             base = 45 if focus != "deload" else 35
-            duration = max(25, round(base * factor))
+            duration = max(20, round(base * factor))
             rpe = "5–6" if layer.intensity_caution else ("6" if focus == "base" else "6–7")
+            title, struct = _strength_details(kind)
             sessions.append(
                 _strength_session(
                     day,
                     duration=_minutes_for(profile, weekday, duration),
                     rpe=rpe,
                     medication_note=medication_note,
+                    title=title,
+                    structure=struct,
                 )
             )
         elif kind == "cycling":
@@ -227,7 +597,8 @@ def _week_sessions(
                 )
             )
         elif kind == "mobility":
-            sessions.append(_mobility_session(day))
+            mob_dur = 20 if focus == "deload" else 25
+            sessions.append(_mobility_session(day, duration=mob_dur))
         else:
             sessions.append(_rest_session(day))
     return sessions
@@ -487,8 +858,18 @@ def validate_plan(
         strength_days = sum(
             1 for session in week.sessions if session.type == "strength"
         )
-        if strength_days > 3:
-            errors.append(f"неделя {week.week}: больше 3 силовых")
+        ptype = getattr(profile, "plan_type", "fullbody")
+        n_avail = len(profile.availability)
+        if ptype == "ppl" and n_avail >= 6:
+            max_strength = 6
+        elif profile.experience in {"regular", "advanced"} or ptype in {"upper_lower", "ppl"}:
+            max_strength = 5
+        elif ptype in {"upper_lower", "hybrid"}:
+            max_strength = 4
+        else:
+            max_strength = 3
+        if strength_days > max_strength:
+            errors.append(f"неделя {week.week}: больше {max_strength} силовых")
 
         if index > 0:
             previous = week_volume(plan.weeks[index - 1])
@@ -571,17 +952,19 @@ def _esc(value: object) -> str:
 
 def plan_summary(plan: TrainingPlan) -> str:
     """Compact Russian overview for Telegram."""
+    conf = CONFIDENCE_LABELS.get(plan.confidence, plan.confidence)
     lines = [
         f"🏋️ <b>План на {plan.horizon_weeks} недель</b>",
-        f"Цель: {_esc(_goal_text(plan.goal))} · уверенность: {_esc(plan.confidence)}",
+        f"Цель: {_esc(_goal_text(plan.goal))} · надёжность: {_esc(conf)}",
         "",
     ]
     for week in plan.weeks:
         strength = sum(1 for session in week.sessions if session.type == "strength")
         aerobic = sum(1 for session in week.sessions if session.type == "aerobic")
+        focus = FOCUS_LABELS.get(week.focus, week.focus)
         lines.append(
-            f"Неделя {week.week} ({_esc(week.focus)}): "
-            f"{strength} силовых, {aerobic} вело, "
+            f"Неделя {week.week} ({_esc(focus)}): "
+            f"{strength} силовых, {aerobic} аэробных/вело, "
             f"{week_volume(week)} мин"
         )
     if plan.missing_data:
@@ -605,7 +988,8 @@ def week_detail_text(plan: TrainingPlan, week_number: int) -> str:
         return ""
     index = max(0, min(week_number - 1, len(plan.weeks) - 1))
     week = plan.weeks[index]
-    lines = [f"<b>Неделя {week.week} · {_esc(week.focus)}</b>"]
+    focus = FOCUS_LABELS.get(week.focus, week.focus)
+    lines = [f"<b>Неделя {week.week} · {_esc(focus)}</b>"]
     for session in week.sessions:
         day = date.fromisoformat(session.date)
         lines.append("")
@@ -627,4 +1011,11 @@ def week_detail_text(plan: TrainingPlan, week_number: int) -> str:
         lines.append("")
         lines.append("<b>Правила недели:</b>")
         lines.extend(f"• {_esc(rule)}" for rule in week.adaptation_rules)
+    lines.append("")
+    lines.append(
+        "💡 <i>Справка по терминам:\n"
+        "• RPE (шкала нагрузки 1–10): RPE 6–7 — умеренное усилие, запас 2–3 повторения.\n"
+        "• Зона 2 (Z2) — пульсовая аэробная база (разговорный темп без одышки).\n"
+        "• ACWR — баланс острой и хронической нагрузки (норма: 0.8–1.3).</i>"
+    )
     return "\n".join(lines)

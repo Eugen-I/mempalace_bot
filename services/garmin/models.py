@@ -19,6 +19,13 @@ Goal = Literal[
     "endurance",
     "mixed",
 ]
+PlanType = Literal[
+    "fullbody",
+    "upper_lower",
+    "ppl",
+    "hybrid",
+    "functional",
+]
 SessionType = Literal["aerobic", "strength", "mobility", "rest", "test", "event"]
 Readiness = Literal["green", "amber", "red", "unknown"]
 Recommendation = Literal["keep", "reduce", "deload", "progress", "rest", "medical"]
@@ -57,6 +64,7 @@ class UserProfile(BaseModel):
         default_factory=lambda: ["fat_loss", "strength", "cycling", "health"]
     )
     primary_goal: Goal = "fat_loss"
+    plan_type: PlanType = "fullbody"
     secondary_goals: list[Goal] = Field(
         default_factory=lambda: ["strength", "cycling", "health"]
     )

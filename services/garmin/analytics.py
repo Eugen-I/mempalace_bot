@@ -591,7 +591,11 @@ def _flags(
         delta = (hrv.avg_7d - hrv.baseline) / hrv.baseline * 100
         if delta <= -10:
             flags.append(
-                Flag("hrv_below_baseline", "warning", f"HRV 7д на {abs(delta):.0f}% ниже baseline.")
+                Flag(
+                    "hrv_below_baseline",
+                    "warning",
+                    f"HRV 7д на {abs(delta):.0f}% ниже базовой нормы.",
+                )
             )
 
     if rhr.avg_7d is not None and rhr.baseline is not None:
@@ -601,7 +605,7 @@ def _flags(
                 Flag(
                     "rhr_above_baseline",
                     "warning",
-                    f"Пульс покоя 7д выше baseline на {delta:.0f}.",
+                    f"Пульс покоя 7д выше базовой нормы на {delta:.0f}.",
                 )
             )
 

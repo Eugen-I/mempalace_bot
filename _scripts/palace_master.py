@@ -483,7 +483,12 @@ def action_import_apple_notes():
         if PATHS["bot_dir"]:
             env["BOT_DIR"] = PATHS["bot_dir"]
             env["PYTHONPATH"] = PATHS["bot_dir"] + os.pathsep + env.get("PYTHONPATH", "")
-        subprocess.run([PATHS["venv_python"], import_script], env=env)
+        if PATHS["palace_dir"]:
+            env["MEMPALACE_DIR"] = PATHS["palace_dir"]
+        try:
+            subprocess.run([PATHS["venv_python"], import_script], env=env)
+        except KeyboardInterrupt:
+            print(f"\n{C_YELLOW}↩️ Возврат в меню MemPalace...{C_RESET}")
     else:
         print(f"{C_RED}❌ Файл import_notes.py не найден.{C_RESET}")
 
@@ -1467,7 +1472,10 @@ def action_bot_manager():
                 break
 
     if os.path.isfile(bot_cmd):
-        subprocess.run(["bash", bot_cmd])
+        try:
+            subprocess.run(["bash", bot_cmd])
+        except KeyboardInterrupt:
+            print(f"\n{C_YELLOW}↩️ Возврат в меню MemPalace...{C_RESET}")
     else:
         print(f"{C_RED}❌ Скрипт PalaceManager_TelegrammBot.command не найден.{C_RESET}")
 
@@ -1475,83 +1483,98 @@ def action_bot_manager():
 # ── ГЛАВНОЕ МЕНЮ ─────────────────────────────────────────────────────────────
 def main_menu():
     while True:
-        border = f"{C_CYAN}" + "=" * 55 + f"{C_RESET}"
-        print(f"\n{border}")
-        print(f"  {C_BOLD}🏰  MEMPALACE MASTER STUDIO — Центр Управления{C_RESET}")
-        print(f"{border}")
-        palace_p = PATHS["palace_dir"] or "Не найдена"
-        bot_p = PATHS["bot_dir"] or "Не найден"
-        cur_ai = get_current_ai_model()
-        print(f"{C_DIM}  Папка: {palace_p} | Бот: {bot_p}{C_RESET}")
-        print(f"{C_DIM}  Активная модель: {C_GREEN}{cur_ai}{C_RESET}\n")
+        try:
+            border = f"{C_CYAN}" + "=" * 55 + f"{C_RESET}"
+            print(f"\n{border}")
+            print(f"  {C_BOLD}🏰  MEMPALACE MASTER STUDIO — Центр Управления{C_RESET}")
+            print(f"{border}")
+            palace_p = PATHS["palace_dir"] or "Не найдена"
+            bot_p = PATHS["bot_dir"] or "Не найден"
+            cur_ai = get_current_ai_model()
+            print(f"{C_DIM}  Папка: {palace_p} | Бот: {bot_p}{C_RESET}")
+            print(f"{C_DIM}  Активная модель: {C_GREEN}{cur_ai}{C_RESET}\n")
 
-        print(f"  {C_GREEN}[1]{C_RESET}  📊 {C_BOLD}Статус и Дерево Памяти{C_RESET}")
-        print(f"  {C_GREEN}[2]{C_RESET}  📥 {C_BOLD}Умный импорт из Apple Notes{C_RESET}")
-        print(f"  {C_GREEN}[3]{C_RESET}  ⚡ {C_BOLD}Быстрая синхронизация и майнинг{C_RESET}")
-        print(f"  {C_GREEN}[4]{C_RESET}  🧠 {C_BOLD}AI-Реорганизация базы (Комнаты){C_RESET}")
-        print(f"  {C_GREEN}[5]{C_RESET}  🔍 {C_BOLD}Интерактивный поиск по Дворцу{C_RESET}")
-        print(f"  {C_GREEN}[6]{C_RESET}  🕸️  {C_BOLD}Граф Знаний (Tunnels, сущности){C_RESET}")
-        print(f"  {C_GREEN}[7]{C_RESET}  🎛️  {C_BOLD}Модели ИИ (Ollama & Cloud){C_RESET}")
-        print(f"  {C_GREEN}[8]{C_RESET}  💬 {C_BOLD}Архивация чатов и мысли в базу{C_RESET}")
-        print(f"  {C_GREEN}[9]{C_RESET}  🧹 {C_BOLD}Очистка, Сжатие и Оптимизация памяти{C_RESET}")
-        print(f"  {C_GREEN}[10]{C_RESET} 🤖 {C_BOLD}Управление Telegram-Ботом{C_RESET}")
-        print(f"  {C_RED}[0]{C_RESET}  🚪 {C_BOLD}Выход{C_RESET}\n")
+            print(f"  {C_GREEN}[1]{C_RESET}  📊 {C_BOLD}Статус и Дерево Памяти{C_RESET}")
+            print(f"  {C_GREEN}[2]{C_RESET}  📥 {C_BOLD}Умный импорт из Apple Notes{C_RESET}")
+            print(f"  {C_GREEN}[3]{C_RESET}  ⚡ {C_BOLD}Быстрая синхронизация и майнинг{C_RESET}")
+            print(f"  {C_GREEN}[4]{C_RESET}  🧠 {C_BOLD}AI-Реорганизация базы (Комнаты){C_RESET}")
+            print(f"  {C_GREEN}[5]{C_RESET}  🔍 {C_BOLD}Интерактивный поиск по Дворцу{C_RESET}")
+            print(f"  {C_GREEN}[6]{C_RESET}  🕸️  {C_BOLD}Граф Знаний (Tunnels, сущности){C_RESET}")
+            print(f"  {C_GREEN}[7]{C_RESET}  🎛️  {C_BOLD}Модели ИИ (Ollama & Cloud){C_RESET}")
+            print(f"  {C_GREEN}[8]{C_RESET}  💬 {C_BOLD}Архивация чатов и мысли в базу{C_RESET}")
+            print(f"  {C_GREEN}[9]{C_RESET}  🧹 {C_BOLD}Очистка и Оптимизация памяти{C_RESET}")
+            print(f"  {C_GREEN}[10]{C_RESET} 🤖 {C_BOLD}Управление Telegram-Ботом{C_RESET}")
+            print(f"  {C_RED}[0]{C_RESET}  🚪 {C_BOLD}Выход{C_RESET}\n")
 
-        choice = input(f"{C_BOLD}Выберите пункт (0-10): {C_RESET}").strip()
-
-        if choice == "1":
-            action_status()
-        elif choice == "2":
-            action_import_apple_notes()
-        elif choice == "3":
-            action_sync_mine()
-        elif choice == "4":
-            action_reorganize_palace()
-        elif choice == "5":
-            action_search()
-        elif choice == "6":
-            action_knowledge_graph()
-        elif choice == "7":
-            action_manage_ai_models()
-        elif choice == "8":
-            action_chats_and_thoughts()
-        elif choice == "9":
-            action_memory_cleanup_and_optimize()
-        elif choice == "10":
-            action_bot_manager()
-        elif choice in ("0", "exit", "q"):
-            print(f"\n{C_CYAN}До встречи в Дворце Памяти! 👋{C_RESET}\n")
+            choice = input(f"{C_BOLD}Выберите пункт (0-10): {C_RESET}").strip()
+        except KeyboardInterrupt:
+            print(f"\n\n{C_CYAN}🚪 Выход из MemPalace Studio. До встречи! 👋{C_RESET}\n")
             break
-        else:
-            print(f"{C_RED}⚠️ Неверный пункт меню, попробуйте ещё раз.{C_RESET}")
 
-        input(f"\n{C_DIM}Нажмите Enter, чтобы вернуться в меню...{C_RESET}")
+        try:
+            if choice == "1":
+                action_status()
+            elif choice == "2":
+                action_import_apple_notes()
+            elif choice == "3":
+                action_sync_mine()
+            elif choice == "4":
+                action_reorganize_palace()
+            elif choice == "5":
+                action_search()
+            elif choice == "6":
+                action_knowledge_graph()
+            elif choice == "7":
+                action_manage_ai_models()
+            elif choice == "8":
+                action_chats_and_thoughts()
+            elif choice == "9":
+                action_memory_cleanup_and_optimize()
+            elif choice == "10":
+                action_bot_manager()
+            elif choice in ("0", "exit", "q"):
+                print(f"\n{C_CYAN}До встречи в Дворце Памяти! 👋{C_RESET}\n")
+                break
+            else:
+                print(f"{C_RED}⚠️ Неверный пункт меню, попробуйте ещё раз.{C_RESET}")
+        except KeyboardInterrupt:
+            print(f"\n{C_YELLOW}↩️ Действие отменено пользователем.{C_RESET}")
+
+        try:
+            input(f"\n{C_DIM}Нажмите Enter, чтобы вернуться в меню...{C_RESET}")
+        except KeyboardInterrupt:
+            print()
+            continue
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        arg = sys.argv[1].lower().strip()
-        if arg in ("status", "1"):
-            action_status()
-        elif arg in ("import", "2"):
-            action_import_apple_notes()
-        elif arg in ("sync", "mine", "3"):
-            action_sync_mine()
-        elif arg in ("reorganize", "audit", "4"):
-            action_reorganize_palace()
-        elif arg in ("search", "find", "5"):
-            action_search()
-        elif arg in ("graph", "tunnels", "6"):
-            action_knowledge_graph()
-        elif arg in ("models", "ai", "7"):
-            action_manage_ai_models()
-        elif arg in ("chats", "thoughts", "8"):
-            action_chats_and_thoughts()
-        elif arg in ("cleanup", "clean", "vacuum", "9"):
-            action_memory_cleanup_and_optimize()
-        elif arg in ("bot", "10"):
-            action_bot_manager()
+    try:
+        if len(sys.argv) > 1:
+            arg = sys.argv[1].lower().strip()
+            if arg in ("status", "1"):
+                action_status()
+            elif arg in ("import", "2"):
+                action_import_apple_notes()
+            elif arg in ("sync", "mine", "3"):
+                action_sync_mine()
+            elif arg in ("reorganize", "audit", "4"):
+                action_reorganize_palace()
+            elif arg in ("search", "find", "5"):
+                action_search()
+            elif arg in ("graph", "tunnels", "6"):
+                action_knowledge_graph()
+            elif arg in ("models", "ai", "7"):
+                action_manage_ai_models()
+            elif arg in ("chats", "thoughts", "8"):
+                action_chats_and_thoughts()
+            elif arg in ("cleanup", "clean", "vacuum", "9"):
+                action_memory_cleanup_and_optimize()
+            elif arg in ("bot", "10"):
+                action_bot_manager()
+            else:
+                main_menu()
         else:
             main_menu()
-    else:
-        main_menu()
+    except KeyboardInterrupt:
+        print(f"\n\n{C_CYAN}🚪 Выход из MemPalace Studio. До встречи! 👋{C_RESET}\n")
+        sys.exit(0)

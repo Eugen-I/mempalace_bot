@@ -71,10 +71,10 @@ def assess_readiness(
         if change is not None:
             if change <= -20:
                 escalate("red")
-                reasons.append(f"HRV на {abs(change):.0f}% ниже baseline")
+                reasons.append(f"HRV на {abs(change):.0f}% ниже базовой нормы")
             elif change < -10:
                 escalate("amber")
-                reasons.append(f"HRV на {abs(change):.0f}% ниже baseline")
+                reasons.append(f"HRV на {abs(change):.0f}% ниже базовой нормы")
 
     rhr = report.series.get("resting_hr")
     if rhr is not None and rhr.baseline is not None:
@@ -82,10 +82,10 @@ def assess_readiness(
             delta = rhr.avg_7d - rhr.baseline
             if delta >= 10:
                 escalate("red")
-                reasons.append(f"пульс покоя +{delta:.0f} уд/мин к baseline")
+                reasons.append(f"пульс покоя +{delta:.0f} уд/мин к базовой норме")
             elif delta >= 6:
                 escalate("amber")
-                reasons.append(f"пульс покоя +{delta:.0f} уд/мин к baseline")
+                reasons.append(f"пульс покоя +{delta:.0f} уд/мин к базовой норме")
 
     stress = report.series.get("stress_avg")
     if stress is not None and stress.avg_7d is not None and stress.avg_7d >= 60:

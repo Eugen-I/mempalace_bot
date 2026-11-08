@@ -50,6 +50,22 @@ DECISION_LABELS = {
     "medical": "остановиться и обсудить с врачом",
 }
 
+ACTION_LABELS = {
+    "deload": "разгрузка",
+    "reduce_volume": "снижение объёма",
+    "progress": "прогрессия",
+    "medical_stop": "остановка по здоровью",
+    "keep": "сохранение",
+}
+
+SCOPE_LABELS = {
+    "current_or_next_week": "на текущей или следующей неделе",
+    "current_week": "на текущей неделе",
+    "next_week": "со следующей недели",
+    "as_planned": "по плану",
+    "now": "сейчас",
+}
+
 READINESS_EMOJI = {"green": "🟢", "amber": "🟡", "red": "🔴", "unknown": "⚪"}
 READINESS_LABELS = {
     "green": "можно тренироваться",
@@ -307,9 +323,9 @@ def build_review(
     if short_nights:
         reasons.append(f"{short_nights} ночи короче 6 ч")
     if hrv_delta is not None:
-        reasons.append(f"HRV {hrv_delta:+.0f}% к baseline")
+        reasons.append(f"HRV {hrv_delta:+.0f}% к базовой норме")
     if rhr_delta is not None:
-        reasons.append(f"пульс покоя {rhr_delta:+.0f} к baseline")
+        reasons.append(f"пульс покоя {rhr_delta:+.0f} к базовой норме")
     if adherence is not None:
         reasons.append(f"выполнено {adherence}% ({adherence_source})")
     if training["acwr"] is not None:
@@ -457,7 +473,7 @@ def review_text(review: PlanReview) -> str:
         lines.append(" · ".join(parts))
     load = []
     if metrics.get("acwr") is not None:
-        load.append(f"ACWR {metrics['acwr']:.2f}")
+        load.append(f"Баланс нагрузки (ACWR): {metrics['acwr']:.2f}")
     if metrics.get("adherence_pct") is not None:
         load.append(f"выполнено {metrics['adherence_pct']}%")
     if metrics.get("week_minutes"):
@@ -475,15 +491,26 @@ def review_text(review: PlanReview) -> str:
     if review.changes:
         change = review.changes[0]
         if change.get("percent"):
+            action_label = ACTION_LABELS.get(change.get("action"), change.get("action", ""))
+            scope_label = SCOPE_LABELS.get(change.get("scope"), change.get("scope", ""))
             lines.append(
-                f"Изменение: {_esc(change['action'])} · {change['percent']}% · "
-                f"{_esc(change['scope'])}"
+                f"Изменение: {_esc(action_label)} · {change['percent']}% · "
+                f"{_esc(scope_label)}"
             )
     lines.append(f"Почему: {_esc(review.rationale)}.")
     lines.append("")
     lines.append(
         "Это вероятная связь, не диагноз. Без вашего подтверждения план "
         "не меняется."
+    )
+    lines.append("")
+    lines.append(
+        "ℹ️ <b>Справка по терминам:</b>\n"
+        "• <i>ACWR (Acute:Chronic Workload Ratio)</i> — баланс острой (недельной) "
+        "и хронической нагрузки (норма: 0.8–1.3; >1.5 — перегрузка).\n"
+        "• <i>Базовая норма (baseline)</i> — индивидуальная средняя норма за 28 дней.\n"
+        "• <i>HRV (ВСР)</i> — вариабельность ритма сердца, маркер восстановления нервной системы.\n"
+        "• <i>Разгрузка (deload)</i> — запланированное снижение объёма для суперкомпенсации."
     )
     return "\n".join(lines)
 

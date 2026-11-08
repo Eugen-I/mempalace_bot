@@ -451,12 +451,12 @@ def test_review_text_contains_metrics_and_disclaimer():
     assert "сон 6.5 ч" in text
     assert "HRV -12%" in text
     assert "пульс +3" in text
-    assert "ACWR 1.62" in text
+    assert "ACWR): 1.62" in text
     assert "выполнено 60%" in text
     assert "90 мин" in text
     assert "Боль: 2/10" in text
     assert "снизить объём на 30%" in text
-    assert "reduce_volume · 30%" in text
+    assert "снижение объёма · 30%" in text
     assert "Это вероятная связь, не диагноз" in text
     assert "Без вашего подтверждения план" in text
 
