@@ -1,8 +1,8 @@
 #!/bin/bash
-# Переходим в папку проекта 
+# Переходим в папку проекта
 cd "$HOME/Documents/mempalace"
 
-# Активируем виртуальное окружение 
+# Активируем виртуальное окружение
 source venv/bin/activate
 
 while true; do
@@ -39,18 +39,18 @@ while true; do
 
     # Запускаем поиск и фильтруем через awk для соблюдения порога соответствия
     python3 -m mempalace search --results "$res_count" "$user_query" | awk -v limit="$threshold" '
-        /Match:/ { 
-            score = $2; 
+        /Match:/ {
+            score = $2;
             if (score >= limit) { print_block = 1; print $0 } else { print_block = 0 }
-            next 
+            next
         }
-        /^  \[[0-9]+\]/ { 
-            current_header = $0; next 
+        /^  \[[0-9]+\]/ {
+            current_header = $0; next
         }
-        { 
+        {
             if (print_block) {
                 if (current_header != "") { print current_header; current_header = "" }
-                print $0 
+                print $0
             }
         }'
 

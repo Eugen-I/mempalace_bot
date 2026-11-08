@@ -1463,9 +1463,15 @@ def action_bot_manager():
     bot_cmd = os.path.join(os.path.dirname(__file__), "PalaceManager_TelegrammBot.command")
     if not os.path.isfile(bot_cmd):
         cmd_name = "PalaceManager_TelegrammBot.command"
+        p_dir = PATHS["palace_dir"] or ""
+        b_dir = PATHS["bot_dir"] or ""
+        here = os.path.dirname(__file__)
         for cand in [
-            os.path.join(PATHS["palace_dir"] or "", "_scripts", cmd_name),
-            os.path.join(PATHS["bot_dir"] or "", "_scripts", cmd_name),
+            os.path.join(p_dir, "_scripts", cmd_name),
+            os.path.join(b_dir, "_scripts", cmd_name),
+            os.path.join(here, "_archive", cmd_name),
+            os.path.join(p_dir, "_scripts", "_archive", cmd_name),
+            os.path.join(b_dir, "_scripts", "_archive", cmd_name),
         ]:
             if os.path.isfile(cand):
                 bot_cmd = cand

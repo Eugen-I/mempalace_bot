@@ -28,9 +28,9 @@ fi
 
 while true; do
     clear # Очищаем экран для удобства
-    
+
     echo -e "${YELLOW}Загрузка списка моделей...${NC}"
-    
+
     # Парсим обычный вывод ollama list
     # Пропускаем первую строку (заголовок) и берем первое слово (имя модели)
     IFS=$'\n' read -d '' -r -a model_names < <(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' && printf '\0')
@@ -54,14 +54,14 @@ while true; do
 
     echo -e "${GREEN}Установленные модели (${total}):${NC}"
     echo "----------------------------------------"
-    
+
     # Вывод нумерованного списка
     for i in "${!clean_models[@]}"; do
         num=$((i + 1))
         printf "  %2d. %s\n" "$num" "${clean_models[$i]}"
     done
     echo "----------------------------------------"
-    
+
     echo ""
     echo -e "${YELLOW}Введите номер модели для удаления:${NC}"
     echo -e "(или 'q' для выхода, 'r' для обновления списка)"
@@ -72,7 +72,7 @@ while true; do
         echo "Выход."
         exit 0
     fi
-    
+
     # Обновление списка без удаления
     if [[ "$choice" == "r" || "$choice" == "R" ]]; then
         continue
@@ -103,13 +103,13 @@ while true; do
 
     if [[ "$confirm" == "y" || "$confirm" == "Y" || "$confirm" == "да" ]]; then
         echo -e "${YELLOW}Удаление ${selected_model}...${NC}"
-        
+
         # Выполняем удаление и показываем вывод
         output=$(ollama rm "$selected_model" 2>&1)
         exit_code=$?
-        
+
         echo "$output"
-        
+
         if [ $exit_code -eq 0 ]; then
             echo -e "${GREEN}Успешно удалено!${NC}"
         else

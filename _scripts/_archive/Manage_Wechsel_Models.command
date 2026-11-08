@@ -15,7 +15,7 @@ show_models() {
     # Проверяем, есть ли модели в файле
     local count
     count=$(jq '.ollama | length' "$CONFIG_PATH" 2>/dev/null)
-    
+
     if [ "$count" -eq 0 ] || [ -z "$count" ]; then
         echo "  (Список пуст)"
     else
@@ -40,14 +40,14 @@ while true; do
             read -p "Название (для меню): " mname
             read -p "Тег (из ollama list, например llama3:latest): " mtag
             read -p "Описание: " mdesc
-            
+
             # Безопасное добавление через --arg (защита от спецсимволов в строках)
             jq --arg name "$mname" --arg tag "$mtag" --arg desc "$mdesc" \
                '.ollama += [{"name": $name, "tag": $tag, "desc": $desc}]' \
                "$CONFIG_PATH" > temp.json && mv temp.json "$CONFIG_PATH"
-            
+
             echo "✅ Модель добавлена в конфиг!"
-            
+
             # Предложение скачать
             read -p "Скачать её сейчас в Ollama? (y/n): " pull
             if [[ "$pull" =~ ^[Yy]$ ]]; then
@@ -56,18 +56,18 @@ while true; do
                 echo "✅ Скачивание завершено."
             fi
             ;;
-            
+
         2)
             # Получаем количество моделей
             local_count=$(jq '.ollama | length' "$CONFIG_PATH")
-            
+
             if [ "$local_count" -eq 0 ]; then
                 echo "❌ Список моделей пуст. Нечего удалять."
                 continue
             fi
 
             read -p "Введите номер модели для удаления: " del_num
-            
+
             # Проверка, что введено число
             if ! [[ "$del_num" =~ ^[0-9]+$ ]]; then
                 echo "❌ Ошибка: введите корректный номер."
@@ -76,7 +76,7 @@ while true; do
 
             # jq индексы начинаются с 0, поэтому вычитаем 1
             index=$((del_num - 1))
-            
+
             # Проверяем, существует ли такой индекс
             if [ "$index" -lt 0 ] || [ "$index" -ge "$local_count" ]; then
                 echo "❌ Ошибка: модель с таким номером не найдена."
@@ -105,12 +105,12 @@ while true; do
                 echo "Отмена удаления."
             fi
             ;;
-            
+
         0)
             echo "Выход из программы."
             exit 0
             ;;
-            
+
         *)
             echo "❌ Неверный выбор. Попробуйте снова."
             ;;

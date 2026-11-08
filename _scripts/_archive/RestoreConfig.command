@@ -35,7 +35,7 @@ for file in "${files[@]}"; do
     added_count=0
 
     for line in "${REQUIRED_CONFIG[@]}"; do
-        # Проверяем наличие строки. 
+        # Проверяем наличие строки.
         # Для alias mempalace проверяем по ключевому слову, так как точное совпадение может сбиться из-за пробелов
         if [[ "$line" == *"alias mempalace"* ]]; then
              if ! grep -q "alias mempalace=" "$file"; then

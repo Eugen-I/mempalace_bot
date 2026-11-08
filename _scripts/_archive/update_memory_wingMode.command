@@ -12,7 +12,7 @@ NOTES_DIR="$HOME/Documents/mempalace/my_notes"
 for dir in "$NOTES_DIR"/*/; do
     [ -d "$dir" ] || continue
     folder_name=$(basename "$dir")
-    
+
     # Маппинг имён папок → крылья (можно расширять)
     case "$folder_name" in
         *"Сон"*|*"Dream"*)       wing="dreams" ;;
@@ -24,7 +24,7 @@ for dir in "$NOTES_DIR"/*/; do
 	*"Философия"*|*"Philosophy"*)  wing="philosophy" ;;
         *)                      wing="general" ;;
     esac
-    
+
     echo "📂 Индексирую: $folder_name → крыло: $wing"
     python3 -m mempalace mine "$dir" --wing "$wing" --mode convos
 done

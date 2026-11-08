@@ -14,11 +14,11 @@ import os
 def convert(json_path, txt_path):
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    
+
     with open(txt_path, 'w', encoding='utf-8') as f:
         f.write(f"--- АРХИВ ДИАЛОГА: {os.path.basename(json_path)} ---\n")
         f.write(f"Дата переноса: {os.popen('date').read()}\n\n")
-        
+
         for msg in data:
             role = "ВЫ" if msg['role'] == 'user' else "AI"
             f.write(f"[{role}]:\n{msg['content']}\n")
