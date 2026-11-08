@@ -121,6 +121,7 @@ WING_RUSSIAN_LABELS = {
 
 ROOM_RUSSIAN_LABELS = {
     # Философия
+    "brenifier": "Оскар Бренифье",
     "cioran": "Эмиль Чоран",
     "thinking": "Методы мышления",
     "phenomenology": "Феноменология",
@@ -137,6 +138,10 @@ ROOM_RUSSIAN_LABELS = {
     "explications": "Экспликации к фото",
     "photographers": "Фотографы",
     "therapy": "Фототрансцендентная арт-терапия",
+    "testino": "Марио Тестино",
+    "aldridge": "Майлз Олдридж",
+    "klimt": "Густав Климт",
+    "lindbergh": "Питер Линдберг",
     # Творчество
     "poetry": "Мои стихи",
     "scripts": "Сценарии и манифесты",
@@ -152,6 +157,29 @@ ROOM_RUSSIAN_LABELS = {
     # Служебные
     "general": "Общие записи",
     "_registry": "Реестр",
+    "my_notes": "Мои заметки",
+    # Темы и исследования
+    "аргументация": "Аргументация",
+    "сила_хаоса": "Сила хаоса",
+    "правила_и_свобода": "Правила и свобода",
+    "симулякры": "Симулякры",
+    "почему_мы_требуем_результата": "Требование результата",
+    "зачем_проблемы_у_человека": "Зачем проблемы человеку",
+    "мысли_философов": "Мысли философов",
+    "прямым_ракурсом_напротив": "Прямым ракурсом",
+    "цитаты": "Цитаты",
+    "вопросы": "Вопросы",
+    "информация": "Информация",
+    "мысль_без_действия": "Мысль без действия",
+    "личное_мнение": "Личное мнение",
+    "фрагментарная_речь": "Фрагментарная речь",
+    "стивен_фрай_о_боге_бог_прост": "Стивен Фрай о боге",
+    "думает": "Размышления",
+    "что_размышляет": "Что размышляет",
+    "эгоистичный_маньяк": "Эгоистичный маньяк",
+    "разбор_ситуации_с_отказом_в": "Разбор ситуации с отказом",
+    "und_wenn_du_lange_in_einen_a": "Ницше: Бездна",
+    "blickt_der_abgrund_auch": "Ницше: Взгляд в бездну",
 }
 
 
@@ -168,9 +196,7 @@ def format_room_label(room: str) -> str:
     if not room:
         return ""
     norm = room.lower().strip()
-    if norm in ROOM_RUSSIAN_LABELS:
-        return ROOM_RUSSIAN_LABELS[norm]
-    return room
+    return ROOM_RUSSIAN_LABELS.get(norm, room)
 
 
 def _extract_drawer_note_title(d: dict, fallback_idx: int) -> tuple[str, int]:
@@ -322,20 +348,23 @@ async def cb_rooms_menu(cb: types.CallbackQuery):
             raw_rooms = await mcp.call_tool("mempalace_list_rooms", {"wing": w})
             rp = json.loads(raw_rooms)
             rooms = rp.get("rooms", {})
+            w_text = format_wing_label(w)
             if rooms:
-                lines.append(f"├ <b>{safe_html_format(w)}</b>")
+                lines.append(f"├ <b>{safe_html_format(w_text)}</b>")
                 sorted_rooms = sorted(rooms.items(), key=lambda x: x[1], reverse=True)
                 for r, cnt in sorted_rooms[:5]:
-                    lines.append(f"│  • {safe_html_format(r)} ({cnt})")
                     r_text = format_room_label(r)
-                    kb.row(types.InlineKeyboardButton(
-                        text=f"🚪 {r_text}", callback_data=_build_room_callback_data(w, r),
-                    ))
+                    lines.append(f"│  • {safe_html_format(r_text)} ({cnt})")
+                    kb.button(
+                        text=f"🚪 {r_text}",
+                        callback_data=_build_room_callback_data(w, r),
+                    )
                 if len(sorted_rooms) > 5:
                     lines.append(f"│  … ещё {len(sorted_rooms) - 5}")
             else:
-                lines.append(f"├ <b>{safe_html_format(w)}</b> — (пусто)")
+                lines.append(f"├ <b>{safe_html_format(w_text)}</b> — (пусто)")
 
+        kb.adjust(2)
         kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_nav"))
         ok = await safe_edit_text(
             cb.message, "\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup()
@@ -580,19 +609,22 @@ async def cb_taxonomy(cb: types.CallbackQuery):
             _wing_cache[uid] = wing_names
             lines = ["<b>🏛️ Полная таксономия:</b>\n"]
             for wing, count in wing_list:
-                lines.append(f"  🔹 <b>{safe_html_format(wing)}</b> ({count} записей)")
+                w_ru = format_wing_label(wing)
+                lines.append(f"  🔹 <b>{safe_html_format(w_ru)}</b> ({count} записей)")
             kb = InlineKeyboardBuilder()
             for i, w in enumerate(wing_names):
-                kb.row(types.InlineKeyboardButton(
-                    text=f"🕸️ {w}", callback_data=f"p_tw_{i}",
-                ))
+                w_ru = format_wing_label(w)
+                kb.button(
+                    text=f"🕸️ {w_ru}", callback_data=f"p_tw_{i}",
+                )
+            kb.adjust(2)
             kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_nav"))
             await safe_edit_text(
                 cb.message, "\n".join(lines),
                 parse_mode="HTML", reply_markup=kb.as_markup(),
             )
         else:
-            joined = "\n".join(f"  • {w}" for w in wings)
+            joined = "\n".join(f"  • {format_wing_label(w)}" for w in wings)
             await safe_edit_text(cb.message, joined)
     except Exception as e:
         await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
@@ -630,15 +662,18 @@ async def cb_taxonomy_wing(cb: types.CallbackQuery):
         await cb.message.edit_text(f"❌ В крыле «{wing}» нет комнат.")
         return
     total_records = sum(rooms.values())
+    w_ru = format_wing_label(wing)
     lines = [
-        f"🪪 <b>Комнаты крыла {wing}:</b>\n<i>{render_breadcrumbs(wing=wing).strip()}</i>\n",
+        f"🪪 <b>Комнаты крыла {safe_html_format(w_ru)}:</b>\n"
+        f"<i>{render_breadcrumbs(wing=wing).strip()}</i>\n",
         f"<i>Всего комнат: {len(rooms)} | Записей: {total_records:,}</i>\n",
         "Выберите комнату для чтения записей:",
     ]
     kb = InlineKeyboardBuilder()
     for room, count in sorted(rooms.items(), key=lambda x: x[1], reverse=True):
+        r_ru = format_room_label(room)
         kb.button(
-            text=f"📖 {room}",
+            text=f"📖 {r_ru}",
             callback_data=_build_room_callback_data(wing, room),
         )
     kb.adjust(2)
@@ -822,7 +857,8 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
         w_label = format_wing_label(wing)
         r_label = format_room_label(room)
         lines = [
-            f"<b>📖 Записи в {w_label}/{r_label}</b>  ({total} записей)\n"
+            f"<b>📖 Записи в {w_label}/{r_label}</b><!-- Записи в {wing}/{room} -->  "
+            f"({total} записей)\n"
             f"<i>{render_breadcrumbs(wing=wing, room=room).strip()}</i>\n",
         ]
         for i, d in enumerate(drawers):
@@ -1425,7 +1461,12 @@ async def cb_tunnels_list(cb: types.CallbackQuery):
         if isinstance(tunnels, dict) and "tunnels" in tunnels:
             tunnels = tunnels["tunnels"]
         if not tunnels:
-            await safe_edit_text(cb.message, "🔗 Туннелей нет.")
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="➕ Создать", callback_data="p_tc"))
+            kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
+            await safe_edit_text(
+                cb.message, "🔗 Туннелей нет.", reply_markup=kb.as_markup(),
+            )
             return
 
         text_limit = 30
@@ -1462,8 +1503,10 @@ async def cb_tunnels_list(cb: types.CallbackQuery):
             src_r = src.get("room", "?")
             dst_w = dst.get("wing", "?")
             dst_r = dst.get("room", "?")
+            src_lbl = f"{format_wing_label(src_w)}/{format_room_label(src_r)}"
+            dst_lbl = f"{format_wing_label(dst_w)}/{format_room_label(dst_r)}"
             kb.row(types.InlineKeyboardButton(
-                text=f"{src_w}/{src_r} ↔ {dst_w}/{dst_r}",
+                text=f"{src_lbl} ↔ {dst_lbl}",
                 callback_data=f"p_tdr:{tid}",
             ))
         kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
@@ -1503,7 +1546,12 @@ async def cb_traverse_tunnel(cb: types.CallbackQuery):
         if isinstance(tunnels, dict) and "tunnels" in tunnels:
             tunnels = tunnels["tunnels"]
         if not tunnels:
-            await safe_edit_text(cb.message, "🔗 Туннелей нет для прохода.")
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="➕ Создать", callback_data="p_tc"))
+            kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
+            await safe_edit_text(
+                cb.message, "🔗 Туннелей нет для прохода.", reply_markup=kb.as_markup(),
+            )
             return
         kb = InlineKeyboardBuilder()
         for t in tunnels[:20]:
@@ -1514,8 +1562,10 @@ async def cb_traverse_tunnel(cb: types.CallbackQuery):
             src_r = src.get("room", "?")
             dst_w = dst.get("wing", "?")
             dst_r = dst.get("room", "?")
+            src_lbl = f"{format_wing_label(src_w)}/{format_room_label(src_r)}"
+            dst_lbl = f"{format_wing_label(dst_w)}/{format_room_label(dst_r)}"
             kb.row(types.InlineKeyboardButton(
-                text=f"{src_w}/{src_r} ➡ {dst_w}/{dst_r}",
+                text=f"{src_lbl} ➡ {dst_lbl}",
                 callback_data=f"p_tow:{tid}",
             ))
         kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
@@ -1609,9 +1659,11 @@ async def cb_tunnel_create(cb: types.CallbackQuery):
         else:
             wing_names = list(wings)
         for w in wing_names:
-            kb.row(types.InlineKeyboardButton(
-                text=f"🕸️ {w}", callback_data=f"p_tcs_{w}",
-            ))
+            w_ru = format_wing_label(w)
+            kb.button(
+                text=f"🕸️ {w_ru}", callback_data=f"p_tcs_{w}",
+            )
+        kb.adjust(2)
         kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
         await safe_edit_text(
             cb.message, "➕ <b>Создание туннеля</b>\nВыберите исходное крыло:",
@@ -1634,7 +1686,12 @@ async def cb_tunnels_ai(cb: types.CallbackQuery):
         if isinstance(tunnels, dict) and "tunnels" in tunnels:
             tunnels = tunnels["tunnels"]
         if not tunnels:
-            await safe_edit_text(cb.message, "🔗 Нет туннелей для анализа.")
+            kb = InlineKeyboardBuilder()
+            kb.row(types.InlineKeyboardButton(text="➕ Создать", callback_data="p_tc"))
+            kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
+            await safe_edit_text(
+                cb.message, "🔗 Нет туннелей для анализа.", reply_markup=kb.as_markup(),
+            )
             return
         prompt = (
             "Проанализируй эти туннели (связи между комнатами знаний). "
@@ -1647,7 +1704,12 @@ async def cb_tunnels_ai(cb: types.CallbackQuery):
         result = await call_ai_async(
             engine, model, [{"role": "user", "content": prompt}],
         )
-        await safe_edit_text(cb.message, result or "❌ Пустой ответ.", parse_mode="HTML")
+        kb = InlineKeyboardBuilder()
+        kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
+        await safe_edit_text(
+            cb.message, result or "❌ Пустой ответ.",
+            parse_mode="HTML", reply_markup=kb.as_markup(),
+        )
     except Exception as e:
         await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
 

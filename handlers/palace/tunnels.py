@@ -8,6 +8,7 @@ from config import allowed_callback
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
+from .navigation import format_room_label, format_wing_label
 from .shared import (
     _create_tunnel_state,
     _pending_mcp_input,
@@ -180,9 +181,11 @@ async def _show_wing_buttons_for_tunnel(edit_func, action: str, uid: int, exclud
         return False
     kb = InlineKeyboardBuilder()
     for w in wing_names:
-        kb.row(types.InlineKeyboardButton(
-            text=f"🕸️ {w}", callback_data=f"p_{action}_{w}",
-        ))
+        w_ru = format_wing_label(w)
+        kb.button(
+            text=f"🕸️ {w_ru}", callback_data=f"p_{action}_{w}",
+        )
+    kb.adjust(2)
     kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
     await edit_func("Выберите крыло:", reply_markup=kb.as_markup())
     return True
@@ -217,14 +220,17 @@ async def cb_create_tunnel_source_room(cb: types.CallbackQuery):
         await cb.message.edit_text(f"❌ В крыле «{wing}» нет комнат.")
         return
     _room_cache[uid] = list(rooms.items())
+    w_ru = format_wing_label(wing)
     kb = InlineKeyboardBuilder()
     for i, (room, _) in enumerate(rooms.items()):
-        kb.row(types.InlineKeyboardButton(
-            text=f"📁 {room}", callback_data=f"p_tcsr_{i}",
-        ))
+        r_ru = format_room_label(room)
+        kb.button(
+            text=f"📁 {r_ru}", callback_data=f"p_tcsr_{i}",
+        )
+    kb.adjust(2)
     kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tc"))
     await cb.message.edit_text(
-        f"🕸️ <b>{wing}</b>\nВыберите исходную <b>комнату</b>:",
+        f"🕸️ <b>{safe_html_format(w_ru)}</b>\nВыберите исходную <b>комнату</b>:",
         parse_mode="HTML", reply_markup=kb.as_markup(),
     )
 
@@ -266,19 +272,22 @@ async def cb_create_tunnel_target_room(cb: types.CallbackQuery):
         await cb.message.edit_text(f"❌ В крыле «{wing}» нет комнат.")
         return
     _room_cache[uid] = list(rooms.items())
+    w_ru = format_wing_label(wing)
     kb = InlineKeyboardBuilder()
     for i, (room, _) in enumerate(rooms.items()):
-        kb.row(types.InlineKeyboardButton(
-            text=f"📁 {room}", callback_data=f"p_tctr:{i}",
-        ))
+        r_ru = format_room_label(room)
+        kb.button(
+            text=f"📁 {r_ru}", callback_data=f"p_tctr:{i}",
+        )
+    kb.adjust(2)
     kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tc"))
     await cb.message.edit_text(
-        f"🕸️ <b>{wing}</b>\nВыберите целевую <b>комнату</b>:",
+        f"🕸️ <b>{safe_html_format(w_ru)}</b>\nВыберите целевую <b>комнату</b>:",
         parse_mode="HTML", reply_markup=kb.as_markup(),
     )
 
 
-@router.callback_query(F.data.startswith("p_tctr_"))
+@router.callback_query(F.data.startswith("p_tctr_") | F.data.startswith("p_tctr:"))
 @allowed_callback
 async def cb_create_tunnel_label_prompt(cb: types.CallbackQuery):
     await cb.answer()
@@ -291,14 +300,17 @@ async def cb_create_tunnel_label_prompt(cb: types.CallbackQuery):
         return
     state["target_room"] = rooms[idx][0]
     _pending_mcp_input[uid] = "create_tunnel"
-    src_w = safe_html_format(state['source_wing'])
-    src_r = safe_html_format(state['source_room'])
-    tgt_w = safe_html_format(state['target_wing'])
-    tgt_r = safe_html_format(state['target_room'])
+    src_w = safe_html_format(format_wing_label(state['source_wing']))
+    src_r = safe_html_format(format_room_label(state['source_room']))
+    tgt_w = safe_html_format(format_wing_label(state['target_wing']))
+    tgt_r = safe_html_format(format_room_label(state['target_room']))
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="◀️ Отмена", callback_data="p_tun"))
     await cb.message.edit_text(
         f"🏗️ <b>Почти готово!</b>\n\n"
         f"Исходная: {src_w}/{src_r}\n"
         f"Целевая:  {tgt_w}/{tgt_r}\n\n"
         "✏️ Введите описание связи (или «-» чтобы пропустить):",
         parse_mode="HTML",
+        reply_markup=kb.as_markup(),
     )

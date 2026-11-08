@@ -451,18 +451,21 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             raw = await mcp.call_tool("mempalace_find_tunnels", args)
             found_tunnels = json.loads(raw) if raw else []
             if not found_tunnels:
+                kb = InlineKeyboardBuilder()
+                kb.row(types.InlineKeyboardButton(text="➕ Создать туннель", callback_data="p_tc"))
+                kb.row(types.InlineKeyboardButton(text="🔀 Траверс", callback_data="p_trv"))
+                kb.row(types.InlineKeyboardButton(text="◀️ Назад в туннели", callback_data="p_tun"))
                 await msg.edit_text(
                     "🔍 Туннелей между этими крыльями не найдено.\n\n"
                     "Туннель возникает, когда одна и та же комната (тема) "
                     "встречается в <b>разных</b> крыльях.\n"
                     "Пример: тема «интегралы» есть и в крыле «math», "
                     "и в «physics» → туннель.\n\n"
-                    "У вас сейчас одно крыло — <b>my_notes</b>.\n"
-                    "Чтобы увидеть туннели, добавьте ещё одно крыло "
-                    "через майнинг.\n\n"
-                    "Попробуйте: 🔀 <b>Траверс</b> — связи между "
-                    "комнатами внутри крыла.",
+                    "💡 <i>Вы можете связать любые комнаты между крыльями "
+                    "вручную через кнопку «➕ Создать туннель» "
+                    "или исследовать связи через 🔀 Траверс.</i>",
                     parse_mode="HTML",
+                    reply_markup=kb.as_markup(),
                 )
             else:
                 lines = [f"<b>🔄 Найдено туннелей: {len(found_tunnels)}</b>\n"]
@@ -519,12 +522,14 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             try:
                 result = json.loads(raw)
                 tunnel_id = result.get("tunnel_id", "")
+                src_w = safe_html_format(navigation.format_wing_label(state['source_wing']))
+                src_r = safe_html_format(navigation.format_room_label(state['source_room']))
+                tgt_w = safe_html_format(navigation.format_wing_label(state['target_wing']))
+                tgt_r = safe_html_format(navigation.format_room_label(state['target_room']))
                 text = (
                     f"✅ <b>Туннель создан!</b>\n\n"
-                    f"• {safe_html_format(state['source_wing'])}"
-                    f"/{safe_html_format(state['source_room'])}\n"
-                    f"  ⟷ {safe_html_format(state['target_wing'])}"
-                    f"/{safe_html_format(state['target_room'])}\n"
+                    f"• {src_w}/{src_r}\n"
+                    f"  ⟷ {tgt_w}/{tgt_r}\n"
                     + (f"• Описание: {label}\n" if label else "")
                     + (f"• ID: {tunnel_id}" if tunnel_id else "")
                 )
