@@ -120,7 +120,7 @@ def test_paginate_near_limit_1499():
 
 
 def test_paginate_over_limit_1501():
-    text = "а" * 1501
+    text = "а" * (PAGE_LIMIT + 1)
     pages = paginate(text)
     assert len(pages) == 2
 
@@ -388,7 +388,9 @@ def test_finalize_answer_pages_by_page_limit():
         msg.edited.append(text)
         return msg
 
-    answer = asyncio.run(ab.finalize_answer(1, edit_func, "т" * 1600, is_html=True))
+    answer = asyncio.run(
+        ab.finalize_answer(1, edit_func, "т" * (ab.PAGE_LIMIT + 100), is_html=True)
+    )
     assert len(answer.pages) == 2
 
 
@@ -868,7 +870,7 @@ def test_cb_read_drawer_long_content_paginates(monkeypatch):
     import handlers.palace.action_bar as ab
     from handlers.palace import navigation
 
-    long_text = ("абвгд " * 400)  # 2400 символов -> 2 страницы по 1500
+    long_text = ("абвгд " * 600)  # 3600 символов -> 2 страницы по 2600
 
     class FakeMCP:
         async def call_tool(self, name, args=None):
@@ -1644,3 +1646,104 @@ def test_find_cut_double_newline_in_second_half():
     import handlers.palace.action_bar as ab
 
     assert ab._find_cut("aaaaa\n\nb\ncccc", 10) == 7
+
+
+# ─── Note Deduplication & File Reading Tests ───
+
+
+def test_clean_drawer_title():
+    from handlers.palace.navigation import _clean_drawer_title
+
+    assert _clean_drawer_title("Оскар Бренифье [часть 1]") == "Оскар Бренифье"
+    assert _clean_drawer_title("Заметка [ч. 2]") == "Заметка"
+    assert _clean_drawer_title("Текст [часть 3/10]") == "Текст"
+    assert _clean_drawer_title("Обычная заметка без чанков") == "Обычная заметка без чанков"
+    assert _clean_drawer_title("") == ""
+
+
+def test_group_drawers_into_notes_by_source_file():
+    from handlers.palace.navigation import _group_drawers_into_notes
+
+    chunks = [
+        {
+            "drawer_id": f"id_{i}",
+            "source_file": "/notes/Philosophy/Brenifier.txt",
+            "title": f"Оскар Бренифье [часть {i + 1}]",
+            "chunk_index": i,
+            "content": f"Фрагмент текста {i}",
+        }
+        for i in range(10)
+    ]
+    notes = _group_drawers_into_notes(chunks)
+    assert len(notes) == 1
+    assert notes[0]["title"] == "Оскар Бренифье"
+    assert notes[0]["chunk_count"] == 10
+    assert len(notes[0]["all_chunks"]) == 10
+    assert len(notes[0]["drawer_ids"]) == 10
+
+
+def test_group_drawers_into_notes_multiple_files_order_preserved():
+    from handlers.palace.navigation import _group_drawers_into_notes
+
+    chunks = [
+        {"drawer_id": "a1", "source_file": "/notes/a.txt", "title": "Заметка A [ч.1]"},
+        {"drawer_id": "b1", "source_file": "/notes/b.txt", "title": "Заметка B [ч.1]"},
+        {"drawer_id": "a2", "source_file": "/notes/a.txt", "title": "Заметка A [ч.2]"},
+        {"drawer_id": "b2", "source_file": "/notes/b.txt", "title": "Заметка B [ч.2]"},
+        {"drawer_id": "c1", "source_file": "/notes/c.txt", "title": "Заметка C"},
+    ]
+    notes = _group_drawers_into_notes(chunks)
+    assert len(notes) == 3
+    assert [n["title"] for n in notes] == ["Заметка A", "Заметка B", "Заметка C"]
+    assert notes[0]["chunk_count"] == 2
+    assert notes[1]["chunk_count"] == 2
+    assert notes[2]["chunk_count"] == 1
+
+
+def test_action_bar_pagination_row_placed_first():
+    from aiogram import types
+
+    import handlers.palace.action_bar as ab
+
+    answer = ab.Answer(sid="test", text="t")
+    answer.pages = ["стр 1", "стр 2", "стр 3"]
+    answer.extra_rows = [
+        [types.InlineKeyboardButton(text="🗑️ Удалить", callback_data="p_drdel:0")]
+    ]
+    kb = ab.build_action_bar(answer, 0)
+    rows = kb.export()
+    # Первая строка должна быть навигационной строкой листания страниц
+    nav_row_data = [b.callback_data for b in rows[0]]
+    assert "ab_pg_noop" in nav_row_data
+    assert "ab_pg:test:1" in nav_row_data
+    # Вторая строка — extra_rows (удаление)
+    assert rows[1][0].callback_data == "p_drdel:0"
+
+
+def test_cb_read_drawer_loads_full_file_from_disk(tmp_path, monkeypatch):
+    from handlers.palace import navigation
+
+    # Создаём длинный файл на диске (5000 символов)
+    note_file = tmp_path / "Brenifier_full.txt"
+    long_content = "Текст философии Оскара Бренифье. " * 150
+    note_file.write_text(long_content, encoding="utf-8")
+
+    monkeypatch.setattr(navigation, "_drawer_list_state", {
+        TEST_UID: {
+            "wing": "philosophy", "room": "brenifier", "offset": 0,
+            "drawers": [{
+                "title": "Оскар Бренифье",
+                "drawer_id": "d1",
+                "source_file": str(note_file),
+            }],
+        },
+    })
+
+    msg = FakeMessage()
+    cb = FakeCallback("p_rd:0", msg)
+    asyncio.run(navigation.cb_read_drawer(cb))
+    assert len(msg.edited) == 1
+    assert "Оскар Бренифье" in msg.edited[-1]
+    # Должна появиться пагинация со стрелками
+    data = _markup_data(msg)
+    assert any(d.startswith("ab_pg:") for d in data)

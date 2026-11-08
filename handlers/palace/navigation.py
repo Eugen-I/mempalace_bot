@@ -4,12 +4,14 @@ import binascii
 import json
 import logging
 import os
+import re
 import secrets
+from pathlib import Path
 
 from aiogram import F, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import allowed_callback
+from config import NOTES_DIR, PALACE_DIR, allowed_callback
 from services.ai_engine import AITimeoutError, call_ai_async, get_current_ai
 from services.palace_mcp import get_mcp
 from services.summary_service import SummaryMode, generate_summary
@@ -199,6 +201,16 @@ def format_room_label(room: str) -> str:
     return ROOM_RUSSIAN_LABELS.get(norm, room)
 
 
+def _clean_drawer_title(raw_title: str) -> str:
+    """Очищает название заметки от технического суффикса части/чанка."""
+    if not raw_title:
+        return ""
+    cleaned = re.sub(
+        r"\s*\[(?:часть|ч\.?)\s*\d+(?:/\d+)?\]", "", raw_title, flags=re.IGNORECASE
+    ).strip()
+    return cleaned
+
+
 def _extract_drawer_note_title(d: dict, fallback_idx: int) -> tuple[str, int]:
     """Извлекает красивое название заметки и номер части (чанка)."""
     title = d.get("title") or d.get("name") or d.get("closet_name") or ""
@@ -223,7 +235,61 @@ def _extract_drawer_note_title(d: dict, fallback_idx: int) -> tuple[str, int]:
     if not title:
         title = f"Заметка {fallback_idx}"
 
-    return title.strip(), int(chunk_index)
+    clean_t = _clean_drawer_title(title.strip())
+    return (clean_t or title.strip()), int(chunk_index)
+
+
+def _get_note_dedup_key(d: dict, fallback_idx: int) -> str:
+    """Формирует уникальный ключ заметки для дедупликации чанков."""
+    src = (d.get("source_file") or "").strip()
+    if src:
+        return f"src:{src.lower()}"
+    sid = (d.get("source_id") or "").strip()
+    if sid:
+        return f"sid:{sid.lower()}"
+    title, _ = _extract_drawer_note_title(d, fallback_idx)
+    clean_t = _clean_drawer_title(title).lower()
+    if clean_t:
+        return f"title:{clean_t}"
+    did = str(d.get("drawer_id") or fallback_idx)
+    return f"id:{did}"
+
+
+def _group_drawers_into_notes(drawers: list[dict], base_offset: int = 0) -> list[dict]:
+    """Группирует список чанков/ящиков в список уникальных заметок."""
+    grouped_map: dict[str, dict] = {}
+    ordered_keys: list[str] = []
+
+    for i, d in enumerate(drawers):
+        key = _get_note_dedup_key(d, base_offset + i + 1)
+        title, chunk_idx = _extract_drawer_note_title(d, base_offset + i + 1)
+        if key not in grouped_map:
+            ordered_keys.append(key)
+            grouped_map[key] = {
+                **d,
+                "title": title,
+                "closet_name": title,
+                "drawer_id": d.get("drawer_id", ""),
+                "drawer_ids": [d.get("drawer_id")] if d.get("drawer_id") else [],
+                "source_file": d.get("source_file", ""),
+                "source_id": d.get("source_id", ""),
+                "source_type": d.get("source_type", ""),
+                "chunk_count": 1,
+                "content_preview": d.get("content_preview") or d.get("content", "")[:300],
+                "all_chunks": [d],
+            }
+        else:
+            entry = grouped_map[key]
+            entry["chunk_count"] += 1
+            if d.get("drawer_id"):
+                entry["drawer_ids"].append(d["drawer_id"])
+            entry["all_chunks"].append(d)
+            if not entry.get("source_file") and d.get("source_file"):
+                entry["source_file"] = d["source_file"]
+            if not entry.get("source_id") and d.get("source_id"):
+                entry["source_id"] = d["source_id"]
+
+    return [grouped_map[k] for k in ordered_keys]
 
 
 def render_breadcrumbs(
@@ -829,13 +895,53 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     mcp = get_mcp()
     try:
-        raw = await mcp.call_tool(
-            "mempalace_list_drawers",
-            {"wing": wing, "room": room, "limit": PAGE_SIZE, "offset": offset},
+        st = _drawer_list_state.get(uid) or {}
+        has_cached = (
+            st.get("wing") == wing and st.get("room") == room and "all_notes" in st
         )
-        parsed = json.loads(raw)
-        drawers = parsed.get("drawers", [])
-        total = parsed.get("total") or parsed.get("count", 0)
+        if has_cached:
+            all_notes = st["all_notes"]
+            total = len(all_notes)
+            drawers = all_notes[offset:offset + PAGE_SIZE]
+        else:
+            req_limit = 100 if offset == 0 else PAGE_SIZE
+            raw = await mcp.call_tool(
+                "mempalace_list_drawers",
+                {"wing": wing, "room": room, "limit": req_limit, "offset": offset},
+            )
+            parsed = json.loads(raw) if raw else {}
+            raw_drawers = parsed.get("drawers", [])
+            raw_total = parsed.get("total") or parsed.get("count", 0)
+
+            if offset == 0 and raw_total > len(raw_drawers) and len(raw_drawers) >= 100:
+                while len(raw_drawers) < raw_total and len(raw_drawers) < 1000:
+                    next_raw = await mcp.call_tool(
+                        "mempalace_list_drawers",
+                        {
+                            "wing": wing,
+                            "room": room,
+                            "limit": 100,
+                            "offset": len(raw_drawers),
+                        },
+                    )
+                    next_parsed = json.loads(next_raw) if next_raw else {}
+                    batch = next_parsed.get("drawers", [])
+                    if not batch:
+                        break
+                    raw_drawers.extend(batch)
+
+            all_notes = _group_drawers_into_notes(raw_drawers, base_offset=offset)
+            if offset > 0:
+                drawers = all_notes
+                total = raw_total
+            else:
+                is_chunked = len(all_notes) < len(raw_drawers)
+                total = (
+                    len(all_notes)
+                    if (is_chunked or raw_total == len(raw_drawers))
+                    else raw_total
+                )
+                drawers = all_notes[:PAGE_SIZE]
 
         _drawer_list_state[uid] = {
             "wing": wing,
@@ -843,6 +949,7 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
             "offset": offset,
             "total": total,
             "drawers": drawers,
+            "all_notes": all_notes if not has_cached else st["all_notes"],
         }
 
         if not drawers:
@@ -861,14 +968,17 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
             f"<i>{render_breadcrumbs(wing=wing, room=room).strip()}</i>\n",
         ]
         for i, d in enumerate(drawers):
-            note_title, chunk_idx = _extract_drawer_note_title(d, offset + i + 1)
+            note_title = (
+                d.get("title") or _extract_drawer_note_title(d, offset + i + 1)[0]
+            )
+            note_title = _clean_drawer_title(note_title)
             preview = d.get("content_preview", "") or d.get("content", "")[:300]
             date_val = d.get("created_at") or d.get("date") or d.get("timestamp") or ""
             tags = d.get("tags") or d.get("keywords") or []
-            chunk_suffix = f" [часть {chunk_idx + 1}]" if chunk_idx > 0 else ""
-            display_title = f"{note_title}{chunk_suffix}"
-            safe_n = safe_html_format(display_title)
-            lines.append(f"{offset + i + 1}. 📄 <b>{safe_n}</b>")
+            safe_n = safe_html_format(note_title)
+            chunk_cnt = d.get("chunk_count", 1)
+            chunk_badge = f" <i>({chunk_cnt} фрагм.)</i>" if chunk_cnt > 1 else ""
+            lines.append(f"{offset + i + 1}. 📄 <b>{safe_n}</b>{chunk_badge}")
             meta_chips = []
             if date_val:
                 meta_chips.append(f"📅 {safe_html_format(str(date_val)[:10])}")
@@ -883,15 +993,17 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
 
         extra_rows = []
         for i, d in enumerate(drawers):
-            note_title, chunk_idx = _extract_drawer_note_title(d, offset + i + 1)
-            chunk_suffix = f" [ч.{chunk_idx + 1}]" if chunk_idx > 0 else ""
-            max_btn_len = 20 if chunk_idx > 0 else 24
+            note_title = (
+                d.get("title") or _extract_drawer_note_title(d, offset + i + 1)[0]
+            )
+            note_title = _clean_drawer_title(note_title)
+            max_btn_len = 24
             short_t = (
                 note_title[:max_btn_len] + "…"
                 if len(note_title) > max_btn_len
                 else note_title
             )
-            btn_title = f"📄 Полный текст: {short_t}{chunk_suffix}"
+            btn_title = f"📄 Полный текст: {short_t}"
             extra_rows.append([
                 types.InlineKeyboardButton(
                     text=btn_title, callback_data=f"p_rd:{i}",
@@ -953,10 +1065,12 @@ async def cb_read_drawer(cb: types.CallbackQuery):
                 parsed = json.loads(raw)
                 drawers = parsed.get("drawers", [])
                 if drawers and idx < len(drawers):
+                    notes = _group_drawers_into_notes(drawers, base_offset=0)
                     _drawer_list_state[uid] = {
                         "wing": ctx["wing"], "room": ctx["room"],
-                        "offset": 0, "total": parsed.get("total") or parsed.get("count", 0),
-                        "drawers": drawers,
+                        "offset": 0, "total": len(notes),
+                        "drawers": notes,
+                        "all_notes": notes,
                     }
                     state = _drawer_list_state.get(uid)
             if not state or idx >= len(state.get("drawers", [])):
@@ -967,27 +1081,62 @@ async def cb_read_drawer(cb: types.CallbackQuery):
 
         drawer = state["drawers"][idx]
         drawer_id = drawer.get("drawer_id", "")
-        drawer_name = drawer.get("closet_name") or drawer.get("title") or drawer.get("name", "")
+        drawer_name = (
+            drawer.get("title") or drawer.get("closet_name") or drawer.get("name", "")
+        )
+        drawer_name = _clean_drawer_title(drawer_name)
         wing = state["wing"]
         room = state["room"]
 
-        mcp = get_mcp()
-        raw = await mcp.call_tool(
-            "mempalace_get_drawer",
-            {"drawer_id": drawer_id} if drawer_id else {"drawer_id": ""},
-        )
-        parsed = json.loads(raw) if raw else {}
+        source_file = drawer.get("source_file", "")
         text = ""
         meta = {}
-        if isinstance(parsed, dict) and "content" in parsed:
-            text = parsed["content"]
-            meta = parsed.get("metadata") or {}
-        elif isinstance(parsed, str):
-            text = parsed
 
-        source_id = str(meta.get("source_id") or "")
-        source_type = str(meta.get("source_type") or "")
-        source_title = str(meta.get("source_title") or "")
+        if source_file:
+            candidates = [
+                Path(source_file),
+                Path(NOTES_DIR) / source_file,
+                Path(NOTES_DIR) / os.path.basename(source_file),
+                Path(PALACE_DIR) / source_file,
+                Path("/Users/evg.pit/Documents/mempalace") / source_file,
+            ]
+            for p in candidates:
+                try:
+                    if p.is_file():
+                        text = p.read_text(encoding="utf-8", errors="replace")
+                        logger.info(
+                            "Loaded note text from disk: %s (%d chars)", p, len(text)
+                        )
+                        break
+                except Exception as ex:
+                    logger.debug("Failed reading file %s: %s", p, ex)
+
+        if not text and drawer.get("all_chunks") and len(drawer["all_chunks"]) > 1:
+            chunks = sorted(drawer["all_chunks"], key=lambda c: c.get("chunk_index", 0))
+            chunk_texts = []
+            for c in chunks:
+                c_text = c.get("content") or c.get("content_preview") or ""
+                if c_text:
+                    chunk_texts.append(c_text)
+            if chunk_texts:
+                text = "\n\n".join(chunk_texts)
+
+        if not text:
+            mcp = get_mcp()
+            raw = await mcp.call_tool(
+                "mempalace_get_drawer",
+                {"drawer_id": drawer_id} if drawer_id else {"drawer_id": ""},
+            )
+            parsed = json.loads(raw) if raw else {}
+            if isinstance(parsed, dict) and "content" in parsed:
+                text = parsed["content"]
+                meta = parsed.get("metadata") or {}
+            elif isinstance(parsed, str):
+                text = parsed
+
+        source_id = str(meta.get("source_id") or drawer.get("source_id") or "")
+        source_type = str(meta.get("source_type") or drawer.get("source_type") or "")
+        source_title = str(meta.get("source_title") or drawer.get("title") or "")
         if not source_id and drawer_id:
             try:
                 from services.notes_sync import get_backlink_by_drawer

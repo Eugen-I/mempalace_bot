@@ -61,7 +61,7 @@ def test_cb_get_drawer_long_content_paginates(monkeypatch):
     import handlers.palace.action_bar as ab
     from handlers.palace import navigation
 
-    long_text = "абвгд " * 400
+    long_text = "абвгд " * 600
 
     class FakeMCP:
         async def call_tool(self, name, args=None):

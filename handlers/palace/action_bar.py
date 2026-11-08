@@ -33,7 +33,7 @@ from services.ttl_dict import TtlDict
 
 logger = logging.getLogger("ActionBar")
 
-PAGE_LIMIT = 1500
+PAGE_LIMIT = 2600
 
 router = Router()
 
@@ -112,6 +112,21 @@ def _render_page(answer: Answer, idx: int) -> str:
 def build_action_bar(answer: Answer, page_idx: int) -> InlineKeyboardBuilder:
     """Собирает клавиатуру панели действий для указанной страницы."""
     kb = InlineKeyboardBuilder()
+    if answer.total_pages > 1:
+        nav_row = []
+        if page_idx > 0:
+            nav_row.append(types.InlineKeyboardButton(
+                text="◀️ Назад", callback_data=f"ab_pg:{answer.sid}:{page_idx - 1}",
+            ))
+        nav_row.append(types.InlineKeyboardButton(
+            text=f"📄 {page_idx + 1}/{answer.total_pages}",
+            callback_data="ab_pg_noop",
+        ))
+        if page_idx < answer.total_pages - 1:
+            nav_row.append(types.InlineKeyboardButton(
+                text="▶️ Вперёд", callback_data=f"ab_pg:{answer.sid}:{page_idx + 1}",
+            ))
+        kb.row(*nav_row)
     for row in answer.extra_rows:
         kb.row(*row)
     kb.row(
@@ -129,21 +144,6 @@ def build_action_bar(answer: Answer, page_idx: int) -> InlineKeyboardBuilder:
             text="⏹ Завершить диалог с агентом",
             callback_data=f"ab_agent_stop:{answer.sid}",
         ))
-    if answer.total_pages > 1:
-        nav_row = []
-        if page_idx > 0:
-            nav_row.append(types.InlineKeyboardButton(
-                text="◀️ Назад", callback_data=f"ab_pg:{answer.sid}:{page_idx - 1}",
-            ))
-        nav_row.append(types.InlineKeyboardButton(
-            text=f"📄 {page_idx + 1}/{answer.total_pages}",
-            callback_data="ab_pg_noop",
-        ))
-        if page_idx < answer.total_pages - 1:
-            nav_row.append(types.InlineKeyboardButton(
-                text="▶️ Вперёд", callback_data=f"ab_pg:{answer.sid}:{page_idx + 1}",
-            ))
-        kb.row(*nav_row)
     if answer.ctx.get("parent_cb"):
         kb.row(types.InlineKeyboardButton(
             text="🔙 Вернуться к списку", callback_data=f"ab_back:{answer.sid}",
