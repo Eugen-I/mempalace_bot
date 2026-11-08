@@ -1583,6 +1583,8 @@ async def cb_traverse_step(cb: types.CallbackQuery):
 @allowed_callback
 async def cb_tunnels_menu(cb: types.CallbackQuery):
     await cb.answer()
+    if _pending_mcp_input.get(cb.from_user.id) in ("find_tunnels", "tunnel_discuss"):
+        _pending_mcp_input.pop(cb.from_user.id, None)
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="📋 Список", callback_data="p_tl"))
     kb.row(types.InlineKeyboardButton(text="🔍 Между крыльями", callback_data="p_tb"))
@@ -1673,12 +1675,97 @@ async def cb_tunnels_list(cb: types.CallbackQuery):
 async def cb_tunnels_between(cb: types.CallbackQuery):
     await cb.answer()
     _pending_mcp_input[cb.from_user.id] = "find_tunnels"
+    kb = InlineKeyboardBuilder()
+    try:
+        mcp = get_mcp()
+        raw = await mcp.call_tool("mempalace_list_wings")
+        parsed = json.loads(raw) if raw else {}
+        wings = parsed.get("wings", parsed)
+        if isinstance(wings, dict):
+            wing_names = sorted(wings.keys(), key=lambda x: wings[x], reverse=True)
+        elif isinstance(wings, list):
+            wing_names = wings
+        else:
+            wing_names = []
+        for w in wing_names:
+            w_ru = format_wing_label(w)
+            kb.button(text=f"🪽 {w_ru}", callback_data=f"p_tb_w1:{w}")
+        kb.adjust(2)
+    except Exception as e:
+        logger.debug("Error listing wings in cb_tunnels_between: %s", e)
+    kb.row(types.InlineKeyboardButton(text="◀️ Назад в туннели", callback_data="p_tun"))
     await safe_edit_text(
         cb.message,
-        "🔍 Введите два крыла через пробел для поиска общих комнат.\n"
+        "🔍 <b>Поиск туннелей между крыльями</b>\n\n"
+        "Выберите первое крыло кнопкой ниже "
+        "или введите два крыла текстом через пробел:\n"
         "Пример: <code>philosophy psychology</code>",
         parse_mode="HTML",
+        reply_markup=kb.as_markup(),
     )
+
+
+@router.callback_query(F.data.startswith("p_tb_w1:"))
+@allowed_callback
+async def cb_tunnels_between_step2(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    wing_a = cb.data.split(":", 1)[1]
+    _pending_mcp_input[cb.from_user.id] = "find_tunnels"
+    kb = InlineKeyboardBuilder()
+    try:
+        mcp = get_mcp()
+        raw = await mcp.call_tool("mempalace_list_wings")
+        parsed = json.loads(raw) if raw else {}
+        wings = parsed.get("wings", parsed)
+        if isinstance(wings, dict):
+            wing_names = sorted(wings.keys(), key=lambda x: wings[x], reverse=True)
+        elif isinstance(wings, list):
+            wing_names = wings
+        else:
+            wing_names = []
+        for w in wing_names:
+            if w == wing_a:
+                continue
+            w_ru = format_wing_label(w)
+            kb.button(text=f"🪽 {w_ru}", callback_data=f"p_tb_run:{wing_a}:{w}")
+        kb.adjust(2)
+    except Exception as e:
+        logger.debug("Error listing wings in cb_tunnels_between_step2: %s", e)
+    kb.row(types.InlineKeyboardButton(
+        text="🌐 Все другие крылья", callback_data=f"p_tb_run:{wing_a}:-"
+    ))
+    kb.row(
+        types.InlineKeyboardButton(text="◀️ Выбрать другое крыло A", callback_data="p_tb"),
+        types.InlineKeyboardButton(text="◀️ В меню туннелей", callback_data="p_tun"),
+    )
+    w_ru = format_wing_label(wing_a)
+    await safe_edit_text(
+        cb.message,
+        f"🔍 Выбрано исходное крыло: <b>{safe_html_format(w_ru)}</b>\n\n"
+        "Теперь выберите второе крыло кнопкой ниже "
+        "или введите название крыла текстом:",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("p_tb_run:"))
+@allowed_callback
+async def cb_tunnels_between_run(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    parts = cb.data.split(":", 2)
+    if len(parts) < 3:
+        return
+    wing_a = parts[1]
+    wing_b = parts[2]
+    query = f"{wing_a} {wing_b}" if wing_b != "-" else wing_a
+    _pending_mcp_input[cb.from_user.id] = "find_tunnels"
+    from handlers.palace import process_mcp_text_input
+    await process_mcp_text_input(cb.from_user.id, query, cb.message.edit_text)
 
 
 # ─── TRAVERSE TUNNEL ───
@@ -1782,9 +1869,15 @@ async def cb_tunnel_ai_discuss(cb: types.CallbackQuery):
     uid = cb.from_user.id
     _user_context[uid] = {"tunnel_id": tunnel_id}
     _pending_mcp_input[uid] = "tunnel_discuss"
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(text="🔍 Между крыльями", callback_data="p_tb"),
+        types.InlineKeyboardButton(text="◀️ В меню туннелей", callback_data="p_tun"),
+    )
     await cb.message.answer(
         "💬 Напишите ваш вопрос об этой связи.\n"
         "ИИ проанализирует оба конца туннеля и ответит, используя только данные этого соединения.",
+        reply_markup=kb.as_markup(),
     )
 
 
@@ -1943,7 +2036,24 @@ async def cb_tunnel_detail_both(cb: types.CallbackQuery):
                 safe_html_format(dst.get('room', '?')),
             ),
         ]
-        await safe_edit_text(cb.message, "\n".join(lines), parse_mode="HTML")
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🤖 Обсудить с ИИ", callback_data=f"p_towa:{tunnel_id}",
+            ),
+        )
+        kb.row(
+            types.InlineKeyboardButton(
+                text="◀️ Назад", callback_data=f"p_tdr:{tunnel_id}",
+            ),
+            types.InlineKeyboardButton(
+                text="◀️ В меню туннелей", callback_data="p_tun",
+            ),
+        )
+        await safe_edit_text(
+            cb.message, "\n".join(lines), parse_mode="HTML",
+            reply_markup=kb.as_markup(),
+        )
     except Exception as e:
         await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
 
@@ -1983,7 +2093,7 @@ async def cb_tunnel_delete_confirm(cb: types.CallbackQuery):
 
 # ─── TUNNELS FOLLOW ───
 
-@router.callback_query(F.data.startswith("p_tfa_"))
+@router.callback_query(F.data.startswith("p_tfa_:"))
 @allowed_callback
 async def cb_tunnel_follow_a(cb: types.CallbackQuery):
     await cb.answer()
@@ -2005,12 +2115,23 @@ async def cb_tunnel_follow_a(cb: types.CallbackQuery):
             f"<b>📖 Сторона A:</b> "
             f"{safe_html_format(src.get('wing', '?'))}/{safe_html_format(src.get('room', '?'))}"
         )
-        await safe_edit_text(cb.message, text, parse_mode="HTML")
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="◀️ Назад", callback_data=f"p_tdr:{tunnel_id}",
+            ),
+            types.InlineKeyboardButton(
+                text="◀️ В меню туннелей", callback_data="p_tun",
+            ),
+        )
+        await safe_edit_text(
+            cb.message, text, parse_mode="HTML", reply_markup=kb.as_markup(),
+        )
     except Exception as e:
         await safe_edit_text(cb.message, f"❌ Ошибка: {e}")
 
 
-@router.callback_query(F.data.startswith("p_tfb_"))
+@router.callback_query(F.data.startswith("p_tfb_:"))
 @allowed_callback
 async def cb_tunnel_follow_b(cb: types.CallbackQuery):
     await cb.answer()
@@ -2032,6 +2153,17 @@ async def cb_tunnel_follow_b(cb: types.CallbackQuery):
             f"<b>📖 Сторона B:</b> "
             f"{safe_html_format(dst.get('wing', '?'))}/{safe_html_format(dst.get('room', '?'))}"
         )
-        await safe_edit_text(cb.message, text, parse_mode="HTML")
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="◀️ Назад", callback_data=f"p_tdr:{tunnel_id}",
+            ),
+            types.InlineKeyboardButton(
+                text="◀️ В меню туннелей", callback_data="p_tun",
+            ),
+        )
+        await safe_edit_text(
+            cb.message, text, parse_mode="HTML", reply_markup=kb.as_markup(),
+        )
     except Exception as e:
         await safe_edit_text(cb.message, f"❌ Ошибка: {e}")

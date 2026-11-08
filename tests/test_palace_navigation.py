@@ -1778,6 +1778,63 @@ def test_cb_tunnels_between(monkeypatch):
     assert "два крыла" in cb.message.edits[-1][0]
 
 
+def test_cb_tunnels_between_with_wings(monkeypatch):
+    from handlers.palace import shared as sh
+
+    _enable(monkeypatch)
+    mcp = FakeMCPSeq([_json_wings(["philosophy", "psychology"])])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+    cb = FakeCb(data="p_tb")
+    asyncio.run(nav.cb_tunnels_between(cb))
+    assert sh._pending_mcp_input.get(4242) == "find_tunnels"
+    kb = _kb_data(cb.message.edits[-1][2])
+    assert "p_tb_w1:philosophy" in kb
+    assert "p_tb_w1:psychology" in kb
+    assert "p_tun" in kb
+
+
+def test_cb_tunnels_between_step2(monkeypatch):
+    from handlers.palace import shared as sh
+
+    _enable(monkeypatch)
+    mcp = FakeMCPSeq([_json_wings(["philosophy", "psychology", "art"])])
+    monkeypatch.setattr(nav, "get_mcp", lambda: mcp)
+    cb = FakeCb(data="p_tb_w1:philosophy")
+    asyncio.run(nav.cb_tunnels_between_step2(cb))
+    assert sh._pending_mcp_input.get(4242) == "find_tunnels"
+    kb = _kb_data(cb.message.edits[-1][2])
+    assert "p_tb_run:philosophy:psychology" in kb
+    assert "p_tb_run:philosophy:art" in kb
+    assert "p_tb_run:philosophy:-" in kb
+    assert "p_tb" in kb
+    assert "p_tun" in kb
+
+
+def test_cb_tunnels_between_run(monkeypatch):
+    _enable(monkeypatch)
+    calls = []
+
+    async def fake_process(uid, query, edit_func):
+        calls.append((uid, query))
+        return True
+
+    import handlers.palace
+    monkeypatch.setattr(handlers.palace, "process_mcp_text_input", fake_process)
+    cb = FakeCb(data="p_tb_run:philosophy:psychology")
+    asyncio.run(nav.cb_tunnels_between_run(cb))
+    assert calls == [(4242, "philosophy psychology")]
+
+
+def test_cb_tunnels_menu_cleans_pending(monkeypatch):
+    from handlers.palace import shared as sh
+
+    _enable(monkeypatch)
+    sh._pending_mcp_input[4242] = "find_tunnels"
+    cb = FakeCb(data="p_tun")
+    asyncio.run(nav.cb_tunnels_menu(cb))
+    assert 4242 not in sh._pending_mcp_input
+
+
 # ---------- cb_traverse_tunnel ----------
 
 

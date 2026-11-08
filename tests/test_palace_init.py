@@ -1263,3 +1263,38 @@ def test_unknown_action_falls_through(monkeypatch):
     ))
     assert result is True
     assert msg.edits == []
+
+
+def test_fetch_room_content_json_read_drawer(monkeypatch):
+    mcp = FakeMCPSeq([json.dumps({"content": "Room body text"})])
+    res = asyncio.run(palace._fetch_room_content(mcp, "philosophy", "ethics"))
+    assert res == "Room body text"
+
+
+def test_fetch_room_content_fallback_list_and_get(monkeypatch):
+    mcp = FakeMCPSeq([
+        RuntimeError("read_drawer not found"),
+        json.dumps({"drawers": [{"drawer_id": "d1", "title": "My Note"}]}),
+        json.dumps({"content": "Detailed note content from drawer"}),
+    ])
+    res = asyncio.run(palace._fetch_room_content(mcp, "psychology", "dreams"))
+    assert "--- My Note ---" in res
+    assert "Detailed note content from drawer" in res
+
+
+def test_fetch_room_content_disk_fallback(tmp_path, monkeypatch):
+    note_dir = tmp_path / "notes"
+    note_dir.mkdir()
+    note_file = note_dir / "зачем_проблемы_у_человека.txt"
+    note_file.write_text("Текст заметки о проблемах человека", encoding="utf-8")
+    monkeypatch.setattr("handlers.palace.NOTES_DIR", str(note_dir))
+    monkeypatch.setattr("handlers.palace.DATA_DIR", str(tmp_path))
+
+    mcp = FakeMCPSeq([
+        RuntimeError("not found"),
+        json.dumps({"drawers": []}),
+    ])
+    res = asyncio.run(palace._fetch_room_content(
+        mcp, "philosophy", "зачем_проблемы_у_человека",
+    ))
+    assert "Текст заметки о проблемах человека" in res

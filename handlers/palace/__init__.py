@@ -2,13 +2,15 @@
 import asyncio
 import json
 import logging
+import os
+from pathlib import Path
 import sys
 
 from aiogram import F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import DATA_DIR, allowed_callback, allowed_only
+from config import DATA_DIR, NOTES_DIR, allowed_callback, allowed_only
 from services.ai_engine import call_ai_async, get_current_ai
 from services.conversation_fsm import ConversationState
 from services.palace_mcp import get_mcp
@@ -105,6 +107,112 @@ async def cb_palace_main_menu(cb: types.CallbackQuery):
 
 
 # ─── MCP TEXT INPUT ───
+
+
+async def _fetch_room_content(mcp, wing: str, room: str) -> str:
+    """Извлекает текстовое содержимое комнаты из MCP или с локального диска."""
+    # 1. Попытка вызова mempalace_read_drawer (если поддержан сервером или моком)
+    try:
+        r = await mcp.call_tool("mempalace_read_drawer", {"wing": wing, "room": room})
+        if r and r.strip():
+            try:
+                pj = json.loads(r)
+                if isinstance(pj, dict):
+                    if pj.get("error"):
+                        r = ""
+                    elif pj.get("content"):
+                        return pj["content"].strip()
+            except Exception:
+                pass
+            if r and r.strip() and "не удалось" not in r.lower():
+                return r.strip()
+    except Exception as e:
+        logger.debug(
+            "[PALACE_TUNNEL] mempalace_read_drawer не поддержан: %s", e,
+        )
+
+    # 2. Стандартные инструменты MCP: mempalace_list_drawers + mempalace_get_drawer
+    collected: list[str] = []
+    try:
+        raw_list = await mcp.call_tool(
+            "mempalace_list_drawers",
+            {"wing": wing, "room": room, "limit": 25, "offset": 0},
+        )
+        parsed = json.loads(raw_list) if raw_list else {}
+        drawers = parsed.get("drawers", []) if isinstance(parsed, dict) else []
+        for d in drawers[:15]:
+            did = d.get("drawer_id")
+            title = d.get("title") or d.get("source_file") or did or "Запись"
+            text = ""
+            if did:
+                try:
+                    raw_d = await mcp.call_tool("mempalace_get_drawer", {"drawer_id": did})
+                    dp = json.loads(raw_d) if raw_d else {}
+                    if isinstance(dp, dict):
+                        text = dp.get("content", "")
+                except Exception as ex_d:
+                    logger.debug("Failed getting drawer %s: %s", did, ex_d)
+            if not text:
+                text = d.get("content_preview", "") or ""
+
+            source_file = d.get("source_file")
+            if source_file:
+                for base in [NOTES_DIR, DATA_DIR, os.path.join(DATA_DIR, "my_notes")]:
+                    cand = Path(base) / source_file
+                    if cand.is_file():
+                        try:
+                            disk_txt = cand.read_text(
+                                encoding="utf-8", errors="replace"
+                            ).strip()
+                            if disk_txt:
+                                text = disk_txt
+                                break
+                        except Exception:
+                            pass
+
+            if text:
+                collected.append(f"--- {title} ---\n{text.strip()}")
+    except Exception as e:
+        logger.warning(
+            "[PALACE_TUNNEL] Ошибка mempalace_list_drawers для %s/%s: %s",
+            wing, room, e,
+        )
+
+    # 3. Fallback: поиск заметок по названию комнаты на диске
+    if not collected:
+        clean_target = room.lower().replace("_", " ").strip()
+        search_roots = [NOTES_DIR, os.path.join(DATA_DIR, "my_notes")]
+        for root_dir in search_roots:
+            if not os.path.isdir(root_dir):
+                continue
+            for r, _, files in os.walk(root_dir):
+                for f in files:
+                    if f.endswith((".txt", ".md")):
+                        base = os.path.splitext(f)[0].lower().strip()
+                        clean_base = base.replace("_", " ").strip()
+                        if (
+                            clean_target in clean_base
+                            or clean_base in clean_target
+                            or clean_target in base
+                            or base in clean_target
+                        ):
+                            try:
+                                fpath = os.path.join(r, f)
+                                with open(
+                                    fpath, "r", encoding="utf-8", errors="replace"
+                                ) as fl:
+                                    txt = fl.read().strip()
+                                    if txt:
+                                        collected.append(f"--- {f} ---\n{txt}")
+                            except Exception:
+                                pass
+
+    if collected:
+        full_text = "\n\n".join(collected)
+        if len(full_text) > 25000:
+            full_text = full_text[:25000] + "\n\n... (контент сокращён из-за лимита длины)"
+        return full_text
+    return "(комната пуста или не содержит текстовых записей)"
 
 
 async def process_mcp_text_input(uid: int, text: str, answer_func):
@@ -440,7 +548,8 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             return True
 
         elif action == "find_tunnels":
-            parts = _normalize_query(text.strip()).split()
+            clean_text = text.strip()
+            parts = _normalize_query(clean_text).split()
             wing_a = parts[0] if len(parts) > 0 else None
             wing_b = parts[1] if len(parts) > 1 else None
             args = {}
@@ -450,11 +559,50 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                 args["wing_b"] = wing_b
             raw = await mcp.call_tool("mempalace_find_tunnels", args)
             found_tunnels = json.loads(raw) if raw else []
-            if not found_tunnels:
+
+            # Поиск явных туннелей между крыльями
+            extra_explicit = []
+            try:
+                search_wa = wing_a
+                search_wb = wing_b
+                if search_wa and not search_wb and "_" in search_wa:
+                    w_parts = search_wa.split("_", 1)
+                    search_wa, search_wb = w_parts[0], w_parts[1]
+                raw_t = await mcp.call_tool("mempalace_list_tunnels")
+                all_t = json.loads(raw_t) if raw_t else []
+                if isinstance(all_t, dict) and "tunnels" in all_t:
+                    all_t = all_t["tunnels"]
+                for t in (all_t or []):
+                    s_w = t.get("source", {}).get("wing", "")
+                    d_w = t.get("target", {}).get("wing", "")
+                    m_match = False
+                    if search_wa and search_wb:
+                        m_match = (
+                            (s_w == search_wa and d_w == search_wb)
+                            or (s_w == search_wb and d_w == search_wa)
+                        )
+                    elif search_wa:
+                        m_match = (s_w == search_wa or d_w == search_wa)
+                    if m_match:
+                        extra_explicit.append(t)
+            except Exception:
+                pass
+
+            if not found_tunnels and not extra_explicit:
                 kb = InlineKeyboardBuilder()
-                kb.row(types.InlineKeyboardButton(text="➕ Создать туннель", callback_data="p_tc"))
-                kb.row(types.InlineKeyboardButton(text="🔀 Траверс", callback_data="p_trv"))
-                kb.row(types.InlineKeyboardButton(text="◀️ Назад в туннели", callback_data="p_tun"))
+                kb.row(
+                    types.InlineKeyboardButton(
+                        text="➕ Создать туннель", callback_data="p_tc",
+                    ),
+                    types.InlineKeyboardButton(
+                        text="🔍 Между крыльями", callback_data="p_tb",
+                    ),
+                )
+                kb.row(
+                    types.InlineKeyboardButton(
+                        text="◀️ В меню туннелей", callback_data="p_tun",
+                    )
+                )
                 await msg.edit_text(
                     "🔍 Туннелей между этими крыльями не найдено.\n\n"
                     "Туннель возникает, когда одна и та же комната (тема) "
@@ -468,17 +616,49 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                     reply_markup=kb.as_markup(),
                 )
             else:
-                lines = [f"<b>🔄 Найдено туннелей: {len(found_tunnels)}</b>\n"]
+                total_cnt = len(found_tunnels) + len(extra_explicit)
+                lines = [f"<b>🔄 Найдено туннелей: {total_cnt}</b>\n"]
+                extra_rows = []
                 for t in found_tunnels:
+                    r_name = t.get("room", "?")
+                    w_list = ", ".join(t.get("wings", []))
+                    cnt = t.get("count", 0)
                     lines.append(
-                        f"  • <b>{safe_html_format(t.get('room', '?'))}</b> — "
-                        f"{', '.join(t.get('wings', []))} "
-                        f"({t.get('count', 0)} записей)",
+                        f"  • <b>{safe_html_format(r_name)}</b> — "
+                        f"{w_list} ({cnt} записей)"
                     )
+                for et in extra_explicit:
+                    src_w = et.get("source", {}).get("wing", "?")
+                    src_r = et.get("source", {}).get("room", "?")
+                    dst_w = et.get("target", {}).get("wing", "?")
+                    dst_r = et.get("target", {}).get("room", "?")
+                    lbl = f" — «{et['label']}»" if et.get("label") else ""
+                    lines.append(
+                        f"  • {safe_html_format(src_w)}/{safe_html_format(src_r)} "
+                        f"⟷ {safe_html_format(dst_w)}/{safe_html_format(dst_r)}"
+                        f"{safe_html_format(lbl)}"
+                    )
+                    tid = et.get("id")
+                    if tid:
+                        extra_rows.append([
+                            types.InlineKeyboardButton(
+                                text=f"🤖 Обсудить: {src_r} ↔ {dst_r}",
+                                callback_data=f"p_towa:{tid}",
+                            )
+                        ])
+                extra_rows.append([
+                    types.InlineKeyboardButton(
+                        text="🔍 Между крыльями", callback_data="p_tb",
+                    ),
+                    types.InlineKeyboardButton(
+                        text="◀️ В меню туннелей", callback_data="p_tun",
+                    ),
+                ])
                 from .action_bar import finalize_answer
                 await finalize_answer(
                     uid, msg.edit_text, "\n".join(lines), is_html=True,
                     ctx={"parent_cb": "p_tun"},
+                    extra_rows=extra_rows,
                 )
 
         elif action == "follow_tunnels":
@@ -560,7 +740,18 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             ctx = _user_context.get(uid, {})
             tunnel_id = ctx.get("tunnel_id", "")
             if not tunnel_id:
-                await msg.edit_text("❌ Сессия обсуждения туннеля истекла.")
+                kb = InlineKeyboardBuilder()
+                kb.row(
+                    types.InlineKeyboardButton(
+                        text="🔍 Между крыльями", callback_data="p_tb"
+                    ),
+                    types.InlineKeyboardButton(
+                        text="◀️ В меню туннелей", callback_data="p_tun"
+                    ),
+                )
+                await msg.edit_text(
+                    "❌ Сессия обсуждения туннеля истекла.", reply_markup=kb.as_markup()
+                )
                 return True
             raw_tunnels = await mcp.call_tool("mempalace_list_tunnels")
             all_tunnels = json.loads(raw_tunnels) if raw_tunnels else []
@@ -568,7 +759,19 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                 all_tunnels = all_tunnels["tunnels"]
             tunnel = next((t for t in all_tunnels if t.get("id") == tunnel_id), None)
             if not tunnel:
-                await msg.edit_text("❌ Туннель не найден. Возможно, он был удалён.")
+                kb = InlineKeyboardBuilder()
+                kb.row(
+                    types.InlineKeyboardButton(
+                        text="🔍 Между крыльями", callback_data="p_tb"
+                    ),
+                    types.InlineKeyboardButton(
+                        text="◀️ В меню туннелей", callback_data="p_tun"
+                    ),
+                )
+                await msg.edit_text(
+                    "❌ Туннель не найден. Возможно, он был удалён.",
+                    reply_markup=kb.as_markup(),
+                )
                 return True
             src = tunnel.get("source", {})
             dst = tunnel.get("target", {})
@@ -579,17 +782,8 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             tunnel_label = tunnel.get("label", "")
             ctx_parts = []
             for wing, room in [(src_wing, src_room), (dst_wing, dst_room)]:
-                try:
-                    r = await mcp.call_tool(
-                        "mempalace_read_drawer", {"wing": wing, "room": room},
-                    )
-                    ctx_parts.append(f"[{wing}/{room}]\n{r.strip()}")
-                except Exception as e:
-                    logger.warning(
-                        "[PALACE_TUNNEL] Не удалось прочитать %s/%s: %s",
-                        wing, room, e,
-                    )
-                    ctx_parts.append(f"[{wing}/{room}]\n(не удалось прочитать)")
+                content = await _fetch_room_content(mcp, wing, room)
+                ctx_parts.append(f"[{wing}/{room}]\n{content.strip()}")
             engine, model = get_current_ai()
             system = (
                 "Ты анализируешь связь между двумя комнатами знаний. "
@@ -601,12 +795,25 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             if tunnel_label:
                 system += f"\nОписание: {tunnel_label}"
             system += "\n\n" + "\n\n".join(ctx_parts)
-            prompt = f"Вопрос пользователя: {text}\n\nПроанализируй связь между этими комнатами."
+            prompt = (
+                f"Вопрос пользователя: {text}\n\n"
+                "Проанализируй связь между этими комнатами."
+            )
             try:
                 result = await call_ai_async(engine, model, [
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
                 ])
+                extra_rows = [
+                    [
+                        types.InlineKeyboardButton(
+                            text="🔍 Между крыльями", callback_data="p_tb",
+                        ),
+                        types.InlineKeyboardButton(
+                            text="◀️ В меню туннелей", callback_data="p_tun",
+                        ),
+                    ]
+                ]
                 from .action_bar import finalize_answer
                 await finalize_answer(
                     uid, msg.edit_text, result or "❌ Пустой ответ.",
@@ -616,12 +823,31 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                         f"{safe_html_format(src_wing)}/{safe_html_format(src_room)} "
                         f"⟷ {safe_html_format(dst_wing)}/{safe_html_format(dst_room)}"
                     ),
+                    extra_rows=extra_rows,
                 )
             except Exception as ai_e:
                 logger.error("[PALACE_TUNNEL] Ошибка ИИ: %s", ai_e, exc_info=True)
-                await msg.edit_text(f"❌ Ошибка ИИ: {ai_e}")
+                kb = InlineKeyboardBuilder()
+                kb.row(
+                    types.InlineKeyboardButton(
+                        text="🔍 Между крыльями", callback_data="p_tb"
+                    ),
+                    types.InlineKeyboardButton(
+                        text="◀️ В меню туннелей", callback_data="p_tun"
+                    ),
+                )
+                await msg.edit_text(f"❌ Ошибка ИИ: {ai_e}", reply_markup=kb.as_markup())
 
     except Exception as e:
         logger.error("[PALACE_TUNNEL] Ошибка анализа: %s", e, exc_info=True)
-        await msg.edit_text(f"❌ Ошибка: {e}")
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🔍 Между крыльями", callback_data="p_tb"
+            ),
+            types.InlineKeyboardButton(
+                text="◀️ В меню туннелей", callback_data="p_tun"
+            ),
+        )
+        await msg.edit_text(f"❌ Ошибка: {e}", reply_markup=kb.as_markup())
     return True
