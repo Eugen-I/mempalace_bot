@@ -93,21 +93,21 @@ def get_files_to_check() -> list[str]:
     repo_root = str(Path(__file__).resolve().parent.parent)
     is_pre_push = "--pre-push" in sys.argv
     if is_pre_push:
-        # При pre-push проверяем все файлы, изменённые относительно origin
+        # При pre-push проверяем все добавленные/изменённые файлы относительно origin
         res = subprocess.run(
-            ["git", "diff", "--name-only", "@{push}..HEAD"],
+            ["git", "diff", "--name-only", "--diff-filter=d", "@{push}..HEAD"],
             cwd=repo_root, capture_output=True, text=True, errors="replace"
         )
         if res.returncode != 0:
             res = subprocess.run(
-                ["git", "diff", "--name-only", "origin/main..HEAD"],
+                ["git", "diff", "--name-only", "--diff-filter=d", "origin/main..HEAD"],
                 cwd=repo_root, capture_output=True, text=True, errors="replace"
             )
         return [f.strip() for f in res.stdout.splitlines() if f.strip()]
     else:
-        # При pre-commit проверяем staged файлы
+        # При pre-commit проверяем добавленные/изменённые staged файлы
         out = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "-z"],
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=d", "-z"],
             cwd=repo_root, capture_output=True, text=True, errors="replace"
         )
         return [f for f in out.stdout.split("\0") if f]

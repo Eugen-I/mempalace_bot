@@ -66,10 +66,20 @@ GitHub_update.command
 opencode.json
 mutants/
 
-# Локальное руководство для ИИ-разработки (не хранить в репозитории)
+# Локальные инструкции и файлы для ИИ-ассистентов (не хранить в публичном репозитории)
+.claude/
+.cursorrules
+CLAUDE.md
+AGENTS.md
+tests/AGENTS.md
+Agent_guide.md
+AGENT_PLAN.md
+NOTES_AGENT_PLAN.md
+NOTES_AGENT_SURREAL_STORM_TASK.md
+*PLAN*.md
+*PROGRESS*.md
+CHANGELOG_FIXES.md
 telegram-bot-ai-guide-compressed.md
-
-# Локальные ТЗ для ИИ-сессий (не хранить в репозитории)
 TZ_*.md
 
 # Backup-файлы
