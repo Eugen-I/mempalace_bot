@@ -631,8 +631,11 @@ async def cb_unfiled_execute_file(cb: types.CallbackQuery):
         parsed = {"success": False, "error": str(e)}
 
     # Очищаем кэши комнат
-    from .shared import _drawer_list_state
-    _drawer_list_state.pop(uid, None)
+    try:
+        from .navigation import _drawer_list_state
+        _drawer_list_state.pop(uid, None)
+    except Exception as e:
+        logger.debug("Не удалось очистить _drawer_list_state: %s", e)
 
     kb = InlineKeyboardBuilder()
     kb.row(

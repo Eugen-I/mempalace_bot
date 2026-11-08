@@ -86,3 +86,65 @@ async def test_show_unfiled_content(tmp_path, monkeypatch):
     msg = edit_mock.call_args[0][0]
     assert "my_long_note.md" in msg
     assert "Страница 1/2" in msg
+
+
+@pytest.mark.asyncio
+async def test_cb_unfiled_execute_file(tmp_path, monkeypatch):
+    notes_dir = tmp_path / "my_notes"
+    notes_dir.mkdir()
+    monkeypatch.setattr("handlers.palace.unfiled_notes.NOTES_DIR", str(notes_dir))
+
+    f1 = notes_dir / "notes_20260812_1944.md"
+    f1.write_text("Test filing content", encoding="utf-8")
+
+    from handlers.palace.navigation import _drawer_list_state
+    from handlers.palace.unfiled_notes import _unfiled_state, cb_unfiled_execute_file
+
+    uid = 9999
+    monkeypatch.setattr("config.ALLOWED_IDS", {uid})
+    _unfiled_state[uid] = {
+        "filename": "notes_20260812_1944.md",
+        "selected_path": str(f1),
+        "wing": "psychology",
+        "room": "archetypes",
+    }
+    _drawer_list_state[uid] = {"cached": True}
+
+    mock_mcp = AsyncMock()
+    mock_mcp.call_tool = AsyncMock(return_value='{"success": true}')
+    monkeypatch.setattr("handlers.palace.unfiled_notes.get_mcp", lambda: mock_mcp)
+
+    cb = AsyncMock()
+    cb.from_user.id = uid
+    cb.data = "p_uf_c"
+    cb.message.edit_text = AsyncMock()
+    cb.answer = AsyncMock()
+
+    await cb_unfiled_execute_file(cb)
+
+    # 1. MCP was called with right params
+    mock_mcp.call_tool.assert_called_once()
+    assert mock_mcp.call_tool.call_args[0][0] == "mempalace_add_drawer"
+    kwargs = mock_mcp.call_tool.call_args[0][1]
+    assert kwargs["wing"] == "psychology"
+    assert kwargs["room"] == "archetypes"
+    assert kwargs["content"] == "Test filing content"
+
+    # 2. File was moved to target room directory
+    dest_file = notes_dir / "archetypes" / "notes_20260812_1944.md"
+    assert dest_file.exists()
+    assert not f1.exists()
+
+    # 3. Cache was cleared
+    assert uid not in _drawer_list_state
+
+    # 4. Success message sent
+    cb.message.edit_text.assert_called_once()
+    sent_text = cb.message.edit_text.call_args[0][0]
+    assert "Заметка успешно разложена во Дворец!" in sent_text
+
+
+def test_shared_drawer_list_state_fallback():
+    from handlers.palace import shared
+    from handlers.palace.navigation import _drawer_list_state
+    assert shared._drawer_list_state is _drawer_list_state
