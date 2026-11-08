@@ -284,9 +284,11 @@ async def process_user_message(message: types.Message):
     if uid in _storm_waiting:
         from handlers.brainstorm import run_storm
 
-        _storm_waiting.pop(uid, None)
-        status = await message.answer("🧠 Запускаю штурм…")
-        return await run_storm(uid, status, text)
+        wait_val = _storm_waiting.pop(uid, None)
+        mode = "fusion" if wait_val == "fusion" else "standard"
+        status_msg = "🎨 Запускаю лабораторию синтеза…" if mode == "fusion" else "🧠 Запускаю штурм…"
+        status = await message.answer(status_msg)
+        return await run_storm(uid, status, text, mode=mode)
 
     # 0ccb. Ожидание ответа на рефлексию после штурма
     if uid in _reflection_waiting:

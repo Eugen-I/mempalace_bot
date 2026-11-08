@@ -36,6 +36,8 @@ def _fake_coro(value):
 
 
 _ORIG_LOAD_FUJI = bs._load_fuji_guide
+_ORIG_FUJI_DIR = bs._FUJI_GUIDE_DIR
+_ORIG_FUJI_NAMES = bs._FUJI_GUIDE_NAMES
 
 
 # ─── Given ───
@@ -278,3 +280,169 @@ def then_guide_read_once(context):
     assert context.guide_dir.path.reads == 1
     assert context.first == "ГАЙД X-T4"
     assert context.second == "ГАЙД X-T4"
+    # Восстанавливаем оригинальные настройки гайда после мок-теста
+    bs._FUJI_GUIDE_DIR = _ORIG_FUJI_DIR
+    bs._FUJI_GUIDE_NAMES = _ORIG_FUJI_NAMES
+    bs.reset_fuji_guide_cache()
+
+
+@then("промпт включает четыре стиля: Сюрреализм, Пиктореализм, Экспрессионизм и Импрессионизм")
+def then_prompt_includes_four_styles(context):
+    for s in ("Сюрреализм", "Пиктореализм", "Экспрессионизм", "Импрессионизм"):
+        assert s in context.prompt, f"Стиль {s} отсутствует в промпте"
+
+
+@then("промпт требует обязательное правило триады стилей")
+def then_prompt_requires_triad_rule(context):
+    assert "ОБЯЗАТЕЛЬНОЕ ПРАВИЛО ТРИАДЫ СТИЛЕЙ" in context.prompt
+    assert "МИНИМУМ ТРИ стиля" in context.prompt
+
+
+@then('руководство FUJI_XT4_CREATIVE_GUIDE.md содержит раздел "{section}"')
+def then_guide_has_section(context, section):
+    guide = bs._load_fuji_guide()
+    assert section in guide, f"Раздел {section} не найден в руководстве"
+
+
+@then("в контексте присутствуют блоки gear и mechanics")
+def then_context_has_gear_and_mechanics(context):
+    assert "gear" in context.ctx and context.ctx["gear"], "Блок gear отсутствует"
+    assert "mechanics" in context.ctx and context.ctx["mechanics"], "Блок mechanics отсутствует"
+
+
+@then("блок gear содержит доступную камеру и оптику")
+def then_gear_has_camera_and_optics(context):
+    gear_text = context.ctx["gear"]
+    assert "Камеры" in gear_text
+    assert "Fujifilm X-T4" in gear_text
+    assert "Объективы" in gear_text
+
+
+@then("блок mechanics содержит рецепт акварельной лессировки")
+def then_mechanics_has_watercolor(context):
+    mech_text = context.ctx["mechanics"]
+    assert "Акварельная лессировка" in mech_text or "микро-ICM" in mech_text
+
+
+@given('пользователь запрашивает штурм в режиме fusion по теме "{topic}"')
+def given_fusion_storm_request(context, topic):
+    context.fusion_topic = topic
+
+
+@when("генерируется триада стилистического синтеза")
+def when_triad_generated(context):
+    from services.style_fusion import generate_style_triad
+    context.triad = generate_style_triad(theme=context.fusion_topic)
+
+
+@then("триада содержит ровно три уникальных стиля из четырёх")
+def then_triad_has_three_unique_styles(context):
+    styles = context.triad.styles()
+    assert len(styles) == 3
+    assert len(set(styles)) == 3
+    for s in styles:
+        assert s in ("Сюрреализм", "Пиктореализм", "Экспрессионизм", "Импрессионизм")
+
+
+@then("модель возвращает концепт-проект с пошаговым планом съёмки и физикой действия")
+def then_model_returns_fusion_concept(context):
+    import json
+    from services.style_fusion import parse_fusion_concepts
+
+    fake_payload = {
+        "projects": [
+            {
+                "title": "Сон о золотой листве",
+                "triad": context.triad.to_dict(),
+                "manifesto": "Слияние онейризма и импрессионистической вибрации",
+                "scene_description": "Пруд в парке с плавающими листьями клена",
+                "lighting_setup": "Мягкий контровой свет заката",
+                "camera_setup": {
+                    "Приём съёмки": "Мультиэкспозиция (3 кадра)",
+                    "Режим мультиэкспозиции": "Тёмный",
+                    "Выдержка": '1/6"',
+                    "Диафрагма": "f/8",
+                },
+                "shooting_action": "Микро-тремор рук 1 мм",
+                "gear_recipe": {"camera": "Fujifilm X-T4", "lens": "Гелиос 44-2"},
+                "shooting_steps": [
+                    "Шаг 1: Фокус на водную гладь",
+                    "Шаг 2: Включить режим Тёмный",
+                    "Шаг 3: Снять серию с рук",
+                ],
+            }
+        ]
+    }
+    concepts = parse_fusion_concepts(json.dumps(fake_payload))
+    assert len(concepts) == 1
+    assert concepts[0].shooting_action == "Микро-тремор рук 1 мм"
+    assert len(concepts[0].shooting_steps) == 3
+
+
+@given("в базе заметок есть две контрастные заметки")
+def given_two_contrasting_notes(context):
+    context.notes_for_bridge = [
+        {"id": "n1", "name": "Квантовая суперпозиция", "folder": "Наука",
+         "preview": "Теория кубитов"},
+        {"id": "n2", "name": "Сосновый бор на закате", "folder": "Природа",
+         "preview": "Аромат хвои", "_similarity": 0.32},
+    ]
+
+
+@when("строится ассоциативный мост Serendipity")
+def when_serendipity_bridge_built(context):
+    from services.brainstorm import format_serendipity_bridge
+
+    n1, n2 = context.notes_for_bridge
+    context.bridge_text = format_serendipity_bridge(n1, n2)
+
+
+@then("мост содержит оба концепта и семантический контраст")
+def then_bridge_has_both_concepts(context):
+    assert "Квантовая суперпозиция" in context.bridge_text
+    assert "Сосновый бор на закате" in context.bridge_text
+    assert "32%" in context.bridge_text
+    assert "<!--" not in context.bridge_text
+
+
+@then(
+    'концепт-проект успешно экспортируется в Apple Notes '
+    'в папку "{folder}" со статусом "{status}"'
+)
+def then_concept_exports_to_apple_notes(context, folder, status):
+    from unittest.mock import patch
+    from services.style_fusion import (
+        FusedPhotoConcept,
+        StyleAssignment,
+        StyleTriad,
+        export_concept_to_apple_notes,
+        format_concept_for_apple_notes,
+    )
+
+    triad = StyleTriad(
+        narrative=StyleAssignment(role="narrative", style="Сюрреализм"),
+        lighting=StyleAssignment(role="lighting", style="Экспрессионизм"),
+        optics=StyleAssignment(role="optics", style="Импрессионизм"),
+    )
+    concept = FusedPhotoConcept(
+        title="Квантовая хвоя",
+        triad=triad,
+        camera_setup={"Выдержка": "1/6s"},
+        shooting_action="Поворот призмы",
+        shooting_steps=["1. Настройка", "2. Съёмка"],
+    )
+
+    title, body = format_concept_for_apple_notes(concept)
+    assert status in title
+    assert status in body
+
+    with patch("services.apple_notes.ensure_folder", return_value=True) as mock_ensure:
+        with patch(
+            "services.apple_notes.create_note", return_value="x-coredata://note-42",
+        ) as mock_cr:
+            note_id = export_concept_to_apple_notes(concept, folder=folder)
+
+    assert note_id == "x-coredata://note-42"
+    mock_ensure.assert_called_once_with(folder)
+    mock_cr.assert_called_once()
+    assert mock_cr.call_args[1]["folder"] == folder

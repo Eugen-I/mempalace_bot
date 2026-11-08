@@ -486,38 +486,55 @@ async def run_surreal_storm(
         return
 
     try:
-        if context is None:
-            await _status_edit(status_msg, "🔍 Собираю контекст из заметок…")
-            context = await bs.collect_context(topic, mode="surreal")
-
-        await _status_edit(status_msg, "💭 Генерирую сюрреалистичные идеи…")
-        engine, model = get_current_ai()
-        msgs = [
-            {"role": "system", "content": bs.storm_system_prompt("surreal")},
-            {"role": "user", "content": bs.build_storm_prompt(topic, context)},
-        ]
-        sampling = bs.storm_sampling_params("surreal")
-        raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
-
-        try:
-            ideas = bs.parse_ideas(
-                raw, require_camera_setup=True, require_camera_keywords=True,
-            )
-        except ValueError:
-            logger.warning(
-                "[SURREAL] первый ответ не прошёл парсинг, повторяем: %r", raw[:300],
-            )
-            await _status_edit(status_msg, "💭 Ответ не подошёл, пробую ещё раз…")
+        is_fusion = any(w in topic.lower() for w in ("синтез", "триад", "лаборатор", "три стиля"))
+        if is_fusion:
+            if context is None:
+                await _status_edit(status_msg, "🔍 Собираю триаду стилей, арсенал и фотомеханики…")
+                context = await bs.collect_context(topic, mode="fusion")
+            await _status_edit(status_msg, "💭 Синтезирую авторские фотопроекты…")
+            engine, model = get_current_ai()
+            fusion_prompt = context.get("fusion_prompt") or bs.build_storm_prompt(topic, context)
+            msgs = [
+                {"role": "system", "content": bs.storm_system_prompt("fusion")},
+                {"role": "user", "content": fusion_prompt},
+            ]
+            sampling = bs.storm_sampling_params("fusion")
             raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
-            ideas = bs.parse_ideas(
-                raw, require_camera_setup=True, require_camera_keywords=True,
-            )
+            ideas = bs.parse_fusion_ideas(raw)
+            text = bs.format_fusion_ideas_text(topic, ideas)
+        else:
+            if context is None:
+                await _status_edit(status_msg, "🔍 Собираю контекст из заметок…")
+                context = await bs.collect_context(topic, mode="surreal")
+
+            await _status_edit(status_msg, "💭 Генерирую сюрреалистичные идеи…")
+            engine, model = get_current_ai()
+            msgs = [
+                {"role": "system", "content": bs.storm_system_prompt("surreal")},
+                {"role": "user", "content": bs.build_storm_prompt(topic, context)},
+            ]
+            sampling = bs.storm_sampling_params("surreal")
+            raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
+
+            try:
+                ideas = bs.parse_ideas(
+                    raw, require_camera_setup=True, require_camera_keywords=True,
+                )
+            except ValueError:
+                logger.warning(
+                    "[SURREAL] первый ответ не прошёл парсинг, повторяем: %r", raw[:300],
+                )
+                await _status_edit(status_msg, "💭 Ответ не подошёл, пробую ещё раз…")
+                raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
+                ideas = bs.parse_ideas(
+                    raw, require_camera_setup=True, require_camera_keywords=True,
+                )
+            text = bs.format_surreal_ideas_text(topic, ideas)
     except Exception as exc:
         logger.error("[SURREAL] run failed: %s", exc, exc_info=True)
         await _status_edit(status_msg, f"❌ Ошибка штурма: {exc}")
         return
 
-    text = bs.format_surreal_ideas_text(topic, ideas)
     try:
         await status_msg.edit_text(text, parse_mode="HTML")
     except Exception as exc:  # noqa: BLE001

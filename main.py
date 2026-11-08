@@ -41,6 +41,7 @@ from handlers import (  # noqa: E402
     palace,
     pdf,
     personal_note,
+    photographer,
     photos,
     reactions,
     reminder,
@@ -72,6 +73,7 @@ def _safe_include(router):
 _safe_include(chat.router)
 _safe_include(settings.router)
 _safe_include(agent.router)
+_safe_include(photographer.router)
 _safe_include(photos.router)
 _safe_include(notes.router)
 # Garmin must be registered before pdf: its document handler claims only

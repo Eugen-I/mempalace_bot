@@ -754,4 +754,235 @@ def test_format_linked_empty():
     assert bs.format_linked([]) == "🔗 <b>Связано с:</b>"
 
 
+# ─── тесты стилей, триады и акварельного рецепта ───
+
+def test_surreal_prompt_four_styles_and_triad_rule():
+    """SURREAL промпт включает 4 стиля, правило триады и историю искусств."""
+    p = bs.SURREAL_STORM_SYSTEM_PROMPT
+    # 4 стиля
+    assert "Сюрреализм" in p
+    assert "Пиктореализм" in p
+    assert "Экспрессионизм" in p
+    assert "Импрессионизм" in p
+    # Правило триады стилей
+    assert "ОБЯЗАТЕЛЬНОЕ ПРАВИЛО ТРИАДЫ СТИЛЕЙ" in p
+    assert "МИНИМУМ ТРИ стиля" in p
+    # Ссылки на эрудицию и мастеров
+    assert "Магритт" in p and "Дали" in p
+    assert "Моне" in p and "Демаши" in p and "Линч" in p
+    # Акварельный приём
+    assert "акварельн" in p.lower()
+    assert "лессировк" in p.lower()
+    assert "микро-тремор" in p.lower() or "микро-icm" in p.lower()
+    assert "2–4 кадра" in p or "2-4 кадра" in p
+
+
+def test_camera_setup_keywords_accept_watercolor_and_icm():
+    """Ключевые слова пропускают новые рецепты акварели, ICM и оптики."""
+    assert bs._camera_setup_has_parameters("Акварельная лессировка в светах")
+    assert bs._camera_setup_has_parameters("Приём микро-ICM на выдержке 1/6 с")
+    assert bs._camera_setup_has_parameters("Съёмка через монокль 50мм")
+    assert bs._camera_setup_has_parameters("Диффузный фильтр Black Mist 1/4")
+    assert bs._camera_setup_has_parameters("Тёмный режим наложения мультиэкспозиции")
+    assert bs._camera_setup_has_parameters("Живописное сфумато в сумерках")
+    assert bs._camera_setup_has_parameters("Пуантилизм листвы на ветру")
+
+
+def test_camera_setup_keywords_negatives():
+    """Пустые фразы без параметров или приёмов съёмки отбраковываются."""
+    assert not bs._camera_setup_has_parameters("Просто красивая съёмка на улице")
+    assert not bs._camera_setup_has_parameters("Фотография человека у окна")
+    assert not bs._camera_setup_has_parameters("")
+    assert not bs._camera_setup_has_parameters("Сделать классный снимок")
+
+
+# ─── Serendipity & Ассоциативные мосты ───
+
+def test_find_serendipity_pair_sqlite_contrast_selection(tmp_path):
+    """Выборка контрастной пары из SQLite по окну косинусного сходства 0.10–0.60."""
+    import sqlite3
+    import numpy as np
+
+    db_path = str(tmp_path / "test_notes_embeddings.sqlite")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE notes_embeddings ("
+        "note_id TEXT PRIMARY KEY, name TEXT, folder TEXT, preview TEXT, "
+        "vector BLOB NOT NULL, model TEXT NOT NULL)"
+    )
+
+    # Создаём 3 вектора размерности 1024:
+    # vec_a: базовый вектор заметки 1
+    # vec_b: вектор с косинусным сходством ~0.35 к vec_a (контрастная пара)
+    # vec_c: вектор почти идентичный vec_a (сходство > 0.90, НЕ контраст)
+    dim = 1024
+    vec_a = np.zeros(dim, dtype=np.float32)
+    vec_a[0] = 1.0
+
+    vec_b = np.zeros(dim, dtype=np.float32)
+    vec_b[0] = 0.35
+    vec_b[1] = float(np.sqrt(1.0 - 0.35**2))
+
+    vec_c = np.zeros(dim, dtype=np.float32)
+    vec_c[0] = 0.98
+    vec_c[1] = float(np.sqrt(1.0 - 0.98**2))
+
+    conn.execute(
+        "INSERT INTO notes_embeddings VALUES (?, ?, ?, ?, ?, ?)",
+        ("id1", "Квантовая запутанность", "Физика",
+         "Суперпозиция кубитов", vec_a.tobytes(), "bge-m3"),
+    )
+    conn.execute(
+        "INSERT INTO notes_embeddings VALUES (?, ?, ?, ?, ?, ?)",
+        ("id2", "Сосновый бор на закате", "Природа",
+         "Иголки и смола", vec_b.tobytes(), "bge-m3"),
+    )
+    conn.execute(
+        "INSERT INTO notes_embeddings VALUES (?, ?, ?, ?, ?, ?)",
+        ("id3", "Квантовый компьютер IBM", "Физика",
+         "Сверхпроводящие кубиты", vec_c.tobytes(), "bge-m3"),
+    )
+    conn.commit()
+    conn.close()
+
+    pair = bs.find_serendipity_pair(db_file=db_path)
+    assert pair is not None
+    note_a, note_b = pair
+    assert note_a["id"] == "id1"
+    # Должна быть выбрана заметка 2 (бор на закате ~0.35), а не заметка 3 (дубликат квантов)
+    assert note_b["id"] == "id2"
+    assert note_b["name"] == "Сосновый бор на закате"
+    assert 0.30 <= note_b["_similarity"] <= 0.40
+
+
+def test_find_serendipity_pair_sqlite_with_topic(tmp_path, monkeypatch):
+    """При передаче темы заметка А подбирается ближе к теме, а заметка Б — контрастная."""
+    import sqlite3
+    import numpy as np
+
+    db_path = str(tmp_path / "test_notes_embeddings.sqlite")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE notes_embeddings ("
+        "note_id TEXT PRIMARY KEY, name TEXT, folder TEXT, preview TEXT, "
+        "vector BLOB NOT NULL, model TEXT NOT NULL)"
+    )
+
+    dim = 1024
+    vec_1 = np.zeros(dim, dtype=np.float32)
+    vec_1[0] = 1.0  # совпадает с темой
+
+    vec_2 = np.zeros(dim, dtype=np.float32)
+    vec_2[0] = 0.35
+    vec_2[1] = float(np.sqrt(1.0 - 0.35**2))
+
+    conn.execute(
+        "INSERT INTO notes_embeddings VALUES (?, ?, ?, ?, ?, ?)",
+        ("id1", "Осенний ливень", "Погода", "Капли дождя", vec_1.tobytes(), "bge-m3"),
+    )
+    conn.execute(
+        "INSERT INTO notes_embeddings VALUES (?, ?, ?, ?, ?, ?)",
+        ("id2", "Стальная архитектура", "Город", "Геометрия мостов", vec_2.tobytes(), "bge-m3"),
+    )
+    conn.commit()
+    conn.close()
+
+    topic_vec = np.zeros(dim, dtype=np.float32)
+    topic_vec[0] = 1.0
+
+    monkeypatch.setattr(
+        "services.notes_embeddings.is_model_available", lambda m: True,
+    )
+    monkeypatch.setattr(
+        "services.notes_embeddings._call_embed",
+        lambda inputs, m: [topic_vec.tolist()],
+    )
+
+    pair = bs.find_serendipity_pair(topic="дождь и вода", db_file=db_path)
+    assert pair is not None
+    note_a, note_b = pair
+    assert note_a["id"] == "id1"
+    assert note_b["id"] == "id2"
+
+
+def test_find_serendipity_pair_fallback_distinct_folders(monkeypatch, tmp_path):
+    """Fallback: если базы векторов нет, выбираются заметки из разных папок."""
+    non_existent_db = str(tmp_path / "empty.sqlite")
+
+    mock_notes = [
+        {"id": "n1", "name": "Устройство телескопа", "folder": "Астрономия",
+         "preview": "Зеркала и линзы"},
+        {"id": "n2", "name": "Джазовые импровизации", "folder": "Музыка",
+         "preview": "Саксофон и ритм"},
+        {"id": "n3", "name": "Оптические схемы", "folder": "Астрономия",
+         "preview": "Ньютон и Кассегрен"},
+    ]
+    monkeypatch.setattr("services.brainstorm.list_notes", lambda **kw: mock_notes)
+
+    pair = bs.find_serendipity_pair(db_file=non_existent_db)
+    assert pair is not None
+    note_a, note_b = pair
+    assert note_a["folder"] != note_b["folder"]
+    assert {note_a["folder"], note_b["folder"]} == {"Астрономия", "Музыка"}
+
+
+def test_find_serendipity_pair_fallback_same_folder_token_contrast(monkeypatch, tmp_path):
+    """Fallback: в одной папке выбираются заметки с минимальным пересечением слов."""
+    non_existent_db = str(tmp_path / "empty.sqlite")
+
+    mock_notes = [
+        {"id": "n1", "name": "Красное яблоко сад", "folder": "Дневник",
+         "preview": "сладкий спелый фрукт"},
+        {"id": "n2", "name": "Красное яблоко дерево", "folder": "Дневник",
+         "preview": "ветви с плодами"},
+        {"id": "n3", "name": "Холодный космический вакуум", "folder": "Дневник",
+         "preview": "звезды и пустота"},
+    ]
+    monkeypatch.setattr("services.brainstorm.list_notes", lambda **kw: mock_notes)
+
+    pair = bs.find_serendipity_pair(db_file=non_existent_db)
+    assert pair is not None
+    note_a, note_b = pair
+    assert note_a["id"] == "n1"
+    # Заметка 3 имеет наименьшее пересечение с заметкой 1
+    assert note_b["id"] == "n3"
+
+
+def test_find_serendipity_pair_less_than_two_notes(monkeypatch, tmp_path):
+    """Если доступно менее 2 заметок, возвращается None."""
+    non_existent_db = str(tmp_path / "empty.sqlite")
+    monkeypatch.setattr(
+        "services.brainstorm.list_notes",
+        lambda **kw: [{"id": "n1", "name": "Одинокая заметка"}],
+    )
+    assert bs.find_serendipity_pair(db_file=non_existent_db) is None
+
+    monkeypatch.setattr("services.brainstorm.list_notes", lambda **kw: [])
+    assert bs.find_serendipity_pair(db_file=non_existent_db) is None
+
+
+def test_format_serendipity_bridge():
+    note_a = {"name": "Квантовый компьютер", "folder": "Физика",
+              "preview": "Кубиты и перепутанность"}
+    note_b = {"name": "Сосновый лес", "folder": "Природа",
+              "preview": "Запах хвои", "_similarity": 0.35}
+
+    bridge = bs.format_serendipity_bridge(note_a, note_b)
+    assert "🌉 Ассоциативный мост" in bridge
+    assert "Квантовый компьютер" in bridge
+    assert "Сосновый лес" in bridge
+    assert "сходство 35%" in bridge
+    assert "<!--" not in bridge
+
+
+def test_build_storm_prompt_includes_serendipity():
+    ctx = {
+        "serendipity": "🌉 Ассоциативный мост: Кванты и Сосны",
+        "notes": "- Заметка 1",
+    }
+    prompt = bs.build_storm_prompt("Сюрреализм", ctx)
+    assert "[Ассоциативный мост (Serendipity)]" in prompt
+    assert "Кванты и Сосны" in prompt
+
+
 # маленький хелпер для async-тестов (модуль импортирован без asyncio.run в тестах)

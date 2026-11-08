@@ -38,7 +38,7 @@ async def _status_edit(status_msg, text: str):
         logger.warning("[STORM] status edit failed: %s", e)
 
 
-async def run_storm(uid: int, status_msg, topic: str):
+async def run_storm(uid: int, status_msg, topic: str, mode: str = "standard"):
     """Основной пайплайн: контекст → модель → идеи → кнопки выбора."""
     topic = (topic or "").strip()
     if not topic:
@@ -46,18 +46,32 @@ async def run_storm(uid: int, status_msg, topic: str):
         return
 
     try:
-        await _status_edit(status_msg, "🔍 Собираю контекст базы знаний…")
-        context = await bs.collect_context(topic)
+        if mode == "fusion":
+            await _status_edit(status_msg, "🎨 Собираю триаду стилей, арсенал и фотомеханики…")
+            context = await bs.collect_context(topic, mode="fusion")
 
-        await _status_edit(status_msg, "💭 Генерирую идеи…")
-        engine, model = get_current_ai()
-        msgs = [
-            {"role": "system", "content": bs.STORM_SYSTEM_PROMPT},
-            {"role": "user", "content": bs.build_storm_prompt(topic, context)},
-        ]
-        raw = await get_ai_response_async(engine, model, msgs)
+            await _status_edit(status_msg, "💭 Синтезирую авторские фотопроекты…")
+            engine, model = get_current_ai()
+            fusion_prompt = context.get("fusion_prompt") or bs.build_storm_prompt(topic, context)
+            msgs = [
+                {"role": "system", "content": bs.storm_system_prompt("fusion")},
+                {"role": "user", "content": fusion_prompt},
+            ]
+            sampling = bs.storm_sampling_params("fusion")
+            raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
+            ideas = bs.parse_fusion_ideas(raw)
+        else:
+            await _status_edit(status_msg, "🔍 Собираю контекст базы знаний…")
+            context = await bs.collect_context(topic)
 
-        ideas = bs.parse_ideas(raw)
+            await _status_edit(status_msg, "💭 Генерирую идеи…")
+            engine, model = get_current_ai()
+            msgs = [
+                {"role": "system", "content": bs.STORM_SYSTEM_PROMPT},
+                {"role": "user", "content": bs.build_storm_prompt(topic, context)},
+            ]
+            raw = await get_ai_response_async(engine, model, msgs)
+            ideas = bs.parse_ideas(raw)
     except Exception as exc:
         logger.error("[STORM] run failed: %s", exc, exc_info=True)
         await _status_edit(status_msg, f"❌ Ошибка штурма: {exc}")
@@ -67,13 +81,15 @@ async def run_storm(uid: int, status_msg, topic: str):
         "topic": topic,
         "context": context,
         "ideas": ideas,
+        "mode": mode,
     }
 
     kb = InlineKeyboardBuilder()
     row = []
     for i in range(1, len(ideas) + 1):
+        btn_label = f"🎨 {i}" if mode == "fusion" else f"💡 {i}"
         row.append(types.InlineKeyboardButton(
-            text=f"💡 {i}", callback_data=f"bs_pick:{i}",
+            text=btn_label, callback_data=f"bs_pick:{i}",
         ))
         if len(row) == 3:
             kb.row(*row)
@@ -86,7 +102,11 @@ async def run_storm(uid: int, status_msg, topic: str):
         ))
     kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
 
-    text = bs.format_ideas_text(topic, ideas)
+    if mode == "fusion":
+        text = bs.format_fusion_ideas_text(topic, ideas)
+    else:
+        text = bs.format_ideas_text(topic, ideas)
+
     try:
         await status_msg.edit_text(
             text, parse_mode="HTML", reply_markup=kb.as_markup(),
@@ -95,7 +115,7 @@ async def run_storm(uid: int, status_msg, topic: str):
         logger.warning("[STORM] show ideas failed: %s", exc)
 
 
-# ─── /штурм <тема> ───
+# ─── /штурм <тема> и /синтез ───
 
 
 @router.message(Command("штурм"))
@@ -105,6 +125,15 @@ async def cmd_storm(message: types.Message):
     if not topic:
         _storm_waiting[message.from_user.id] = True
         kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🎨 Лаборатория стилей (Триада)", callback_data="bs_start_fusion",
+            ),
+        )
+        kb.row(
+            types.InlineKeyboardButton(text="🎒 Арсенал", callback_data="bs_open_gear"),
+            types.InlineKeyboardButton(text="📚 Фотомеханики", callback_data="bs_open_mechs"),
+        )
         kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
         await message.answer(
             "🧠 <b>Штурм</b>\n\n"
@@ -118,14 +147,86 @@ async def cmd_storm(message: types.Message):
     await run_storm(message.from_user.id, status, topic)
 
 
+@router.message(Command("синтез", "fusion", "лаборатория"))
+@allowed_only
+async def cmd_fusion_storm(message: types.Message):
+    raw_text = message.text or ""
+    parts = raw_text.split(maxsplit=1)
+    topic = parts[1].strip() if len(parts) > 1 else ""
+    if not topic:
+        _storm_waiting[message.from_user.id] = "fusion"
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(text="🎒 Арсенал", callback_data="bs_open_gear"),
+            types.InlineKeyboardButton(text="📚 Фотомеханики", callback_data="bs_open_mechs"),
+        )
+        kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
+        await message.answer(
+            "🎨 <b>Творческая лаборатория: Стилистический синтез</b>\n\n"
+            "Введите тему для синтеза авторского фотопроекта.\n"
+            "Бот подберёт триаду стилей (Сюжет + Свет + Оптика), свяжет её с вашим "
+            "арсеналом Fujifilm X-T4, банком фотомеханик и заметками.",
+            parse_mode="HTML",
+            reply_markup=kb.as_markup(),
+        )
+        return
+    status = await message.answer("🎨 Запускаю творческую лабораторию стилей…")
+    await run_storm(message.from_user.id, status, topic, mode="fusion")
+
+
 @router.message(F.text == "🧠 Штурм")
 @allowed_only
 async def btn_storm(message: types.Message):
     _storm_waiting[message.from_user.id] = True
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🎨 Лаборатория стилей (Триада)", callback_data="bs_start_fusion",
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(text="🎒 Арсенал", callback_data="bs_open_gear"),
+        types.InlineKeyboardButton(text="📚 Фотомеханики", callback_data="bs_open_mechs"),
+    )
+    kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
     await message.answer(
         "🧠 <b>Штурм</b>\n\nВведите тему для генерации идей.",
         parse_mode="HTML",
+        reply_markup=kb.as_markup(),
     )
+
+
+@router.callback_query(F.data == "bs_start_fusion")
+@allowed_callback
+async def cb_start_fusion(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    _storm_waiting[uid] = "fusion"
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
+    await cb.message.edit_text(
+        "🎨 <b>Творческая лаборатория (Синтез стилей)</b>\n\n"
+        "Введите тему для синтеза авторского фотопроекта.\n"
+        "Например: «осенний парк», «ночные тени», «акварельный портрет у окна».",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data == "bs_open_gear")
+@allowed_callback
+async def cb_bs_open_gear(cb: types.CallbackQuery):
+    await cb.answer()
+    from handlers.photographer import cb_gear_open
+    await cb_gear_open(cb)
+
+
+@router.callback_query(F.data == "bs_open_mechs")
+@allowed_callback
+async def cb_bs_open_mechs(cb: types.CallbackQuery):
+    await cb.answer()
+    from handlers.photographer import cb_mech_open
+    await cb_mech_open(cb)
 
 
 # ─── Выбор идеи / сохранение ───
@@ -143,14 +244,20 @@ async def _storm_confirm(uid: int, edit_func, selected: list[dict], label: str):
     if linked:
         preview += "\n\n" + bs.format_linked(linked)
     kb = InlineKeyboardBuilder()
-    kb.row(types.InlineKeyboardButton(text="✅ Сохранить", callback_data="bs_save"))
+    kb.row(types.InlineKeyboardButton(text="✅ Сохранить во Дворец", callback_data="bs_save"))
+    kb.row(
+        types.InlineKeyboardButton(
+            text="📝 В Apple Notes [В планах]",
+            callback_data="bs_export_notes",
+        ),
+    )
     kb.row(
         types.InlineKeyboardButton(
             text="\u25c0\ufe0f К идеям", callback_data="bs_back",
         ),
     )
     kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
-    _storm_data[uid]["pending"] = {"text": text, "label": label}
+    _storm_data[uid]["pending"] = {"text": text, "label": label, "ideas": selected}
     await edit_func(preview, parse_mode="HTML", reply_markup=kb.as_markup())
 
 
@@ -171,7 +278,250 @@ async def cb_pick_idea(cb: types.CallbackQuery):
     ideas = data.get("ideas", [])
     if idx < 1 or idx > len(ideas):
         return await cb.message.edit_text("❌ Идея не найдена. Начните /штурм заново.")
-    await _storm_confirm(uid, cb.message.edit_text, [ideas[idx - 1]], f"Идея {idx}")
+
+    selected_idea = ideas[idx - 1]
+    from services.style_fusion import (
+        FusedPhotoConcept,
+        build_concept_navigation_kb,
+        format_concept_page,
+    )
+    if isinstance(selected_idea, FusedPhotoConcept):
+        text = format_concept_page(selected_idea, page=1)
+        kb = build_concept_navigation_kb(concept_idx=idx, page=1)
+        _storm_data[uid]["pending"] = {
+            "text": bs.ideas_to_text([selected_idea]),
+            "label": f"Проект {idx}",
+            "ideas": [selected_idea],
+            "active_concept_idx": idx,
+        }
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+    else:
+        await _storm_confirm(uid, cb.message.edit_text, [selected_idea], f"Идея {idx}")
+
+
+@router.callback_query(F.data.startswith("bs_page:"))
+@allowed_callback
+async def cb_concept_page(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    data = _storm_data.get(uid)
+    if not data:
+        return await cb.message.edit_text("❌ Сессия истекла. Начните /штурм заново.")
+    parts = cb.data.split(":")
+    if len(parts) < 3:
+        return
+    try:
+        idx = int(parts[1])
+        page = int(parts[2])
+    except ValueError:
+        return
+    ideas = data.get("ideas", [])
+    if idx < 1 or idx > len(ideas):
+        return await cb.message.edit_text("❌ Проект не найден.")
+    concept = ideas[idx - 1]
+    from services.style_fusion import (
+        FusedPhotoConcept,
+        build_concept_navigation_kb,
+        format_concept_page,
+    )
+    if not isinstance(concept, FusedPhotoConcept):
+        return
+    text = format_concept_page(concept, page=page)
+    kb = build_concept_navigation_kb(concept_idx=idx, page=page)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("bs_prompt:"))
+@allowed_callback
+async def cb_concept_prompt(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    data = _storm_data.get(uid)
+    if not data:
+        return await cb.message.edit_text("❌ Сессия истекла. Начните /штурм заново.")
+    try:
+        idx = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        return
+    ideas = data.get("ideas", [])
+    if idx < 1 or idx > len(ideas):
+        return await cb.message.edit_text("❌ Проект не найден.")
+    concept = ideas[idx - 1]
+    from services.style_fusion import FusedPhotoConcept, build_midjourney_prompt
+    if not isinstance(concept, FusedPhotoConcept):
+        return
+    prompt_text = build_midjourney_prompt(concept)
+    title_esc = safe_html_format(concept.title)
+    text = (
+        f"🎨 <b>Промпт Midjourney / Flux.1</b>\n"
+        f"Проект: «{title_esc}»\n\n"
+        f"<code>{safe_html_format(prompt_text)}</code>\n\n"
+        "💡 <i>Нажмите на блок кода, чтобы скопировать промпт. "
+        "Вставьте его в Midjourney (/imagine) или Flux.</i>"
+    )
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("bs_refs:"))
+@allowed_callback
+async def cb_concept_refs(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    data = _storm_data.get(uid)
+    if not data:
+        return await cb.message.edit_text("❌ Сессия истекла. Начните /штурм заново.")
+    try:
+        idx = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        return
+    ideas = data.get("ideas", [])
+    if idx < 1 or idx > len(ideas):
+        return await cb.message.edit_text("❌ Проект не найден.")
+    concept = ideas[idx - 1]
+    from services.style_fusion import FusedPhotoConcept, format_references_card
+    if not isinstance(concept, FusedPhotoConcept):
+        return
+
+    web_snippets = ""
+    try:
+        from services.web_search import search_web
+        q = f"{concept.triad.narrative.style} {concept.triad.optics.style} photography"
+        web_snippets = await search_web(q, max_results=2)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[STORM] Web search for refs failed: %s", exc)
+
+    text = format_references_card(concept, web_snippets=web_snippets)
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("bs_deepen:"))
+@allowed_callback
+async def cb_concept_deepen(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    data = _storm_data.get(uid)
+    if not data:
+        return await cb.message.edit_text("❌ Сессия истекла. Начните /штурм заново.")
+    try:
+        idx = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        return
+    ideas = data.get("ideas", [])
+    if idx < 1 or idx > len(ideas):
+        return await cb.message.edit_text("❌ Проект не найден.")
+    concept = ideas[idx - 1]
+    from services.style_fusion import (
+        FusedPhotoConcept,
+        build_deepen_system_prompt,
+        build_deepen_user_prompt,
+        format_deepen_card,
+    )
+    if not isinstance(concept, FusedPhotoConcept):
+        return
+
+    try:
+        await cb.message.edit_text(
+            f"🔍 <b>Углубляю образ проекта «{safe_html_format(concept.title)}»…</b>\n"
+            "Анализирую скрытый символизм, колористику и режиссуру модели…",
+            parse_mode="HTML",
+        )
+        engine, model = get_current_ai()
+        msgs = [
+            {"role": "system", "content": build_deepen_system_prompt()},
+            {"role": "user", "content": build_deepen_user_prompt(concept)},
+        ]
+        analysis = await get_ai_response_async(engine, model, msgs)
+        text = format_deepen_card(concept, analysis)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[STORM] Deepen analysis failed: %s", exc)
+        text = f"❌ Не удалось углубить образ: {exc}"
+
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("bs_export_concept:"))
+@allowed_callback
+async def cb_concept_export_single(cb: types.CallbackQuery):
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    data = _storm_data.get(uid)
+    if not data:
+        await cb.answer("❌ Сессия истекла.", show_alert=True)
+        return
+    try:
+        idx = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        return
+    ideas = data.get("ideas", [])
+    if idx < 1 or idx > len(ideas):
+        await cb.answer("❌ Проект не найден.", show_alert=True)
+        return
+    concept = ideas[idx - 1]
+    from services.apple_notes import AppleNotesError
+    from services.style_fusion import FusedPhotoConcept, export_concept_to_apple_notes
+
+    if not isinstance(concept, FusedPhotoConcept):
+        return
+    try:
+        export_concept_to_apple_notes(concept, folder="Фотопроекты")
+        await cb.answer(
+            f"✅ Проект «{concept.title}» сохранён в Apple Notes "
+            "(папка «Фотопроекты», статус [В планах])!",
+            show_alert=True,
+        )
+    except AppleNotesError as exc:
+        await cb.answer(f"❌ Ошибка Apple Notes: {exc}", show_alert=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[STORM] Single export failed: %s", exc)
+        await cb.answer("❌ Сбой сохранения в Apple Notes.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("bs_save_concept:"))
+@allowed_callback
+async def cb_concept_save_palace(cb: types.CallbackQuery):
+    await cb.answer()
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    data = _storm_data.get(uid)
+    if not data:
+        return await cb.message.edit_text("❌ Сессия истекла. Начните /штурм заново.")
+    try:
+        idx = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        return
+    ideas = data.get("ideas", [])
+    if idx < 1 or idx > len(ideas):
+        return await cb.message.edit_text("❌ Проект не найден.")
+    concept = ideas[idx - 1]
+    from handlers.palace import _save_state, _show_save_wings
+
+    text = bs.ideas_to_text([concept])
+    _save_state[uid] = {
+        "text": text,
+        "mode": "full",
+        "wing": "",
+        "room": "",
+        "wings": [],
+        "rooms": [],
+    }
+    await cb.message.edit_text("⏳ Загружаю крылья…")
+    await _show_save_wings(cb.message.edit_text, uid)
 
 
 @router.callback_query(F.data == "bs_all")
@@ -194,11 +544,13 @@ async def cb_back_to_ideas(cb: types.CallbackQuery):
     if not data:
         return await cb.message.edit_text("❌ Сессия истекла. Начните /штурм заново.")
     ideas = data.get("ideas", [])
+    mode = data.get("mode", "standard")
     kb = InlineKeyboardBuilder()
     row = []
     for i in range(1, len(ideas) + 1):
+        btn_label = f"🎨 {i}" if mode == "fusion" else f"💡 {i}"
         row.append(types.InlineKeyboardButton(
-            text=f"💡 {i}", callback_data=f"bs_pick:{i}",
+            text=btn_label, callback_data=f"bs_pick:{i}",
         ))
         if len(row) == 3:
             kb.row(*row)
@@ -210,8 +562,14 @@ async def cb_back_to_ideas(cb: types.CallbackQuery):
             text="💾 Сохранить все", callback_data="bs_all",
         ))
     kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
+
+    if mode == "fusion":
+        text = bs.format_fusion_ideas_text(data.get("topic", ""), ideas)
+    else:
+        text = bs.format_ideas_text(data.get("topic", ""), ideas)
+
     await cb.message.edit_text(
-        bs.format_ideas_text(data.get("topic", ""), ideas),
+        text,
         parse_mode="HTML",
         reply_markup=kb.as_markup(),
     )
@@ -247,6 +605,67 @@ async def cb_confirm_save(cb: types.CallbackQuery):
     await _show_save_wings(cb.message.edit_text, uid)
 
 
+@router.callback_query(F.data == "bs_export_notes")
+@allowed_callback
+async def cb_export_notes(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    data = _storm_data.get(uid)
+    pending = (data or {}).get("pending")
+    if not data or not pending:
+        return await cb.message.edit_text("❌ Сессия истекла. Начните /штурм заново.")
+    ideas = pending.get("ideas", [])
+    if not ideas:
+        return await cb.message.edit_text("❌ Нет идей для экспорта.")
+
+    from services.apple_notes import AppleNotesError
+    from services.style_fusion import (
+        FusedPhotoConcept,
+        export_concept_to_apple_notes,
+    )
+
+    exported_titles: list[str] = []
+    try:
+        for idea in ideas:
+            if isinstance(idea, FusedPhotoConcept):
+                export_concept_to_apple_notes(idea, folder="Фотопроекты")
+                exported_titles.append(idea.title)
+            elif isinstance(idea, dict):
+                try:
+                    concept = FusedPhotoConcept.from_dict(idea)
+                    export_concept_to_apple_notes(concept, folder="Фотопроекты")
+                    exported_titles.append(concept.title)
+                except Exception:
+                    from services.apple_notes import create_note, ensure_folder
+                    ensure_folder("Фотопроекты")
+                    t = f"[В планах] {idea.get('title', 'Фотопроект')}"
+                    b = (
+                        f"# {t}\n\n**Обоснование:** {idea.get('reason', '')}\n\n"
+                        f"**Шаги:** {idea.get('steps', '')}"
+                    )
+                    create_note(title=t, body=b, folder="Фотопроекты")
+                    exported_titles.append(idea.get("title", "Фотопроект"))
+    except AppleNotesError as exc:
+        logger.warning("[STORM] Export to Apple Notes failed: %s", exc)
+        return await cb.message.answer(f"❌ Ошибка Apple Notes: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[STORM] Unexpected export failure: %s", exc)
+        return await cb.message.answer("❌ Не удалось экспортировать в Apple Notes.")
+
+    titles_str = ", ".join(f"«{t}»" for t in exported_titles)
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="🏛 Сохранить во Дворец", callback_data="bs_save"))
+    kb.row(types.InlineKeyboardButton(text="\u25c0\ufe0f К идеям", callback_data="bs_back"))
+    await cb.message.edit_text(
+        f"✅ <b>Проект сохранён в Apple Notes!</b>\n\n"
+        f"📁 Папка: <code>Фотопроекты</code>\n"
+        f"🏷 Статус: <code>[В планах]</code>\n"
+        f"Проекты: {safe_html_format(titles_str)}",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
+
+
 @router.callback_query(F.data == "bs_cancel")
 @allowed_callback
 async def cb_cancel(cb: types.CallbackQuery):
@@ -255,8 +674,8 @@ async def cb_cancel(cb: types.CallbackQuery):
     _storm_waiting.pop(cb.from_user.id, None)
     try:
         await cb.message.edit_text("❌ Отменено.")
-    except Exception:  # noqa: BLE001 — сообщение может быть удалено
-        pass
+    except Exception as exc:  # noqa: BLE001 — сообщение может быть удалено
+        logger.debug("[STORM] Cancel edit ignored: %s", exc)
 
 
 # ─── Рефлексия после сохранения идей ───

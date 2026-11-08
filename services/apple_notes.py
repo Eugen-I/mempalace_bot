@@ -154,6 +154,16 @@ tell application "Notes"
 end tell
 """
 
+_AS_ENSURE_FOLDER = """
+set fname to "{folder}"
+tell application "Notes"
+  if not (exists folder fname) then
+    make new folder with properties {name:fname}
+  end if
+  return "{\\"ok\\":true}"
+end tell
+"""
+
 
 class AppleNotesError(Exception):
     """Ошибка доступа к Apple Notes (TCC, osascript, таймаут)."""
@@ -531,6 +541,23 @@ def list_folders() -> list[str]:
     if not isinstance(data, list):
         raise AppleNotesError(f"Неожиданный формат ответа Notes: {data!r}")
     return [str(item) for item in data if isinstance(item, str) and item]
+
+
+def ensure_folder(folder: str) -> bool:
+    """Создаёт папку в Apple Notes, если она ещё не существует."""
+    if not isinstance(folder, str) or not folder.strip():
+        raise AppleNotesError("Укажите имя папки.")
+    clean = folder.strip()
+    if clean == "Recently Deleted":
+        return False
+    script = _AS_ENSURE_FOLDER.replace("{folder}", _as_literal(clean))
+    try:
+        run_applescript(script)
+        invalidate_index()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[NOTES] ensure_folder %s failed: %s", clean, exc)
+        return False
 
 
 def move_note(note_id: str, target_folder: str) -> dict:
