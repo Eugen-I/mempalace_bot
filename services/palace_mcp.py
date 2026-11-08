@@ -13,6 +13,7 @@ class PalaceMCPClient:
     _HANDSHAKE_TIMEOUT = 30.0
     _READY_TIMEOUT = 10.0
     _STOP_TIMEOUT = 5.0
+    _BUFFER_LIMIT = 32 * 1024 * 1024  # 32 MiB buffer for large JSON-RPC lines
 
     def __init__(self):
         self._proc = None
@@ -41,6 +42,7 @@ class PalaceMCPClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=self._BUFFER_LIMIT,
             env=env,
         )
 

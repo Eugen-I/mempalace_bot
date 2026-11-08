@@ -5,6 +5,7 @@ RPC (seq, timeout, cleanup), call_tool, stop, and the get_mcp singleton.
 """
 
 import asyncio
+import json
 import logging
 
 import pytest
@@ -328,6 +329,27 @@ def test_reader_sets_result_on_pending():
         return fut.result()
 
     assert asyncio.run(run()) == {"jsonrpc": "2.0", "id": 7, "result": {}}
+
+
+def test_reader_handles_large_payload_exceeding_default_64kb():
+    client = PalaceMCPClient()
+
+    async def run():
+        # Payload well over 64 KB (150 KB) to ensure chunk limit overrun is avoided
+        large_text = "x" * (150 * 1024)
+        raw = json.dumps({"jsonrpc": "2.0", "id": 42, "result": {"data": large_text}})
+        reader = asyncio.StreamReader(limit=client._BUFFER_LIMIT)
+        reader.feed_data(raw.encode() + b"\n")
+        reader.feed_eof()
+        client._proc = FakeProc(stdout=reader)
+        fut = asyncio.get_event_loop().create_future()
+        client._pending[42] = fut
+        await client._reader()
+        assert fut.done()
+        assert len(fut.result()["result"]["data"]) == 150 * 1024
+        return True
+
+    assert asyncio.run(run())
 
 
 def test_reader_ignores_invalid_json():
