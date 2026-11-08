@@ -276,6 +276,22 @@ def compute_tunnels(
     return selected_links
 
 
+def _sanitize_preview(text: str) -> str:
+    """Очищает превью заметок от приватных контактов, путей и токенов."""
+    if not text:
+        return ""
+    # Удаляем токены и ключи
+    text = re.sub(r"(AIza|sk-|tvly-)[A-Za-z0-9_-]{15,}", "[REDACTED_KEY]", text)
+    text = re.sub(r"(?<!\d)[0-9]{8,11}:[A-Za-z0-9_-]{35}(?!\d)", "[REDACTED_TOKEN]", text)
+    # Маскируем телефоны
+    text = re.sub(r"(?<!\d)\+[0-9]{10,13}(?!\d)", "[REDACTED_PHONE]", text)
+    # Маскируем личные email
+    text = re.sub(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", "[REDACTED_EMAIL]", text)
+    # Маскируем абсолютные пути пользователей
+    text = re.sub(r"/Users/[^/\s]+", "/Users/<user>", text)
+    return text[:220].strip()
+
+
 def build_graph_model(
     drawers: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -316,7 +332,8 @@ def build_graph_model(
         if filed_at:
             rooms_data[r_id]["dates"].append(filed_at)
 
-        preview = content[:220].strip() if content else ""
+        preview = _sanitize_preview(content)
+        title = _sanitize_preview(title)
         rooms_data[r_id]["notes"].append({
             "id": d.get("id") or f"drawer_{len(rooms_data[r_id]['notes'])}",
             "title": title,
