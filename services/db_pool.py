@@ -172,7 +172,7 @@ def get_connection(
 
 @contextlib.contextmanager
 def db_connection(
-    db_path: str | Path,
+    db_path: str | Path | sqlite3.Connection,
     *,
     row_factory: Any | None = None,
     commit: bool = True,
@@ -181,7 +181,12 @@ def db_connection(
 
     Автоматически выполняет commit при успешном завершении блока и rollback при ошибке.
     """
-    conn = get_connection(db_path, row_factory=row_factory)
+    if isinstance(db_path, sqlite3.Connection):
+        conn = db_path
+        if row_factory is not None:
+            conn.row_factory = row_factory
+    else:
+        conn = get_connection(db_path, row_factory=row_factory)
     try:
         yield conn
         if commit:

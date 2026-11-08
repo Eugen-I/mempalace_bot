@@ -104,28 +104,123 @@ def _legacy_decode_room(data: str):
     return _decode_callback_part(payload), ""
 
 
+WING_RUSSIAN_LABELS = {
+    "philosophy": "Философия",
+    "psychology": "Психология",
+    "photography": "Фотография",
+    "creative": "Творчество",
+    "personal": "Личные мысли",
+    "projects": "Проекты",
+    "dreams": "Сны и сновидения",
+    "health": "Здоровье и спорт",
+    "insights": "Инсайты",
+    "research": "Исследования",
+    "my_notes": "Мои заметки",
+    "general": "Общее",
+}
+
+ROOM_RUSSIAN_LABELS = {
+    # Философия
+    "cioran": "Эмиль Чоран",
+    "thinking": "Методы мышления",
+    "phenomenology": "Феноменология",
+    "stoicism": "Стоицизм",
+    "nietzsche": "Ницше",
+    # Психология
+    "archetypes": "Архетипы и Маска",
+    "jung": "Юнг и цитаты",
+    "psychoanalysis": "Психоанализ и Бион",
+    "frankl": "Виктор Франкл",
+    "lacan": "Жак Лакан",
+    # Фотография
+    "curator_texts": "Кураторские тексты",
+    "explications": "Экспликации к фото",
+    "photographers": "Фотографы",
+    "therapy": "Фототрансцендентная арт-терапия",
+    # Творчество
+    "poetry": "Мои стихи",
+    "scripts": "Сценарии и манифесты",
+    "ideas": "Креативные идеи",
+    # Личное
+    "reflections": "Мои мысли и размышления",
+    "aphorisms": "Высказывания",
+    "books": "Мысли из книг",
+    # Проекты
+    "project_mask": "Project Mask",
+    "gemini_ai": "Gemini & AI",
+    "tech": "IT и разработка",
+    # Служебные
+    "general": "Общие записи",
+    "_registry": "Реестр",
+}
+
+
+def format_wing_label(wing: str) -> str:
+    """Возвращает русское название крыла."""
+    if not wing:
+        return ""
+    norm = wing.lower().strip()
+    return WING_RUSSIAN_LABELS.get(norm, wing)
+
+
+def format_room_label(room: str) -> str:
+    """Возвращает человекочитаемое русское название комнаты."""
+    if not room:
+        return ""
+    norm = room.lower().strip()
+    if norm in ROOM_RUSSIAN_LABELS:
+        return ROOM_RUSSIAN_LABELS[norm]
+    return room
+
+
+def _extract_drawer_note_title(d: dict, fallback_idx: int) -> tuple[str, int]:
+    """Извлекает красивое название заметки и номер части (чанка)."""
+    title = d.get("title") or d.get("name") or d.get("closet_name") or ""
+    chunk_index = d.get("chunk_index")
+    if chunk_index is None:
+        chunk_index = 0
+
+    source_file = d.get("source_file", "")
+    if not title and source_file:
+        base = os.path.basename(source_file)
+        title = os.path.splitext(base)[0]
+
+    # Если название шаблонное или отсутствует, берём первую строку текста
+    if not title or title.startswith("Запись "):
+        preview = (d.get("content_preview") or d.get("content") or "").strip()
+        if preview:
+            first_line = preview.split("\n")[0].strip()
+            first_line = first_line.lstrip("#* \t").strip()
+            if first_line and len(first_line) > 3:
+                title = first_line[:40]
+
+    if not title:
+        title = f"Заметка {fallback_idx}"
+
+    return title.strip(), int(chunk_index)
+
+
 def render_breadcrumbs(
     wing: str = "", room: str = "", drawer: str = "", section: str = ""
 ) -> str:
-    """Формирует строку «хлебных крошек» для ориентации в Telegram UI.
-
-    Пример: 🏰 Дворец › 🕸️ Наука › 📁 Физика › 📄 Квантовая механика
-    """
+    """Формирует строку «хлебных крошек» для ориентации в Telegram UI."""
     parts = ["🏰 <b>Дворец</b>"]
     if section:
         parts.append(f"<b>{safe_html_format(section)}</b>")
     if wing:
+        w_lbl = format_wing_label(wing)
         tag_w = (
-            f"🕸️ <b>{safe_html_format(wing)}</b>"
+            f"🕸️ <b>{safe_html_format(w_lbl)}</b>"
             if not room
-            else f"🕸️ {safe_html_format(wing)}"
+            else f"🕸️ {safe_html_format(w_lbl)}"
         )
         parts.append(tag_w)
     if room:
+        r_lbl = format_room_label(room)
         tag_r = (
-            f"📁 <b>{safe_html_format(room)}</b>"
+            f"📁 <b>{safe_html_format(r_lbl)}</b>"
             if not drawer
-            else f"📁 {safe_html_format(room)}"
+            else f"📁 {safe_html_format(r_lbl)}"
         )
         parts.append(tag_r)
     if drawer:
@@ -191,8 +286,9 @@ async def cb_list_wings(cb: types.CallbackQuery):
 
         kb = InlineKeyboardBuilder()
         for w in wing_names:
+            w_text = format_wing_label(w)
             kb.button(
-                text=f"🪪 {w}", callback_data=_build_wing_callback_data(w),
+                text=f"🪪 {w_text}", callback_data=_build_wing_callback_data(w),
             )
         kb.adjust(2)
         kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_nav"))
@@ -231,8 +327,9 @@ async def cb_rooms_menu(cb: types.CallbackQuery):
                 sorted_rooms = sorted(rooms.items(), key=lambda x: x[1], reverse=True)
                 for r, cnt in sorted_rooms[:5]:
                     lines.append(f"│  • {safe_html_format(r)} ({cnt})")
+                    r_text = format_room_label(r)
                     kb.row(types.InlineKeyboardButton(
-                        text=f"📖 {w} → {r}", callback_data=_build_room_callback_data(w, r),
+                        text=f"🚪 {r_text}", callback_data=_build_room_callback_data(w, r),
                     ))
                 if len(sorted_rooms) > 5:
                     lines.append(f"│  … ещё {len(sorted_rooms) - 5}")
@@ -281,15 +378,17 @@ async def cb_rooms_select(cb: types.CallbackQuery):
         sorted_rooms = sorted_rooms[:room_limit]
 
     total_records = sum(rooms.values())
+    w_label = format_wing_label(wing)
     lines = [
-        f"🪪 <b>Комнаты крыла {wing}:</b>\n<i>{render_breadcrumbs(wing=wing).strip()}</i>\n",
+        f"🪪 <b>Комнаты крыла {w_label}:</b>\n<i>{render_breadcrumbs(wing=wing).strip()}</i>\n",
         f"<i>Всего комнат: {len(rooms)} | Записей: {total_records:,}</i>\n",
         "Выберите комнату для чтения записей:",
     ]
     kb = InlineKeyboardBuilder()
     for r, count in sorted_rooms:
+        r_label = format_room_label(r)
         kb.button(
-            text=f"📖 {r}", callback_data=_build_room_callback_data(wing, r),
+            text=f"🚪 {r_label}", callback_data=_build_room_callback_data(wing, r),
         )
     kb.adjust(2)
     if truncated:
@@ -720,16 +819,20 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
                 reply_markup=kb.as_markup(),
             )
 
+        w_label = format_wing_label(wing)
+        r_label = format_room_label(room)
         lines = [
-            f"<b>📖 Записи в {wing}/{room}</b>  ({total} записей)\n"
+            f"<b>📖 Записи в {w_label}/{r_label}</b>  ({total} записей)\n"
             f"<i>{render_breadcrumbs(wing=wing, room=room).strip()}</i>\n",
         ]
         for i, d in enumerate(drawers):
-            name = (d.get("closet_name") or d.get("title") or d.get("name", ""))
+            note_title, chunk_idx = _extract_drawer_note_title(d, offset + i + 1)
             preview = d.get("content_preview", "") or d.get("content", "")[:300]
             date_val = d.get("created_at") or d.get("date") or d.get("timestamp") or ""
             tags = d.get("tags") or d.get("keywords") or []
-            safe_n = safe_html_format(name or preview[:60])
+            chunk_suffix = f" [часть {chunk_idx + 1}]" if chunk_idx > 0 else ""
+            display_title = f"{note_title}{chunk_suffix}"
+            safe_n = safe_html_format(display_title)
             lines.append(f"{offset + i + 1}. 📄 <b>{safe_n}</b>")
             meta_chips = []
             if date_val:
@@ -745,11 +848,18 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
 
         extra_rows = []
         for i, d in enumerate(drawers):
-            closet = d.get("closet_name") or d.get("title") or d.get("name", "")
-            name = closet or f"Запись {offset + i + 1}"
+            note_title, chunk_idx = _extract_drawer_note_title(d, offset + i + 1)
+            chunk_suffix = f" [ч.{chunk_idx + 1}]" if chunk_idx > 0 else ""
+            max_btn_len = 20 if chunk_idx > 0 else 24
+            short_t = (
+                note_title[:max_btn_len] + "…"
+                if len(note_title) > max_btn_len
+                else note_title
+            )
+            btn_title = f"📄 Полный текст: {short_t}{chunk_suffix}"
             extra_rows.append([
                 types.InlineKeyboardButton(
-                    text=f"📄 Полный текст: {name[:30]}", callback_data=f"p_rd:{i}",
+                    text=btn_title, callback_data=f"p_rd:{i}",
                 ),
             ])
         nav_row = []
