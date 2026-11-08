@@ -1045,6 +1045,20 @@ def _readiness_text(report, checkin, events=None) -> str:
         "",
         _esc(readiness.advice),
     ]
+    if readiness.quadrant and readiness.quadrant.quadrant != "UNKNOWN":
+        q = readiness.quadrant
+        lines.append("")
+        lines.append(f"📊 <b>Вегетативный баланс ({q.emoji} {q.quadrant[:2]}):</b>")
+        lines.append(f"<pre>{_esc(q.ascii_matrix)}</pre>")
+        if q.hrv_latest is not None and q.rhr_latest is not None:
+            delta_h = f"{q.hrv_delta_pct:+.0f}%" if q.hrv_delta_pct is not None else ""
+            delta_r = f"{q.rhr_delta_bpm:+.0f}" if q.rhr_delta_bpm is not None else ""
+            lines.append(
+                f"• HRV: {q.hrv_latest:.0f} мс ({delta_h}) · "
+                f"Пульс покоя: {q.rhr_latest:.0f} уд/мин ({delta_r})"
+            )
+        if q.streak_days > 1:
+            lines.append(f"• Серия: {q.streak_days} дн. подряд")
     if readiness.reasons:
         lines.append("")
         lines.append("Почему:")

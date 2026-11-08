@@ -71,6 +71,7 @@ def build_plan_enrichment_payload(
     profile: UserProfile,
     *,
     activity_counts: dict[str, int] | None = None,
+    autonomic_quadrant: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a de-identified payload describing the Week 1 template to enrich."""
     week1 = plan.weeks[0] if plan.weeks else None
@@ -91,7 +92,7 @@ def build_plan_enrichment_payload(
             )
     med_ctx = medication_ai_context(profile.medications)
     post_illness = any(f.code == "post_illness_week1" for f in plan.safety_flags)
-    return {
+    payload: dict[str, Any] = {
         "goal": plan.goal,
         "experience": profile.experience,
         "equipment": list(profile.equipment),
@@ -107,6 +108,9 @@ def build_plan_enrichment_payload(
         },
         "template_sessions": template_sessions,
     }
+    if autonomic_quadrant:
+        payload["autonomic_quadrant"] = autonomic_quadrant
+    return payload
 
 
 def _system_prompt() -> str:
@@ -119,7 +123,8 @@ def _system_prompt() -> str:
         "2. Подбирай конкретные упражнения строго под доступное оборудование "
         "(equipment) и привычные пользователю виды активностей "
         "(historical_activity_types).\n"
-        "3. Если post_illness_recovery=true или есть ограничения по препаратам "
+        "3. Если post_illness_recovery=true, autonomic_quadrant указывает на симпатический "
+        "стресс (Q2) или сатурацию (Q3), или есть ограничения по препаратам "
         "/ сну / эмоциональному стрессу — давай щадящие варианты без отказа, "
         "без резких смен положения тела и без натуживания.\n"
         "4. Никогда не ставь диагнозы и не советуй менять дозы или отменять "
@@ -259,6 +264,7 @@ async def enrich_plan_with_ai_async(
     ai_call: AICall | None = None,
     fallback_model: str | None = DEFAULT_FALLBACK_MODEL,
     fallback_timeout: float = DEFAULT_FALLBACK_TIMEOUT,
+    autonomic_quadrant: dict[str, Any] | None = None,
 ) -> PlanEnrichmentResult:
     """Enrich session titles/structures with local Ollama while preserving all numbers."""
     if not ai_enabled:
@@ -271,7 +277,10 @@ async def enrich_plan_with_ai_async(
 
     activity_counts = _recent_activity_summary(conn, user_id)
     payload = build_plan_enrichment_payload(
-        plan, profile, activity_counts=activity_counts
+        plan,
+        profile,
+        activity_counts=activity_counts,
+        autonomic_quadrant=autonomic_quadrant,
     )
     messages = [
         {"role": "system", "content": _system_prompt()},

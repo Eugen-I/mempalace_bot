@@ -207,10 +207,12 @@ def _decision(
     pain: int,
     sleep_debt: float,
     green_weeks: int,
+    q2_days: int = 0,
+    q3_saturation_days: int = 0,
 ) -> str:
     if pain >= 4:
         return "medical"
-    if readiness == "red" or sleep_debt > 5.0:
+    if readiness == "red" or sleep_debt > 5.0 or q2_days >= 3 or q3_saturation_days >= 2:
         return "deload"
     if adherence is not None and adherence < 70:
         return "reduce"
@@ -221,6 +223,7 @@ def _decision(
         and (adherence is None or adherence >= 70)
         and (acwr is None or acwr <= 1.3)
         and green_weeks >= 2
+        and q2_days <= 1
     ):
         return "progress"
     return "keep"
@@ -306,6 +309,12 @@ def build_review(
         default=0,
     )
     green_weeks = _previous_green_weeks(conn, plan.plan_id, week_index)
+    quadrant_counts = readiness.quadrant.weekly_counts if readiness.quadrant else {}
+    q2_days = quadrant_counts.get("Q2_SYMPATHETIC_STRESS", 0)
+    q3_days = quadrant_counts.get("Q3_SATURATION", 0)
+    is_acwr_elevated = bool(training["acwr"] is not None and training["acwr"] > 1.2)
+    q3_saturation_days = q3_days if is_acwr_elevated else 0
+
     decision = _decision(
         readiness=readiness.level,
         adherence=adherence,
@@ -313,6 +322,8 @@ def build_review(
         pain=pain,
         sleep_debt=sleep_debt,
         green_weeks=green_weeks,
+        q2_days=q2_days,
+        q3_saturation_days=q3_saturation_days,
     )
 
     reasons: list[str] = list(readiness.reasons)
@@ -326,6 +337,10 @@ def build_review(
         reasons.append(f"HRV {hrv_delta:+.0f}% к базовой норме")
     if rhr_delta is not None:
         reasons.append(f"пульс покоя {rhr_delta:+.0f} к базовой норме")
+    if q2_days >= 3:
+        reasons.append(f"{q2_days} дня в зоне симпатического стресса")
+    if q3_saturation_days >= 2:
+        reasons.append(f"{q3_saturation_days} дня парасимпатической сатурации")
     if adherence is not None:
         reasons.append(f"выполнено {adherence}% ({adherence_source})")
     if training["acwr"] is not None:
@@ -353,6 +368,9 @@ def build_review(
             "adherence_source": adherence_source,
             "pain": pain,
             "green_weeks": green_weeks,
+            "quadrant_counts": quadrant_counts,
+            "q2_days": q2_days,
+            "q3_days": q3_days,
             **training,
         },
     )
@@ -471,6 +489,19 @@ def review_text(review: PlanReview) -> str:
         parts.append(f"пульс {metrics['rhr_delta']:+.0f}")
     if parts:
         lines.append(" · ".join(parts))
+    if metrics.get("quadrant_counts"):
+        qc = metrics["quadrant_counts"]
+        q_parts = []
+        if qc.get("Q1_RECOVERY"):
+            q_parts.append(f"Q1(восст) {qc['Q1_RECOVERY']}д")
+        if qc.get("Q2_SYMPATHETIC_STRESS"):
+            q_parts.append(f"Q2(стресс) {qc['Q2_SYMPATHETIC_STRESS']}д")
+        if qc.get("Q3_SATURATION"):
+            q_parts.append(f"Q3(сатурация) {qc['Q3_SATURATION']}д")
+        if qc.get("Q4_MIXED_INSTABILITY"):
+            q_parts.append(f"Q4(нестаб) {qc['Q4_MIXED_INSTABILITY']}д")
+        if q_parts:
+            lines.append("Вегетативный баланс: " + " · ".join(q_parts))
     load = []
     if metrics.get("acwr") is not None:
         load.append(f"Баланс нагрузки (ACWR): {metrics['acwr']:.2f}")

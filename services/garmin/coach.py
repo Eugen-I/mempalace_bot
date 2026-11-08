@@ -25,6 +25,7 @@ from .analytics import ReportData
 from .evidence import CITATION_IDS, EVIDENCE, citations_for_flags, format_citations
 from .errors import GarminError
 from .medications import medication_ai_context
+from .quadrants import assess_autonomic_quadrants
 from .safety import is_prompt_injection, sanitize_untrusted_text
 
 PROMPT_VERSION = "garmin-coach-v1"
@@ -295,9 +296,48 @@ def build_payload(
             "delta_7d_vs_baseline_pct": delta_pct,
             "coverage": item.coverage,
         }
+    quadrant_dict: dict[str, Any] | None = None
+    hrv = report.series.get("hrv")
+    rhr = report.series.get("resting_hr")
+    if hrv is not None and rhr is not None:
+        has_alcohol = any(
+            isinstance(e, dict) and e.get("kind") == "alcohol"
+            for e in (report.events or [])
+        )
+        sleep_series = report.series.get("sleep_hours")
+        sleep_debt = 0.0
+        if sleep_series is not None and sleep_series.avg_7d is not None and sleep_series.target:
+            sleep_debt = max(0.0, (sleep_series.target - sleep_series.avg_7d) * 7.0)
+        load_high = False
+        if report.activities and getattr(report.activities, "total_load", 0) > 0:
+            load_flags = getattr(report, "flags", [])
+            load_high = any(f.code in {"acwr_high", "load_spike"} for f in load_flags)
+        qa = assess_autonomic_quadrants(
+            hrv.values,
+            rhr.values,
+            hrv_baseline=hrv.baseline,
+            rhr_baseline=rhr.baseline,
+            acute_load_high=load_high,
+            sleep_debt_h=sleep_debt,
+            has_alcohol_event=has_alcohol,
+        )
+        if qa.quadrant != "UNKNOWN":
+            quadrant_dict = {
+                "quadrant": qa.quadrant,
+                "title": qa.title,
+                "emoji": qa.emoji,
+                "streak_days": qa.streak_days,
+                "hrv_delta_pct": qa.hrv_delta_pct,
+                "rhr_delta_bpm": qa.rhr_delta_bpm,
+                "weekly_counts": qa.weekly_counts,
+                "flags": qa.flags,
+                "action_advice": qa.action_advice,
+            }
+
     return {
         "period": {"start": report.start, "end": report.end, "days": len(report.dates)},
         "confidence": report.confidence,
+        "autonomic_quadrant": quadrant_dict,
         "series": series,
         "extended_metrics": getattr(report, "extended_metrics", {}) or {},
         "flags": [
@@ -365,7 +405,8 @@ def _system_prompt() -> str:
         "event_correlations и events (особенно болезнь/простуду/ОРВИ, травмы, "
         "стресс, алкоголь), а также emotional_and_sleep_state и medication_context, "
         "объясняя связь между препаратами, эмоциональным состоянием, стрессом, "
-        "сном, HRV и пульсом покоя.\n"
+        "сном, HRV и пульсом покоя. При наличии поля autonomic_quadrant объясняй "
+        "вегетативное состояние пользователя (Q1–Q4) и его связь с привычками и нагрузкой.\n"
         "3. Не советуй менять, отменять или начинать лекарства. При наличии "
         "препаратов учитывай их возможное влияние на архитектуру сна, утреннюю "
         "бодрость, стресс-индекс и ВСР и говори только «обсудите с врачом».\n"
@@ -467,7 +508,7 @@ def _extract_json(raw: str) -> dict[str, Any]:
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
         raise ValueError("model response does not contain a JSON object")
-    value = json.loads(text[start : end + 1])
+    value = json.loads(text[start:end + 1])
     if not isinstance(value, dict):
         raise ValueError("model response is not a JSON object")
     return value

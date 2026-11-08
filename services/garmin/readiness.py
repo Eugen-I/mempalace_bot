@@ -7,12 +7,14 @@ training and points to rest or medical advice.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Iterable
+from typing import Any
 
 from .analytics import ReportData
 from .models import Checkin, Event
+from .quadrants import QuadrantAssessment, assess_autonomic_quadrants
 
 
 @dataclass
@@ -20,6 +22,7 @@ class ReadinessResult:
     level: str
     reasons: list[str] = field(default_factory=list)
     advice: str = ""
+    quadrant: QuadrantAssessment | None = None
 
     @property
     def emoji(self) -> str:
@@ -154,6 +157,42 @@ def assess_readiness(
             escalate("amber")
             reasons.append(f"травма/ограничение («{ev_title[:80]}»)")
 
+    quadrant_assessment: QuadrantAssessment | None = None
+    if hrv is not None and rhr is not None:
+        has_alcohol = any(
+            (
+                getattr(item, "kind", None) == "alcohol"
+                if isinstance(item, Event)
+                else (isinstance(item, dict) and item.get("kind") == "alcohol")
+            )
+            for item in raw_events
+        )
+        sleep_series = report.series.get("sleep_hours")
+        sleep_debt = 0.0
+        if sleep_series is not None and sleep_series.avg_7d is not None and sleep_series.target:
+            sleep_debt = max(0.0, (sleep_series.target - sleep_series.avg_7d) * 7.0)
+
+        load_high = False
+        if report.activities and getattr(report.activities, "total_load", 0) > 0:
+            load_flags = getattr(report, "flags", [])
+            load_high = any(f.code in {"acwr_high", "load_spike"} for f in load_flags)
+
+        quadrant_assessment = assess_autonomic_quadrants(
+            hrv.values,
+            rhr.values,
+            hrv_baseline=hrv.baseline,
+            rhr_baseline=rhr.baseline,
+            acute_load_high=load_high,
+            sleep_debt_h=sleep_debt,
+            has_alcohol_event=has_alcohol,
+        )
+        if quadrant_assessment.readiness_modifier == "red":
+            escalate("red")
+            reasons.append(quadrant_assessment.description)
+        elif quadrant_assessment.readiness_modifier == "amber":
+            escalate("amber")
+            reasons.append(f"вегетативный статус: {quadrant_assessment.title}")
+
     has_data = any(
         report.series.get(key) is not None
         and any(value is not None for value in report.series[key].values)
@@ -172,4 +211,9 @@ def assess_readiness(
         "red": "Отдых или активное восстановление; тренировку не выполнять.",
         "unknown": "Консервативный режим: лёгкая сессия или отдых до подтверждения самочувствия.",
     }[level]
-    return ReadinessResult(level=level, reasons=reasons, advice=advice)
+    return ReadinessResult(
+        level=level,
+        reasons=reasons,
+        advice=advice,
+        quadrant=quadrant_assessment,
+    )
