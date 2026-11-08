@@ -56,6 +56,7 @@ async def cmd_palace(message: types.Message):
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="🏰 Статус", callback_data="palace_status"))
     kb.row(types.InlineKeyboardButton(text="🗺️ Навигация", callback_data="p_nav"))
+    kb.row(types.InlineKeyboardButton(text="📝 Неразобранные заметки", callback_data="p_unfiled"))
     kb.row(types.InlineKeyboardButton(text="🧠 Знания (KG)", callback_data="p_kg"))
     kb.row(
         types.InlineKeyboardButton(text="🔧 Обслуживание", callback_data="palace_admin"),
@@ -84,6 +85,7 @@ async def cb_palace_back(cb: types.CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="🏰 Статус", callback_data="palace_status"))
     kb.row(types.InlineKeyboardButton(text="🗺️ Навигация", callback_data="p_nav"))
+    kb.row(types.InlineKeyboardButton(text="📝 Неразобранные заметки", callback_data="p_unfiled"))
     kb.row(types.InlineKeyboardButton(text="🧠 Знания (KG)", callback_data="p_kg"))
     kb.row(types.InlineKeyboardButton(text="🔧 Обслуживание", callback_data="palace_admin"))
     kb.row(types.InlineKeyboardButton(text="📖 Инструкции", callback_data="palace_instructions"))

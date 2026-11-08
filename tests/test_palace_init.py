@@ -162,7 +162,7 @@ def test_cmd_palace(monkeypatch):
     assert "MemPalace — управление" in text
     assert pm == "Markdown"
     assert _kb_data(markup) == [
-        "palace_status", "p_nav", "p_kg", "palace_admin",
+        "palace_status", "p_nav", "p_unfiled", "p_kg", "palace_admin",
         "palace_instructions", "palace_main_menu",
     ]
 

@@ -340,6 +340,7 @@ async def cb_nav_menu(cb: types.CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="🕸️ Крылья", callback_data="p_wing"))
     kb.row(types.InlineKeyboardButton(text="🪪 Комнаты", callback_data="p_room"))
+    kb.row(types.InlineKeyboardButton(text="📝 Неразобранные заметки", callback_data="p_unfiled"))
     kb.row(types.InlineKeyboardButton(text="🏛️ Таксономия", callback_data="p_tax"))
     kb.row(types.InlineKeyboardButton(text="📊 Граф связей", callback_data="p_grf"))
     kb.row(types.InlineKeyboardButton(text="🔀 Траверс", callback_data="p_trv"))
@@ -488,6 +489,10 @@ async def cb_rooms_select(cb: types.CallbackQuery):
     kb.adjust(2)
     if truncated:
         lines.append(f"\n... и ещё {len(rooms) - room_limit} комнат.")
+    if wing == "my_notes":
+        kb.row(types.InlineKeyboardButton(
+            text="📝 Неразобранные заметки (инбокс)", callback_data="p_unfiled",
+        ))
     kb.row(types.InlineKeyboardButton(text="🔎 Фильтр комнат", callback_data=f"p_rmsrch:{wing}"))
     kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_wing"))
     ok = await safe_edit_text(

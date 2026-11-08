@@ -195,7 +195,7 @@ def test_cb_nav_menu(monkeypatch):
     assert "Навигация" in text
     assert pm == "Markdown"
     assert _kb_data(markup) == [
-        "p_wing", "p_room", "p_tax", "p_grf", "p_trv", "p_tun",
+        "p_wing", "p_room", "p_unfiled", "p_tax", "p_grf", "p_trv", "p_tun",
         "palace_back", "palace_main_menu",
     ]
 
