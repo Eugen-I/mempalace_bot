@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import re
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 import time
 from typing import Any
@@ -173,7 +173,7 @@ def run_osascript(jxa_script: str, timeout: float = OSASCRIPT_TIMEOUT) -> str:
     """Выполняет JXA-скрипт через osascript и возвращает stdout."""
     try:
         proc = subprocess.run(
-            ["osascript", "-l", "JavaScript", "-e", jxa_script],
+            ["/usr/bin/osascript", "-l", "JavaScript", "-e", jxa_script],  # nosec B603
             capture_output=True,
             text=True,
             encoding="utf-8",
