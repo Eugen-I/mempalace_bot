@@ -240,23 +240,117 @@ def get_note_attachments(folder_name: str, note_name: str) -> list[dict]:
     return []
 
 
-def extract_pdf_text(pdf_path: str) -> str:
-    """Extract clean text from all pages of a PDF file using PyMuPDF (fitz)."""
+def extract_pdf_text(pdf_path: str, max_pages: int = 30) -> str:
+    """Extract text from PDF using PyMuPDF (fitz) with OCR fallback (Hybrid Option 3).
+
+    1. Attempts fast native text extraction via PyMuPDF (fitz).
+    2. If native text is absent or sparse (< 100 chars total, or pages have < 30 chars),
+       falls back to OCR using pdf2image + pytesseract (deu+rus+eng, psm 6).
+    """
     if not os.path.isfile(pdf_path):
         return ""
+
+    filename = os.path.basename(pdf_path)
+    pages_native: list[tuple[int, str]] = []
+    scanned_page_nums: list[int] = []
+
     try:
         import fitz
 
         doc = fitz.open(pdf_path)
-        pages_text = []
-        for i, page in enumerate(doc):
-            t = page.get_text().strip()
-            if t:
-                pages_text.append(f"--- Страница {i+1} ---\n{t}")
-        return "\n\n".join(pages_text)
+        total_pages = min(len(doc), max_pages)
+        for i in range(total_pages):
+            page_num = i + 1
+            text = doc[i].get_text().strip()
+            pages_native.append((page_num, text))
+            if len(text) < 30:
+                scanned_page_nums.append(page_num)
+        doc.close()
     except Exception as e:
-        print(f"  ⚠️ Ошибка чтения PDF ({os.path.basename(pdf_path)}): {e}")
-        return ""
+        print(f"  ⚠️ Ошибка PyMuPDF ({filename}): {e}")
+        total_pages = 0
+
+    total_native_len = sum(len(txt) for _, txt in pages_native)
+
+    # If all pages have sufficient native text (no scans and total len >= 100)
+    if not scanned_page_nums and total_native_len >= 100:
+        parts = [f"--- Страница {p} ---\n{txt}" for p, txt in pages_native if txt]
+        return "\n\n".join(parts)
+
+    # Hybrid Fallback: Attempt OCR for empty/sparse pages or full document if native is low
+    try:
+        from pdf2image import convert_from_path
+        import pytesseract
+
+        ocr_map: dict[int, str] = {}
+        all_scanned = total_native_len < 100
+
+        if all_scanned:
+            limit = total_pages if total_pages > 0 else max_pages
+            print(f"  🔍 Запуск OCR для сканированного PDF: {filename} (до {limit} стр.)...")
+            images = convert_from_path(
+                pdf_path,
+                dpi=200,
+                first_page=1,
+                last_page=limit,
+                thread_count=2,
+            )
+            for idx, img in enumerate(images, 1):
+                txt = pytesseract.image_to_string(
+                    img,
+                    lang="deu+rus+eng",
+                    config="--psm 6",
+                ).strip()
+                if txt:
+                    ocr_map[idx] = txt
+        else:
+            print(
+                f"  🔍 Запуск выборочного OCR ({len(scanned_page_nums)} стр.) "
+                f"для: {filename}..."
+            )
+            for p_num in scanned_page_nums:
+                try:
+                    images = convert_from_path(
+                        pdf_path,
+                        dpi=200,
+                        first_page=p_num,
+                        last_page=p_num,
+                        thread_count=2,
+                    )
+                    if images:
+                        txt = pytesseract.image_to_string(
+                            images[0],
+                            lang="deu+rus+eng",
+                            config="--psm 6",
+                        ).strip()
+                        if txt:
+                            ocr_map[p_num] = txt
+                except Exception as page_err:
+                    print(f"  ⚠️ Ошибка OCR на стр. {p_num}: {page_err}")
+
+        merged_pages: list[str] = []
+        if pages_native:
+            for p_num, native_txt in pages_native:
+                ocr_txt = ocr_map.get(p_num, "")
+                if ocr_txt and (len(ocr_txt) > len(native_txt) or len(native_txt) < 30):
+                    merged_pages.append(f"--- Страница {p_num} (OCR) ---\n{ocr_txt}")
+                elif native_txt:
+                    merged_pages.append(f"--- Страница {p_num} ---\n{native_txt}")
+        else:
+            for p_num in sorted(ocr_map.keys()):
+                merged_pages.append(f"--- Страница {p_num} (OCR) ---\n{ocr_map[p_num]}")
+
+        if merged_pages:
+            return "\n\n".join(merged_pages)
+
+    except Exception as ocr_err:
+        print(f"  ⚠️ OCR-распознавание недоступно для {filename}: {ocr_err}")
+
+    if pages_native:
+        parts = [f"--- Страница {p} ---\n{txt}" for p, txt in pages_native if txt]
+        return "\n\n".join(parts)
+
+    return ""
 
 
 # ── СТРУКТУРИРОВАННАЯ РАЗМЕТКА И AI-АНАЛИЗ ──────────────────────────────────
