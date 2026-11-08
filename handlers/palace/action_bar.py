@@ -666,9 +666,27 @@ async def cb_ab_sv_notes(cb: types.CallbackQuery):
         path = os.path.join(NOTES_DIR, fn)
         with open(path, "w", encoding="utf-8") as f:
             f.write(answer.text)
+
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="📁 Разложить в Дворец", callback_data=f"p_unf_file_name:{fn}",
+            ),
+        )
+        kb.row(
+            types.InlineKeyboardButton(
+                text="📖 Открыть заметку", callback_data=f"p_unf_open_name:{fn}",
+            ),
+            types.InlineKeyboardButton(
+                text="◀️ Назад к ответу", callback_data=f"ab_back:{sid}",
+            ),
+        )
+
         await cb.message.edit_text(
-            f"✅ Сохранено в <code>my_notes/{fn}</code>",
+            f"✅ Сохранено в <code>my_notes/{fn}</code>\n\n"
+            "Вы можете разложить её по комнатам Дворца прямо сейчас:",
             parse_mode="HTML",
+            reply_markup=kb.as_markup(),
         )
     except Exception as e:
         await cb.message.edit_text(format_user_error(e, "action_bar_save"))

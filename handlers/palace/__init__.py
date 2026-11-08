@@ -16,7 +16,7 @@ from services.conversation_fsm import ConversationState
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
-from . import action_bar, admin, hints, kg, navigation, save, tunnels  # noqa: F401
+from . import action_bar, admin, hints, kg, navigation, save, tunnels, unfiled_notes  # noqa: F401
 from ._utils import (  # noqa: F401
     safe_answer_voice,
     safe_delete,
@@ -43,6 +43,7 @@ from .shared import (
 )
 
 router.include_router(action_bar.router)
+router.include_router(unfiled_notes.router)
 
 logger = logging.getLogger("PalaceInit")
 
@@ -419,6 +420,39 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             if state:
                 state["room"] = room
             await _save_confirm(msg.edit_text, uid)
+            return True
+
+        elif action == "unfiled_new_wing":
+            from .unfiled_notes import _unfiled_state, show_unfiled_rooms
+            try:
+                wing = sanitize_wing_name(text.strip().lower().replace(" ", "_"))
+            except ValueError:
+                await msg.edit_text("❌ Некорректное имя крыла. Только латиница, цифры, _ и -")
+                return True
+            st = _unfiled_state.get(uid)
+            if st:
+                st["wing"] = wing
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-m", "mempalace", "init", wing,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=DATA_DIR,
+                )
+                await proc.communicate()
+            except Exception as e:
+                logger.error("Не удалось инициализировать крыло %s: %s", wing, e)
+            await show_unfiled_rooms(msg.edit_text, uid)
+            return True
+
+        elif action == "unfiled_new_room":
+            from .unfiled_notes import _unfiled_state, show_unfiled_confirm
+            room = text.strip().replace(" ", "_")
+            st = _unfiled_state.get(uid)
+            if st:
+                st["room"] = room
+            await show_unfiled_confirm(msg.edit_text, uid)
             return True
 
         elif action == "pn_new_wing":

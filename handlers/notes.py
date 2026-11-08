@@ -123,6 +123,12 @@ async def cmd_read_archive(message: types.Message):
         types.InlineKeyboardButton(text="3 шт", callback_data=f"read|{prefix}|3"),
         types.InlineKeyboardButton(text="5 шт", callback_data=f"read|{prefix}|5"),
     )
+    if prefix == "#!":
+        kb.row(
+            types.InlineKeyboardButton(
+                text="📝 Неразобранные (список в боте)", callback_data="p_unfiled",
+            ),
+        )
     await message.answer(
         f"📂 Архив: <code>{os.path.basename(target)}</code>",
         reply_markup=kb.as_markup(),

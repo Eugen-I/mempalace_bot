@@ -1091,6 +1091,7 @@ async def cb_read_drawer(cb: types.CallbackQuery):
         source_file = drawer.get("source_file", "")
         text = ""
         meta = {}
+        loaded_file_path = ""
 
         if source_file:
             candidates = [
@@ -1104,6 +1105,7 @@ async def cb_read_drawer(cb: types.CallbackQuery):
                 try:
                     if p.is_file():
                         text = p.read_text(encoding="utf-8", errors="replace")
+                        loaded_file_path = str(p)
                         logger.info(
                             "Loaded note text from disk: %s (%d chars)", p, len(text)
                         )
@@ -1153,6 +1155,8 @@ async def cb_read_drawer(cb: types.CallbackQuery):
             "drawer_id": drawer_id, "source": "", "full_content": text,
             "offset": 0, "idx": idx,
             "source_id": source_id, "source_type": source_type, "source_title": source_title,
+            "source_file": source_file or str(meta.get("source_file") or ""),
+            "file_path": loaded_file_path,
         }
         _user_context[uid] = {"wing": wing, "room": room, "drawer": drawer_name}
 
@@ -1268,7 +1272,7 @@ async def cb_drawer_delete(cb: types.CallbackQuery):
 @router.callback_query(F.data.startswith("p_drdel_c:"))
 @allowed_callback
 async def cb_drawer_delete_confirm(cb: types.CallbackQuery):
-    """Выполняет удаление записи через MCP."""
+    """Выполняет каскадное удаление записи через MCP и очистку диска/БД."""
     await cb.answer()
     if not cb.data:
         return
@@ -1278,26 +1282,63 @@ async def cb_drawer_delete_confirm(cb: types.CallbackQuery):
         if not await safe_edit_text(cb.message, "❌ Сессия истекла. Откройте запись заново."):
             await cb.message.answer("❌ Сессия истекла. Откройте запись заново.")
         return
+
     mcp = get_mcp()
+    did = st["drawer_id"]
+    source_file = st.get("source_file", "")
+    file_path = st.get("file_path", "")
+    source_id = st.get("source_id", "")
+    title = st.get("drawer", "")
+
     try:
-        raw = await mcp.call_tool("mempalace_delete_drawer", {"drawer_id": st["drawer_id"]})
+        raw = await mcp.call_tool("mempalace_delete_drawer", {"drawer_id": did})
         parsed = json.loads(raw) if raw else {}
         if not parsed.get("success"):
             err = parsed.get("error", "неизвестная ошибка")
-            if not await safe_edit_text(cb.message, f"❌ Не удалось удалить запись: {err}"):
-                await cb.message.answer(f"❌ Не удалось удалить запись: {err}")
-            return
+            file_candidates = [file_path, source_file]
+            has_disk_file = any(
+                f and (
+                    (os.path.isabs(f) and os.path.exists(f))
+                    or (Path(NOTES_DIR) / os.path.basename(f)).is_file()
+                )
+                for f in file_candidates if f
+            )
+            if "drawer not found" in err.lower() and has_disk_file:
+                logger.info(
+                    "Chroma не содержит ящика %s, но найден файл на диске. Очищаем.", did,
+                )
+            else:
+                if not await safe_edit_text(cb.message, f"❌ Не удалось удалить запись: {err}"):
+                    await cb.message.answer(f"❌ Не удалось удалить запись: {err}")
+                return
     except Exception as e:
         if not await safe_edit_text(cb.message, f"❌ Не удалось удалить запись: {e}"):
             await cb.message.answer(f"❌ Не удалось удалить запись: {e}")
         return
-    did = st["drawer_id"]
+
+    from services.cascade_delete import (
+        cleanup_chroma_collections,
+        delete_from_disk,
+        delete_from_notes_index,
+        delete_from_sqlite_embeddings,
+    )
+
+    delete_from_disk(file_path=file_path, source_file=source_file)
+    bname = os.path.basename(source_file or file_path) if (source_file or file_path) else None
+    delete_from_sqlite_embeddings(source_id=source_id, name=title, file_basename=bname)
+    delete_from_notes_index(source_id=source_id, name=title, file_basename=bname)
+    cleanup_chroma_collections(drawer_id=did, source_file=source_file or file_path)
+
+    # Очищаем кэши чтения и списка комнат для пользователя
     _read_state.pop(uid, None)
+    _drawer_list_state.pop(uid, None)
+
     try:
         from services.notes_sync import delete_backlink
         delete_backlink(did)
     except Exception:
         pass
+
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="◀️ К списку записей", callback_data="p_rdb"))
     if not await safe_edit_text(
