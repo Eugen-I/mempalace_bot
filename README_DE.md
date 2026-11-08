@@ -254,12 +254,37 @@ Der Button **„📝 Apple Notes"** im Hauptmenü startet den Notizen-Modus: Sie
 
 ### 📄 PDF
 
-- Auto-Extraktion (PyMuPDF + Tesseract OCR für Scans)
+- **Hybride Texterkennung (Hybrid Option 3):**
+  1. *Schneller nativer Durchlauf* via PyMuPDF (`fitz`) zur Extraktion bestehender Textebenen.
+  2. *Automatisches OCR-Fallback* via `pdf2image` + `pytesseract` mit Sprachpaket (`deu+rus+eng`), falls Seiten gescannt sind oder reine Bilder darstellen (unter 30 Zeichen).
+  3. Gezielter Scan: Nur bildbasierte Seiten werden via Tesseract erkannt, ohne den Gesamtablauf zu verlangsamen.
 - 9 Analysetypen (Medizin, Psychologie, Literatur, Programmierung, Sport u.a.)
 - Zwei PDFs vergleichen (`/compare`)
 - `/pdfs` — PDF-Archiv mit erneuter Analysemöglichkeit
 - Auto-Chunking (>25K Zeichen)
 - Vorlesen der Ergebnisse
+
+### 🏃 Garmin Coach & Analytik
+
+- **Import offizieller Exporte:** Wellness FIT ZIP, vollständiger Datenexport, Activities CSV, Einzelaktivitäten.
+- **Lokale Analytik ohne Cloud:** Schlaf, HRV, Ruhepuls, Stress, Gewicht, Schritte und Aktivitäten.
+- **Trainingspläne für 1 bis 6 Tage pro Woche:**
+  - Flexible Verfügbarkeit im Profil wählbar (`1, 2, 3, 4, 5, 6` Tage pro Woche).
+  - Vielfalt an Plänen und Splits:
+    - `Ganzkörper (Fullbody)` — Ausgewogenes Training des gesamten Körpers (1–3 Tage);
+    - `Oberkörper / Unterkörper (Upper/Lower)` — Ideal für 2, 4 oder 6 Einheiten;
+    - `Push / Pull / Legs (PPL)` — Klassischer 3- oder 6-Tage-Split (Drücken / Ziehen / Beine);
+    - `Hybrid` — Doppeltrainings an einem Tag (morgens Z2-Fahrrad-Ausdauer + abends Krafttraining im Gym);
+    - `Funktional (Functional)` — Kraftausdauer, Core, Balance und Mobilität.
+- **Verständliche Metriken & Glossar-Fußnoten:**
+  - Jede Wochenübersicht enthält klare Begriffserläuterungen:
+    - **ACWR** (Acute:Chronic Workload Ratio) — Belastungsbalance zwischen akuter (7 Tage) und chronischer (28 Tage) Trainingslast;
+    - **HRV** (Heart Rate Variability) — Herzfrequenzvariabilität im Verhältnis zur individuellen Basisnorm;
+    - **Z2** — Aerobe Pulszone 2 für Grundlagenausdauer und aktive Erholung;
+    - **RPE** — Skala für subjektiv empfundene Anstrengung (1–10);
+    - **Basisnorm (Baseline)** — Individueller Normbereich über mindestens 28 Tage.
+- Lokaler KI-Report (via Ollama) mit Grafiken und separatem Arztbogen (Doctor Sheet).
+- Details: [docs/GARMIN.md](docs/GARMIN.md)
 
 ### 💬 Chats
 
@@ -341,9 +366,105 @@ Vollwertiger Terminal-Client mit Syntax-Highlighting, Verlauf und allen Palast-/
 
 ---
 
-## 📂 `_scripts` — Fertige Skripte
+## 🏰 MemPalace Master Studio — Zentrale Steuerkonsole (`PalaceMaster.command`)
 
-Alle Skripte funktionieren per Doppelklick (`.command`).
+Im Ordner `_scripts` (und im Skript-Hauptverzeichnis) befindet sich **`PalaceMaster.command`** — die zentrale Steuerkonsole für den gesamten Wissenspalast, Notizen, KI-Modelle und den Telegram-Bot in einem einzigen interaktiven Terminal-Fenster.
+
+Start per Doppelklick auf `PalaceMaster.command` im macOS Finder. Die virtuelle Python-Umgebung sowie Pfade zu `mempalace` und `mempalace_bot` werden automatisch erkannt.
+
+### 🎛️ Funktionen der Master Studio Konsole:
+
+```text
+=======================================================
+  🏰  MEMPALACE MASTER STUDIO — Kontrollzentrum
+=======================================================
+  [1]  📊 Status & Speicherbaum
+  [2]  📥 Intelligenter Apple Notes Import
+  [3]  ⚡ Schnelle Synchronisierung & Mining
+  [4]  🧠 KI-Reorganisation (Räume)
+  [5]  🔍 Interaktive Palast-Suche
+  [6]  🕸️  Wissensgraph (Tunnel, Entitäten)
+  [7]  🎛️  KI-Modelle (Ollama & Cloud)
+  [8]  💬 Chat-Archivierung & Gedanken
+  [9]  🧹 Bereinigung, Komprimierung & Optimierung
+  [10] 🤖 Telegram-Bot Verwaltung
+  [0]  🚪 Beenden
+```
+
+1. **📊 Status & Speicherbaum:** Speicherplatz- und Dateianalyse, hierarchischer Baum von Flügeln und Räumen, direktes Öffnen der Verzeichnisse im Finder.
+2. **📥 Intelligenter Apple Notes Import (`import_notes.py`):**
+   - `[1] Alle Notizen` — Import aller Notizen auf einmal.
+   - `[2] Alle Notizen AUßER...` — Gezielter Ausschluss ganzer Ordner oder einzelner Notizen per Nummer.
+   - `[3] Konkreter Ordner` — Import nur des gewählten Ordners.
+   - Automatischer Ausschluss von „Zuletzt gelöscht" (`Recently Deleted`).
+   - **Hybrid Option 3 für PDF:** PyMuPDF (`fitz`) für sekundenschnelle Textextraktion mit automatischem Tesseract-OCR-Fallback (`deu+rus+eng`) für gescannte Seiten und Fotos.
+3. **⚡ Schnelle Synchronisierung & Mining:** Startet `mempalace mine` zur Vektorisierung in ChromaDB und Aktualisierung des semantischen Suchindex.
+4. **🧠 KI-Reorganisation:** Thematische Neusortierung und Einsortierung loser Notizen in passende Räume per KI-Analyse.
+5. **🔍 Interaktive Suche:** Semantische und exakte Stichwortsuche direkt im Terminal.
+6. **🕸️ Wissensgraph:** Tunnel zwischen Flügeln, Entitäten und Faktentripel analysieren.
+7. **🎛️ KI-Modelle (Ollama & Cloud):**
+   - Schneller Modellwechsel ohne manuelle Konfigurationsänderung.
+   - Unterstützung lokaler Ollama-Modelle sowie cloudbasierter Modelle (**Gemini 2.5 Flash / Gemini 3 Flash Preview**).
+   - Automatischer Download (`ollama pull`) nur für lokale Modelle.
+8. **💬 Chat-Archivierung & Gedanken:** Speichern von Dialogen aus dem Telegram-Bot und Extrahieren wichtiger Erkenntnisse in den Wissenspalast.
+9. **🧹 Bereinigung, Komprimierung & Optimierung:**
+   - `Vacuum` für SQLite-Datenbanken und Freigabe von Speicherplatz.
+   - ChromaDB-Defragmentierung.
+   - Bereinigung temporärer Dateien, Logs und Caches.
+   - Selektives Bereinigen von Notizen in `my_notes`.
+10. **🤖 Telegram-Bot Verwaltung:**
+    - Live-Statusanzeige (LÄUFT / GESTOPPT), PID und Laufzeit.
+    - Hintergrundstart (`nohup`), Stopp (`kill`) und Live-Log-Ansicht.
+    - Sicherer Abbruch via `Ctrl+C` (KeyboardInterrupt) ohne Traceback-Absturz.
+
+---
+
+## 🧹 Skripte-Audit: Welche `.command`-Dateien können gelöscht werden?
+
+Da **`PalaceMaster.command`** nun alle wichtigen Aufgaben zentral bündelt, sind viele Einzelskripte im Ordner `_scripts` redundant geworden.
+
+### 🗑️ Diese Skripte können sicher gelöscht oder in einen Archivordner (`_archive/`) verschoben werden:
+
+| Altes `.command`-Skript | Vollständig ersetzt durch in `PalaceMaster.command` |
+|---|---|
+| `check_memory.command` | Menüpunkt `[1] 📊 Status & Speicherbaum` |
+| `go_to_memory.command` | Menüpunkt `[1] 📊 Status & Speicherbaum` (im Finder öffnen) |
+| `import_notes.command` / `import_notes .command` | Menüpunkt `[2] 📥 Intelligenter Apple Notes Import` |
+| `update_memory.command` | Menüpunkt `[3] ⚡ Schnelle Synchronisierung & Mining` |
+| `update_memory_wingMode.command` | Menüpunkt `[3] ⚡ Schnelle Synchronisierung & Mining` |
+| `update_memory_insights_research.command` | Menüpunkt `[3] ⚡ Schnelle Synchronisierung & Mining` |
+| `classify_and_mine.command` | Menüpunkt `[3] ⚡ Schnelle Synchronisierung & Mining` |
+| `Run_Extraction.command` | Menüpunkt `[3] ⚡ Schnelle Synchronisierung & Mining` |
+| `find_memory.command` | Menüpunkt `[5] 🔍 Interaktive Palast-Suche` |
+| `Ask_Memory.command` | Menüpunkt `[5] 🔍 Interaktive Palast-Suche` |
+| `Switch_AI.command` | Menüpunkt `[7] 🎛️ KI-Modelle` |
+| `Manage_Wechsel_Models.command` | Menüpunkt `[7] 🎛️ KI-Modelle` |
+| `Ollama_Start.command` | Menüpunkt `[7] 🎛️ KI-Modelle` / Autostart |
+| `Archive_Chat.command` | Menüpunkt `[8] 💬 Chat-Archivierung` |
+| `Daily_Note.command` | Menüpunkt `[8] 💬 Chat-Archivierung & Gedanken` |
+| `clear_memory.command` | Menüpunkt `[9] 🧹 Bereinigung & Optimierung` |
+| `Ollama_Cleaner.command` | Menüpunkt `[9] 🧹 Bereinigung & Optimierung` |
+| `Backup_Restore.command` | Menüpunkt `[9] 🧹 Bereinigung & Optimierung` |
+| `RestoreConfig.command` | Menüpunkt `[9] 🧹 Bereinigung & Optimierung` |
+| `PalaceManager_TelegrammBot.command` | Menüpunkt `[10] 🤖 Telegram-Bot Verwaltung` |
+| `start_bot.command` | Menüpunkt `[10] 🤖 Telegram-Bot Verwaltung` |
+| `KillPalaceBot.command` | Menüpunkt `[10] 🤖 Telegram-Bot Verwaltung` |
+
+### ⭐ Was unbedingt behalten werden sollte:
+1. **`_scripts/PalaceMaster.command`** — Ihre primäre Gesamtlösung.
+2. **`_scripts/palace_master.py`** — Das Kernprogramm der Steuerkonsole.
+3. **`_scripts/import_notes.py`** — Das Import- und OCR-Modul.
+4. Eigenständige Werkzeuge außerhalb des Palastes (im Ordner `Скрипты для повседневных задачь/`):
+   - `СжатьPDF.command` — PDF-Komprimierung;
+   - `find_photos_2026.command` — Mediensuche;
+   - `tcx2md.command` — Sportstrecken-Konverter;
+   - `run_telegram_channel_export.command` — Telegram-Kanal-Export.
+
+---
+
+## 📂 `_scripts` — Nachschlagewerk älterer Einzelskripte
+
+Für Anwender, die einzelne Skripte weiterhin direkt ausführen möchten:
 
 ### 🚀 Start & Verwaltung
 
