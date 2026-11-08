@@ -7,6 +7,9 @@ import re
 
 ALLOWED_TAGS = {"b", "i", "code", "pre", "u", "s", "a", "blockquote", "tg-spoiler"}
 
+# Telegram API rejects <!-- ... --> comments with "Unsupported start tag"
+_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
+
 # Единственное определение на модуль: используется и sanitizer'ом, и split_message.
 _TAG_RE = re.compile(r"</?([a-zA-Z][a-zA-Z0-9-]*)(?:\s+([^>]*))?>")
 _HREF_RE = re.compile(
@@ -47,6 +50,7 @@ def _escape_outside_allowed_tags(text: str) -> str:
     if not text:
         return ""
 
+    text = _COMMENT_RE.sub("", text)
     result: list[str] = []
     open_tags: list[str] = []
     last_end = 0
@@ -121,6 +125,7 @@ def safe_html_format(text: str | None) -> str:
     if not text:
         return ""
 
+    text = _COMMENT_RE.sub("", text)
     text, code_parts = _stash_code(text)
     text = re.sub(r"^#{1,6}\s+(.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)

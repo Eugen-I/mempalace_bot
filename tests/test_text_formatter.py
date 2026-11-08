@@ -352,3 +352,12 @@ def test_split_full_pairs_stay_balanced():
     assert len(parts) > 1
     for p in parts:
         assert p.count("<b>") == p.count("</b>")
+
+
+def test_safe_html_format_strips_html_comments():
+    """HTML-комментарии <!-- ... --> удаляются, так как запрещены в Telegram."""
+    text = "Привет<b>мир</b><!-- скрытый комментарий -->!"
+    out = safe_html_format(text)
+    assert "<!--" not in out
+    assert "скрытый комментарий" not in out
+    assert out == "Привет<b>мир</b>!"

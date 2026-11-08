@@ -103,3 +103,9 @@ _Active level: concise_
 - Do not read files matching `.claudeignore` patterns unless explicitly asked.
 
 <!-- cloude-code-toolbox:token-optimization-end -->
+
+### Telegram HTML Markup Constraints
+- NEVER output HTML comments `<!-- ... -->` in Telegram messages or code templates. Telegram Bot API rejects them with `Bad Request: can't parse entities: Unsupported start tag "!--"`.
+- Allowed HTML tags only: `<b>`, `<i>`, `<u>`, `<s>`, `<a>`, `<code>`, `<pre>`, `<blockquote>`, `<tg-spoiler>`.
+- Any custom HTML tags (`<div>`, `<p>`, `<span>`, `<br>`, `<!--`) will break Telegram message sending.
+- Dynamic data inserted into Telegram templates MUST be escaped via `safe_html_format()` or `html.escape()`.
