@@ -9,10 +9,12 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from services.ai_engine import get_ai_response_async, get_current_ai
 from services.copilot_session import CopilotSession, get_copilot_manager
+from services.json_parser import extract_json_from_text, extract_partial_json_array
 from services.text_formatter import safe_html_format
 
 logger = logging.getLogger("CopilotEngine")
@@ -633,3 +635,295 @@ def format_tech_card(session: CopilotSession, advice: str = "") -> str:
         "или напишите условия съемки текстом/голосом:</i>"
     )
     return "\n".join(lines)
+
+
+# ─── Шаг 11: Контрастная дивергенция вариантов и интерактивный выбор ───
+
+COPILOT_VARIANTS_SYSTEM = (
+    "Ты — главный куратор визуального искусства и арт-директор фотопроектов.\n"
+    "Твоя задача — сгенерировать ровно 3 диаметрально противоположных, контрастных "
+    "художественных концепт-проекта на основе темы, манифеста и сетапа автора.\n\n"
+    "ПРАВИЛО КОНТРАСТА (3 разных вектора):\n"
+    "1. Вектор «Интимный / Камерный»: психологический портрет, деталь, отражение в стекле, "
+    "закрученное боке, мягкое свечение.\n"
+    "2. Вектор «Монументальный / Геометрический»: пространство города/интерьера, жесткий свет, "
+    "силуэт человека в масштабе среды, графичные тени-лезвия.\n"
+    "3. Вектор «Экспериментальный / Оптический»: оптическое расщепление, призма, "
+    "мультиэкспозиция, микро-ICM лессировка, сновидческая деконструкция формы.\n\n"
+    "Верни ответ СТРОГО в виде JSON-массива из 3 объектов:\n"
+    "[\n"
+    "  {\n"
+    '    "id": 1,\n'
+    '    "title": "Название проекта",\n'
+    '    "vector": "Интимный / Камерный",\n'
+    '    "visual_hook": "Точное описание главного визуального кадра (образ, герой, деталь)",\n'
+    '    "lighting_scene": "Световая схема и атмосфера кадра",\n'
+    '    "camera_setup": "Камера, выдержка, диафрагма, ISO, пленочный профиль",\n'
+    '    "shooting_action": "Физическое действие фотографа (микро-тремор, призма, проводка)",\n'
+    '    "gear_summary": "Связка техники (камера + объектив + фильтр)",\n'
+    '    "shooting_steps": ["Шаг 1...", "Шаг 2...", "Шаг 3..."]\n'
+    "  }\n"
+    "]"
+)
+
+
+def _build_fallback_contrast_variants(session: CopilotSession) -> list[dict[str, Any]]:
+    """Надежные кураторские шаблоны проектов при недоступности внешних моделей."""
+    tech = session.tech_preferences or {}
+    cam = tech.get("camera", "Fujifilm X-T4")
+    lens = tech.get("lens", "Гелиос 44-2 58mm f/2")
+    sim = tech.get("film_sim", "Classic Chrome")
+    shutter = tech.get("shutter_speed", '1/6"')
+    aperture = tech.get("aperture", "f/2")
+
+    return [
+        {
+            "id": 1,
+            "title": f"«Зеркальная тень: {session.topic}»",
+            "vector": "Интимный / Камерный",
+            "visual_hook": (
+                "Крупный план человека в профиль на фоне мокрого оконного стекла в полумраке. "
+                "В отражении проступает второй силуэт, олицетворяющий скрытую суть."
+            ),
+            "lighting_scene": (
+                "Мягкий контровой свет фонаря, бархатное гало хайлайтов от Black Pro-Mist 1/4."
+            ),
+            "camera_setup": f"{cam} • {lens} • {aperture} • {shutter} • ISO 400 • {sim}",
+            "shooting_action": (
+                "Съемка с рук с легким микро-тремором на выдержке 1/6s "
+                "для мягкого размытия фонового боке."
+            ),
+            "gear_summary": f"{cam} + {lens} + Black Pro-Mist 1/4",
+            "shooting_steps": [
+                "Расположите героя у зеркала или витрины с контровым фонарным светом",
+                f"Выставьте выдержку {shutter} и открытую диафрагму {aperture}",
+                "Сделайте серию кадров с микро-смещением камеры между дублями",
+            ],
+        },
+        {
+            "id": 2,
+            "title": f"«Монумент пустоты: {session.topic}»",
+            "vector": "Монументальный / Геометрический",
+            "visual_hook": (
+                "Одинокая фигура в глубине холодного бетонного вестибюля. "
+                "Резкий луч света рассекает пол по диагонали, отбрасывая острую тень-лезвие."
+            ),
+            "lighting_scene": (
+                "Жесткий направленный боковой луч света, глубокие провалы теней (кьяроскуро)."
+            ),
+            "camera_setup": f"{cam} • Fujinon XF 18-55mm • f/4 • 1/15\" • ISO 800 • Monochrome",
+            "shooting_action": (
+                "Съемка со штатива с выверенным геометрическим горизонтом "
+                "и фиксацией резкости по кромке тени."
+            ),
+            "gear_summary": f"{cam} + Fujinon XF 18-55mm + Штатив",
+            "shooting_steps": [
+                "Найдите локацию с ритмичными архитектурными колоннами или арками",
+                "Зафиксируйте камеру на штативе на уровне пояса",
+                "Дождитесь прохождения силуэта через световой клин и сделайте кадр",
+            ],
+        },
+        {
+            "id": 3,
+            "title": f"«Оптический разлом: {session.topic}»",
+            "vector": "Экспериментальный / Оптический",
+            "visual_hook": (
+                "Лицо и руки героя двоятся и преломляются сквозь грани стеклянной призмы. "
+                "Цветовые спектры и микро-ICM превращают фон в вибрирующую живописную абстракцию."
+            ),
+            "lighting_scene": "Контровой свет витрин, цветные рефлексы в гранях призмы.",
+            "camera_setup": f"{cam} • {lens} • {aperture} • {shutter} • ISO 320 • Velvia",
+            "shooting_action": (
+                "Удержание призмы вплотную к передней линзе левой рукой "
+                "с плавным вращением при нажатии на спуск."
+            ),
+            "gear_summary": f"{cam} + {lens} + Хрустальная призма",
+            "shooting_steps": [
+                "Поднесите треугольную призму ребром к краю передней линзы",
+                "Поймайте преломленный блик контрового источника света",
+                "Включите режим мультиэкспозиции (2 кадра) для наложения спектров",
+            ],
+        },
+    ]
+
+
+async def generate_contrast_variants(session: CopilotSession) -> list[dict[str, Any]]:
+    """Генерирует 2–3 контрастных проектных вектора под тему, манифест и сетап автора."""
+    tech = session.tech_preferences or {}
+    styles_str = (
+        ", ".join(session.selected_styles) if session.selected_styles else "Свободный синтез"
+    )
+
+    prompt = (
+        f"Тема проекта: «{session.topic}».\n"
+        f"Выбранные стили: {styles_str}.\n"
+        f"Концептуальное резюме:\n{session.summary}\n"
+        f"Манифест:\n{session.manifesto}\n"
+        f"Съемочный сетап X-T4:\n"
+        f"- Камера: {tech.get('camera')}\n"
+        f"- Объектив: {tech.get('lens')}\n"
+        f"- Метод: {tech.get('support')}\n"
+        f"- Параметры: {tech.get('shutter_speed')}, {tech.get('aperture')}, "
+        f"{tech.get('film_sim')}\n"
+        f"- Свет: {tech.get('lighting')}\n"
+        f"- Оптика/Фильтр: {tech.get('filter_accessory')}\n"
+        f"- Почерк автора: {tech.get('handwriting_notes')}\n\n"
+        "Сгенерируй ровно 3 контрастных проекта (Интимный, Монументальный, Экспериментальный) "
+        "в формате JSON-массива."
+    )
+
+    messages = [
+        {"role": "system", "content": COPILOT_VARIANTS_SYSTEM},
+        {"role": "user", "content": prompt},
+    ]
+
+    engine_name, model = get_current_ai()
+    sampling = {"temperature": 0.8, "max_tokens": 1200}
+
+    projects: list[dict[str, Any]] = []
+
+    try:
+        raw = await get_ai_response_async(engine_name, model, messages, sampling=sampling)
+        if raw.startswith("❌") and engine_name != "qwen":
+            engine_name, model = "qwen", "qwen2.5:7b"
+            raw = await get_ai_response_async(engine_name, model, messages, sampling=sampling)
+
+        parsed = extract_json_from_text(raw)
+        if isinstance(parsed, list) and len(parsed) >= 2:
+            projects = parsed
+        elif (
+            isinstance(parsed, dict)
+            and "projects" in parsed
+            and isinstance(parsed["projects"], list)
+        ):
+            projects = parsed["projects"]
+        else:
+            partial = extract_partial_json_array(
+                raw, array_keys=["projects", "variants", "items"],
+            )
+            if partial and len(partial) >= 2:
+                projects = partial
+    except Exception as exc:
+        logger.error("[COPILOT] generate variants failed: %s", exc)
+
+    if not projects or len(projects) < 2:
+        projects = _build_fallback_contrast_variants(session)
+
+    normalized: list[dict[str, Any]] = []
+    default_vectors = [
+        "Интимный / Камерный",
+        "Монументальный / Средовой",
+        "Экспериментальный / Оптический",
+    ]
+    for i, p in enumerate(projects[:3]):
+        if isinstance(p, dict):
+            p["id"] = i + 1
+            if "title" not in p:
+                p["title"] = f"Проект {i + 1}"
+            if "vector" not in p:
+                p["vector"] = default_vectors[min(i, 2)]
+            normalized.append(p)
+
+    if not normalized:
+        normalized = _build_fallback_contrast_variants(session)
+
+    session.candidate_projects = normalized
+    session.stage = "variants"
+    get_copilot_manager().save_session(session)
+    return normalized
+
+
+def format_single_variant_card(session: CopilotSession, idx: int = 0) -> str:
+    """Форматирует карточку конкретного варианта проекта для Telegram."""
+    projects = session.candidate_projects or []
+    if not projects:
+        return "<i>Варианты проектов еще не сформированы.</i>"
+
+    idx = max(0, min(idx, len(projects) - 1))
+    p = projects[idx]
+    total = len(projects)
+
+    title = p.get("title", f"Проект {idx + 1}")
+    vector = p.get("vector", "Авторский вектор")
+    hook = p.get("visual_hook", "")
+    light = p.get("lighting_scene", "")
+    camera = p.get("camera_setup", "")
+    action = p.get("shooting_action", "")
+    gear = p.get("gear_summary", "")
+    steps = p.get("shooting_steps", [])
+
+    steps_fmt = "\n".join(f"  👉 <i>{safe_html_format(s)}</i>" for s in steps) if steps else ""
+
+    is_selected = (session.selected_project_idx == idx)
+    status_badge = " ⭐️ <b>[ГЛАВНЫЙ ВЫБОР]</b>" if is_selected else ""
+
+    return (
+        f"🎨 <b>Проект {idx + 1} из {total}: «{safe_html_format(title)}»</b>{status_badge}\n"
+        f"🎯 <b>Вектор:</b> <i>{safe_html_format(vector)}</i>\n\n"
+        f"🖼 <b>Визуальный образ кадра:</b>\n<blockquote>{safe_html_format(hook)}</blockquote>\n\n"
+        f"💡 <b>Свет и сцена:</b> {safe_html_format(light)}\n"
+        f"🎒 <b>Арсенал:</b> <code>{safe_html_format(gear)}</code>\n"
+        f"📷 <b>Параметры съёмки:</b> <code>{safe_html_format(camera)}</code>\n\n"
+        f"👐 <b>Физика действия:</b>\n{safe_html_format(action)}\n\n"
+        + (f"📋 <b>Шаги реализации:</b>\n{steps_fmt}\n\n" if steps_fmt else "")
+        + "<i>Переключайте проекты вкладками ниже или утвердите вариант кнопкой:</i>"
+    )
+
+
+async def refine_active_variant(session: CopilotSession, user_input: str, idx: int = 0) -> str:
+    """Точечно дорабатывает проект по замечанию или идее автора."""
+    projects = session.candidate_projects or []
+    if not projects:
+        await generate_contrast_variants(session)
+        projects = session.candidate_projects or []
+
+    idx = max(0, min(idx, len(projects) - 1))
+    p = projects[idx]
+
+    prompt = (
+        f"Тема: «{session.topic}».\n"
+        f"Проект: «{p.get('title')}» ({p.get('vector')}).\n"
+        f"Текущий главный кадр: {p.get('visual_hook')}\n"
+        f"Свет: {p.get('lighting_scene')}\n\n"
+        f"Пожелание автора по доработке: «{user_input}»\n\n"
+        "Обнови описание главного кадра (visual_hook) и света (lighting_scene). "
+        "Верни ответ кратко в формате:\n"
+        "КАДР: [обновленный образ]\n"
+        "СВЕТ: [обновленный свет]\n"
+        "СОВЕТ: [краткий комментарий арт-директора]"
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": "Ты — арт-директор. Доработай концепцию кадра по правке автора.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+
+    engine_name, model = get_current_ai()
+    sampling = {"temperature": 0.75, "max_tokens": 400}
+
+    try:
+        raw = await get_ai_response_async(engine_name, model, messages, sampling=sampling)
+        if raw.startswith("❌") and engine_name != "qwen":
+            engine_name, model = "qwen", "qwen2.5:7b"
+            raw = await get_ai_response_async(engine_name, model, messages, sampling=sampling)
+
+        hook_match = re.search(r"КАДР:\s*(.+?)(?=\nСВЕТ:|$)", raw, re.DOTALL | re.IGNORECASE)
+        light_match = re.search(r"СВЕТ:\s*(.+?)(?=\nСОВЕТ:|$)", raw, re.DOTALL | re.IGNORECASE)
+        advice_match = re.search(r"СОВЕТ:\s*(.+?)$", raw, re.DOTALL | re.IGNORECASE)
+
+        if hook_match:
+            p["visual_hook"] = hook_match.group(1).strip()
+        if light_match:
+            p["lighting_scene"] = light_match.group(1).strip()
+        advice = advice_match.group(1).strip() if advice_match else "Правки внесены в проект."
+    except Exception as exc:
+        logger.error("[COPILOT] refine variant failed: %s", exc)
+        p["visual_hook"] = f"{p.get('visual_hook')} (Учтено: {user_input[:80]})"
+        advice = f"Учтено пожелание автора: {user_input[:80]}"
+
+    session.candidate_projects[idx] = p
+    get_copilot_manager().save_session(session)
+    return advice

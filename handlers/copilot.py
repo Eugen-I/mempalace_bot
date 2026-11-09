@@ -21,12 +21,15 @@ from services.copilot_engine import (
     append_styles_to_summary,
     consult_tech_parameters,
     format_manifesto_card,
+    format_single_variant_card,
     format_styles_selection_card,
     format_tech_card,
+    generate_contrast_variants,
     generate_initial_manifesto,
     generate_socratic_reply,
     get_random_style_synergy,
     init_tech_preferences,
+    refine_active_variant,
     refine_manifesto,
     start_copilot_discussion,
     summarize_creative_dialogue,
@@ -222,6 +225,58 @@ def build_tech_kb(session: CopilotSession) -> types.InlineKeyboardMarkup:
         types.InlineKeyboardButton(
             text="↩️ К манифесту", callback_data="cp_to_manifesto",
         ),
+        types.InlineKeyboardButton(text="❌ Сбросить", callback_data="cp_reset"),
+    )
+
+    return builder.as_markup()
+
+
+def build_variants_kb(
+    session: CopilotSession, active_idx: int = 0,
+) -> types.InlineKeyboardMarkup:
+    """Клавиатура просмотра и выбора из 2-3 вариантов проектов."""
+    projects = session.candidate_projects or []
+    total = len(projects)
+    builder = InlineKeyboardBuilder()
+
+    # Ряд 1: Вкладки проектов
+    tabs = []
+    for i in range(total):
+        is_active = (i == active_idx)
+        is_picked = (session.selected_project_idx == i)
+        prefix = "⭐️ " if is_picked else ("🔹 " if is_active else "▫️ ")
+        tabs.append(types.InlineKeyboardButton(
+            text=f"{prefix}Вариант {i + 1}",
+            callback_data=f"cp_view_var:{i}",
+        ))
+    if tabs:
+        builder.row(*tabs)
+
+    # Ряд 2: Кнопка выбора активного варианта
+    is_already_picked = (session.selected_project_idx == active_idx)
+    pick_text = (
+        "✅ Этот проект уже выбран 🎯"
+        if is_already_picked
+        else f"⭐️ Выбрать Проект №{active_idx + 1} как главный 🎯"
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text=pick_text,
+            callback_data=f"cp_pick_var:{active_idx}",
+        ),
+    )
+
+    # Ряд 3: Реролл / генерация новых вариантов
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🔄 Сгенерировать другие 3 варианта",
+            callback_data="cp_reroll_var",
+        ),
+    )
+
+    # Ряд 4: Навигация
+    builder.row(
+        types.InlineKeyboardButton(text="↩️ К параметрам съемки", callback_data="cp_to_tech"),
         types.InlineKeyboardButton(text="❌ Сбросить", callback_data="cp_reset"),
     )
 
@@ -741,6 +796,154 @@ async def cb_copilot_confirm_tech(cb: types.CallbackQuery):
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
 
+# ─── Шаг 11: Обработчики вариантов проектов (дивергенция и выбор) ───
+
+@router.callback_query(F.data == "cp_to_variants", allowed_callback)
+async def cb_copilot_to_variants(cb: types.CallbackQuery):
+    """Генерация или переход к экрану 2-3 контрастных вариантов проектов."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    session.stage = "variants"
+    manager.save_session(session)
+
+    if not session.candidate_projects:
+        await cb.answer("Генерирую контрастные проекты...")
+        try:
+            await cb.message.edit_text(
+                "🎨 <i>Арт-директор формирует 3 контрастных вектора реализации…</i>",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.debug("[COPILOT] variants status edit failed: %s", e)
+        await generate_contrast_variants(session)
+
+    active_idx = (
+        session.selected_project_idx
+        if session.selected_project_idx is not None
+        else 0
+    )
+    text = format_single_variant_card(session, idx=active_idx)
+    kb = build_variants_kb(session, active_idx=active_idx)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] to variants edit failed: %s", e)
+
+
+@router.callback_query(F.data.startswith("cp_view_var:"), allowed_callback)
+async def cb_copilot_view_variant(cb: types.CallbackQuery):
+    """Переключение просмотра между вариантами проектов."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    idx_str = cb.data.split(":", 1)[1]
+    try:
+        idx = int(idx_str)
+    except ValueError:
+        idx = 0
+
+    text = format_single_variant_card(session, idx=idx)
+    kb = build_variants_kb(session, active_idx=idx)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] view variant edit failed: %s", e)
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("cp_pick_var:"), allowed_callback)
+async def cb_copilot_pick_variant(cb: types.CallbackQuery):
+    """Утверждение одного из проектов как главного (переход к финализации)."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    idx_str = cb.data.split(":", 1)[1]
+    try:
+        idx = int(idx_str)
+    except ValueError:
+        idx = 0
+
+    session.selected_project_idx = idx
+    session.stage = "completed"
+    manager.save_session(session)
+    await cb.answer(f"Проект №{idx + 1} выбран!")
+
+    projects = session.candidate_projects or []
+    chosen = projects[idx] if idx < len(projects) else {}
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(
+            text="📋 Полевой ассистент и экспорт (CP-6) ➡️",
+            callback_data="cp_to_field_assistant",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="↩️ К списку вариантов", callback_data=f"cp_view_var:{idx}",
+        ),
+        types.InlineKeyboardButton(text="❌ Сбросить", callback_data="cp_reset"),
+    )
+
+    text = (
+        f"🎉 <b>Проект №{idx + 1} «{safe_html_format(chosen.get('title', ''))}» утвержден!</b>\n\n"
+        f"🎯 <b>Вектор:</b> <i>{safe_html_format(chosen.get('vector', ''))}</i>\n"
+        f"📷 <b>Сетап:</b> <code>{safe_html_format(chosen.get('camera_setup', ''))}</code>\n\n"
+        f"🖼 <b>Главный кадр:</b>\n"
+        f"<blockquote>{safe_html_format(chosen.get('visual_hook', ''))}</blockquote>\n\n"
+        "<i>Проект готов к финализации: полевой шпаргалке, Midjourney-эскизам "
+        "и выгрузке в Apple Notes (Шаг 12).</i>"
+    )
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+    except Exception as e:
+        logger.debug("[COPILOT] pick variant edit failed: %s", e)
+
+
+@router.callback_query(F.data == "cp_reroll_var", allowed_callback)
+async def cb_copilot_reroll_variants(cb: types.CallbackQuery):
+    """Повторная генерация других вариантов проектов."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    await cb.answer("Перегенерирую проекты...")
+    try:
+        await cb.message.edit_text(
+            "🔄 <i>Генерирую новые контрастные векторы проектов…</i>",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.debug("[COPILOT] reroll edit status failed: %s", e)
+
+    session.candidate_projects = []
+    session.selected_project_idx = None
+    await generate_contrast_variants(session)
+
+    text = format_single_variant_card(session, idx=0)
+    kb = build_variants_kb(session, active_idx=0)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] reroll variants view failed: %s", e)
+
+
 async def handle_copilot_text_message(message: types.Message) -> bool:
     """Обработчик входящего текста/голоса внутри активных этапов копайлота."""
     uid = message.from_user.id
@@ -794,6 +997,26 @@ async def handle_copilot_text_message(message: types.Message) -> bool:
             await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
         except Exception as e:
             logger.warning("[COPILOT] edit tech failed: %s", e)
+            await message.answer(text, parse_mode="HTML", reply_markup=kb)
+        return True
+
+    if session.stage == "variants":
+        status_msg = await message.answer(
+            "✍️ <i>Дорабатываю концепцию кадра по вашему пожеланию…</i>",
+            parse_mode="HTML",
+        )
+        active_idx = (
+            session.selected_project_idx
+            if session.selected_project_idx is not None
+            else 0
+        )
+        await refine_active_variant(session, user_text, idx=active_idx)
+        text = format_single_variant_card(session, idx=active_idx)
+        kb = build_variants_kb(session, active_idx=active_idx)
+        try:
+            await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception as e:
+            logger.warning("[COPILOT] edit variant failed: %s", e)
             await message.answer(text, parse_mode="HTML", reply_markup=kb)
         return True
 
