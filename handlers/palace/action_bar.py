@@ -132,25 +132,73 @@ def build_action_bar(answer: Answer, page_idx: int) -> InlineKeyboardBuilder:
         kb.row(*nav_row)
     for row in answer.extra_rows:
         kb.row(*row)
-    kb.row(
-        types.InlineKeyboardButton(text="🤖 Анализ ИИ", callback_data=f"ab_ai:{answer.sid}"),
-        types.InlineKeyboardButton(
-            text="🌐 Поиск в интернете", callback_data=f"ab_web:{answer.sid}",
-        ),
-        types.InlineKeyboardButton(text="💾 Сохранить", callback_data=f"ab_sv:{answer.sid}"),
+
+    existing_texts = {
+        btn.text.strip().lower()
+        for row in answer.extra_rows
+        for btn in row
+        if getattr(btn, "text", None)
+    }
+    existing_cbs = {
+        btn.callback_data
+        for row in answer.extra_rows
+        for btn in row
+        if getattr(btn, "callback_data", None)
+    }
+
+    hide_action_bar = bool(
+        answer.ctx.get("hide_action_bar") or answer.ctx.get("no_action_bar")
     )
-    kb.row(types.InlineKeyboardButton(
-        text="🤖 Агент", callback_data=f"ab_agent:{answer.sid}",
-    ))
+    if not hide_action_bar:
+        ai_row = []
+        has_ai = (
+            any("анализ" in t or "спросить ии" in t for t in existing_texts)
+            or any(cb.startswith(("ab_ai:", "p_room_ai")) for cb in existing_cbs)
+            or bool(answer.ctx.get("hide_ai"))
+        )
+        if not has_ai:
+            ai_row.append(types.InlineKeyboardButton(
+                text="🤖 Анализ ИИ", callback_data=f"ab_ai:{answer.sid}",
+            ))
+        if not answer.ctx.get("hide_web"):
+            ai_row.append(types.InlineKeyboardButton(
+                text="🌐 Поиск в интернете", callback_data=f"ab_web:{answer.sid}",
+            ))
+        if not answer.ctx.get("hide_save"):
+            ai_row.append(types.InlineKeyboardButton(
+                text="💾 Сохранить", callback_data=f"ab_sv:{answer.sid}",
+            ))
+        if ai_row:
+            kb.row(*ai_row)
+
+        has_agent = (
+            any("агент" in t for t in existing_texts)
+            or any(
+                cb.startswith(("ab_agent:", "p_agent_room:", "agent_"))
+                for cb in existing_cbs
+            )
+            or bool(answer.ctx.get("hide_agent"))
+        )
+        if not has_agent:
+            kb.row(types.InlineKeyboardButton(
+                text="🤖 Агент", callback_data=f"ab_agent:{answer.sid}",
+            ))
+
     if answer.ctx.get("_is_button_mode"):
         kb.row(types.InlineKeyboardButton(
             text="⏹ Завершить диалог с агентом",
             callback_data=f"ab_agent_stop:{answer.sid}",
         ))
-    if answer.ctx.get("parent_cb"):
-        kb.row(types.InlineKeyboardButton(
-            text="🔙 Вернуться к списку", callback_data=f"ab_back:{answer.sid}",
-        ))
+    parent_cb = answer.ctx.get("parent_cb")
+    if parent_cb:
+        has_back = (
+            parent_cb in existing_cbs
+            or any(t in ("◀️ назад", "🔙 вернуться к списку") for t in existing_texts)
+        )
+        if not has_back:
+            kb.row(types.InlineKeyboardButton(
+                text="🔙 Вернуться к списку", callback_data=f"ab_back:{answer.sid}",
+            ))
     return kb
 
 

@@ -1040,7 +1040,7 @@ async def _show_drawers_page(edit_func, uid: int, wing: str, room: str, offset: 
         from .action_bar import finalize_answer
         await finalize_answer(
             uid, edit_func, "\n".join(lines), is_html=True,
-            ctx={"wing": wing, "room": room, "parent_cb": "p_nav"},
+            ctx={"wing": wing, "room": room, "parent_cb": "p_nav", "hide_action_bar": True},
             extra_rows=extra_rows,
         )
     except Exception as e:

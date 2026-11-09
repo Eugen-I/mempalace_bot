@@ -217,6 +217,73 @@ def test_action_bar_back_button_only_with_parent():
     assert not any("ab_back:" in d for d in _button_data(without_parent))
 
 
+def test_action_bar_hide_action_bar_ctx():
+    from aiogram import types
+
+    extra = [[types.InlineKeyboardButton(text="Кнопка", callback_data="test_cb")]]
+    answer = Answer(
+        sid=SID, text="т", pages=["т"],
+        ctx={"parent_cb": "p_nav", "hide_action_bar": True},
+        extra_rows=extra,
+    )
+    labels = _button_labels(answer)
+    assert "Кнопка" in labels
+    assert "🔙 Вернуться к списку" in labels
+    assert "🤖 Анализ ИИ" not in labels
+    assert "🤖 Агент" not in labels
+    assert "🌐 Поиск в интернете" not in labels
+    assert "💾 Сохранить" not in labels
+
+
+def test_action_bar_deduplicates_agent_button():
+    from aiogram import types
+
+    extra = [[types.InlineKeyboardButton(text="🤖 Агент", callback_data="p_agent_room:xyz")]]
+    answer = Answer(
+        sid=SID, text="т", pages=["т"],
+        ctx={"parent_cb": "p_nav"},
+        extra_rows=extra,
+    )
+    labels = _button_labels(answer)
+    assert labels.count("🤖 Агент") == 1
+    data = _button_data(answer)
+    assert "p_agent_room:xyz" in data
+    assert not any(d.startswith("ab_agent:") for d in data)
+
+
+def test_action_bar_deduplicates_ai_button():
+    from aiogram import types
+
+    extra = [[types.InlineKeyboardButton(
+        text="🤖 Спросить ИИ по комнате", callback_data="p_room_ai",
+    )]]
+    answer = Answer(
+        sid=SID, text="т", pages=["т"],
+        ctx={"parent_cb": "p_nav"},
+        extra_rows=extra,
+    )
+    labels = _button_labels(answer)
+    assert "🤖 Спросить ИИ по комнате" in labels
+    assert "🤖 Анализ ИИ" not in labels
+    data = _button_data(answer)
+    assert "p_room_ai" in data
+    assert not any(d.startswith("ab_ai:") for d in data)
+
+
+def test_action_bar_deduplicates_back_button():
+    from aiogram import types
+
+    extra = [[types.InlineKeyboardButton(text="◀️ В меню туннелей", callback_data="p_tun")]]
+    answer = Answer(
+        sid=SID, text="т", pages=["т"],
+        ctx={"parent_cb": "p_tun"},
+        extra_rows=extra,
+    )
+    labels = _button_labels(answer)
+    assert "◀️ В меню туннелей" in labels
+    assert "🔙 Вернуться к списку" not in labels
+
+
 # ─── store ───
 
 
@@ -862,8 +929,15 @@ def test_show_drawers_page_integration(monkeypatch):
     assert "p_rd:0" in data
     assert "p_rd:1" in data
     assert "p_room_ai" in data
-    assert any(d.startswith("ab_ai:") for d in data)
+    assert any(d.startswith("p_agent_room:") for d in data)
+    assert not any(d.startswith("ab_ai:") for d in data)
+    assert not any(d.startswith("ab_agent:") for d in data)
     assert "p_rdp:5" in data
+    assert any(d.startswith("ab_back:") for d in data)
+    # Check no duplicate button texts
+    labels = [b.text for row in msg.markups[-1].inline_keyboard for b in row]
+    assert labels.count("🤖 Агент") == 1
+    assert not any("Анализ ИИ" in label for label in labels)
 
 
 def test_cb_read_drawer_long_content_paginates(monkeypatch):
