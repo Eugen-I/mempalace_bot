@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from aiogram import F, Router, types
@@ -51,6 +52,7 @@ from services.copilot_kg_linker import (
     link_project_to_palace_kg,
     save_project_to_kg,
 )
+from services.copilot_mindmap import export_project_mindmap_file, format_mindmap_card
 from services.copilot_session import CopilotSession, get_copilot_manager
 from services.text_formatter import safe_html_format
 
@@ -335,6 +337,12 @@ def build_field_assistant_kb(session: CopilotSession) -> types.InlineKeyboardMar
         types.InlineKeyboardButton(
             text="🧠 Привязать к Дворцу и Графу",
             callback_data="cp_link_palace_kg",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🗺 Ментальная карта (.html)",
+            callback_data="cp_export_mindmap",
         ),
     )
     builder.row(
@@ -1306,6 +1314,44 @@ async def cb_copilot_save_kg(cb: types.CallbackQuery):
 async def cb_copilot_noop(cb: types.CallbackQuery):
     """Пустой обработчик для статичных статусных кнопок."""
     await cb.answer("Факты уже зафиксированы в графе знаний.")
+
+
+@router.callback_query(F.data == "cp_export_mindmap", allowed_callback)
+async def cb_copilot_export_mindmap(cb: types.CallbackQuery):
+    """Генерация и отправка интерактивной HTML ментальной карты фотопроекта."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    await cb.answer("⏳ Создаю ментальную карту...")
+    try:
+        file_path = export_project_mindmap_file(session)
+        file_name = os.path.basename(file_path)
+        card_text = format_mindmap_card(session, file_name=file_name)
+
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="↩️ Назад к ассистенту",
+                callback_data="cp_to_field_assistant",
+            ),
+        )
+
+        await cb.message.answer_document(
+            document=types.FSInputFile(file_path, filename=file_name),
+            caption=card_text,
+            parse_mode="HTML",
+            reply_markup=kb.as_markup(),
+        )
+    except Exception as exc:
+        logger.error("[COPILOT] Ошибка экспорта ментальной карты: %s", exc)
+        await cb.message.answer(
+            f"⚠️ Не удалось создать ментальную карту: {safe_html_format(str(exc))}",
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data == "cp_finish", allowed_callback)
