@@ -20,12 +20,15 @@ from services.copilot_engine import (
     COPILOT_STYLES,
     append_styles_to_summary,
     consult_tech_parameters,
+    export_copilot_project_to_apple_notes,
     format_manifesto_card,
     format_single_variant_card,
     format_styles_selection_card,
     format_tech_card,
     generate_contrast_variants,
+    generate_field_assistant_checklist,
     generate_initial_manifesto,
+    generate_midjourney_prompt,
     generate_socratic_reply,
     get_random_style_synergy,
     init_tech_preferences,
@@ -283,6 +286,33 @@ def build_variants_kb(
     return builder.as_markup()
 
 
+def build_field_assistant_kb(session: CopilotSession) -> types.InlineKeyboardMarkup:
+    """Клавиатура полевого ассистента: промпт, экспорт в Apple Notes, завершение."""
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🎨 Промпт для Midjourney / Flux",
+            callback_data="cp_gen_mj_prompt",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🍏 Экспорт в Apple Notes [К съемке]",
+            callback_data="cp_export_apple_notes",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="↩️ К вариантам проектов", callback_data="cp_to_variants",
+        ),
+        types.InlineKeyboardButton(
+            text="🏁 Завершить сессию", callback_data="cp_finish",
+        ),
+    )
+    return builder.as_markup()
+
+
 @router.message(Command("copilot", "копайлот"))
 @allowed_only
 async def cmd_copilot(message: types.Message):
@@ -295,25 +325,40 @@ async def cmd_copilot(message: types.Message):
     existing = manager.get_session(uid)
 
     if not args:
-        if existing and not existing.stage == "completed":
+        if existing:
             builder = InlineKeyboardBuilder()
-            builder.row(
-                types.InlineKeyboardButton(text="▶️ Продолжить проект", callback_data="cp_resume"),
-                types.InlineKeyboardButton(text="🔄 Начать новый", callback_data="cp_new_prompt"),
-            )
-            stage_ru = {
-                "discuss": "Осмысление темы",
-                "styles": "Выбор стилей",
-                "manifesto": "Манифест",
-                "tech": "Параметры съемки",
-                "variants": "Выбор концепта",
-            }.get(existing.stage, existing.stage)
+            if existing.stage == "completed":
+                builder.row(
+                    types.InlineKeyboardButton(
+                        text="📋 Полевой ассистент", callback_data="cp_to_field_assistant",
+                    ),
+                    types.InlineKeyboardButton(
+                        text="🔄 Начать новый", callback_data="cp_new_prompt",
+                    ),
+                )
+                stage_ru = "Финализирован [К съемке]"
+            else:
+                builder.row(
+                    types.InlineKeyboardButton(
+                        text="▶️ Продолжить проект", callback_data="cp_resume",
+                    ),
+                    types.InlineKeyboardButton(
+                        text="🔄 Начать новый", callback_data="cp_new_prompt",
+                    ),
+                )
+                stage_ru = {
+                    "discuss": "Осмысление темы",
+                    "styles": "Выбор стилей",
+                    "manifesto": "Манифест",
+                    "tech": "Параметры съемки",
+                    "variants": "Выбор концепта",
+                }.get(existing.stage, existing.stage)
 
             await message.answer(
                 f"🎙 <b>Арт-копайлот</b>\n\n"
-                f"У вас есть незавершенный проект: «<b>{safe_html_format(existing.topic)}</b>»\n"
-                f"Текущий этап: <i>{stage_ru}</i>\n\n"
-                "Хотите продолжить или начать новый проект?",
+                f"У вас есть проект: «<b>{safe_html_format(existing.topic)}</b>»\n"
+                f"Текущий статус: <i>{stage_ru}</i>\n\n"
+                "Хотите открыть материалы или начать новый проект?",
                 parse_mode="HTML",
                 reply_markup=builder.as_markup(),
             )
@@ -942,6 +987,127 @@ async def cb_copilot_reroll_variants(cb: types.CallbackQuery):
         await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     except Exception as e:
         logger.debug("[COPILOT] reroll variants view failed: %s", e)
+
+
+@router.callback_query(F.data == "cp_to_field_assistant", allowed_callback)
+async def cb_copilot_to_field_assistant(cb: types.CallbackQuery):
+    """Экран полевого ассистента (карманная шпаргалка на съемку)."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    session.stage = "completed"
+    manager.save_session(session)
+    await cb.answer()
+
+    text = generate_field_assistant_checklist(session)
+    kb = build_field_assistant_kb(session)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] field assistant edit failed: %s", e)
+
+
+@router.callback_query(F.data == "cp_gen_mj_prompt", allowed_callback)
+async def cb_copilot_gen_mj_prompt(cb: types.CallbackQuery):
+    """Генерация и отображение промпта для Midjourney / Flux."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    await cb.answer("Генерирую эскизный промпт...")
+    text = generate_midjourney_prompt(session)
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(
+            text="📋 К полевому чек-листу", callback_data="cp_to_field_assistant",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🍏 Экспорт в Apple Notes [К съемке]",
+            callback_data="cp_export_apple_notes",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="↩️ К вариантам проектов", callback_data="cp_to_variants",
+        ),
+    )
+
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+    except Exception as e:
+        logger.debug("[COPILOT] mj prompt edit failed: %s", e)
+
+
+@router.callback_query(F.data == "cp_export_apple_notes", allowed_callback)
+async def cb_copilot_export_apple_notes(cb: types.CallbackQuery):
+    """Экспорт утвержденного проекта в Apple Notes в папку «Фотопроекты»."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    try:
+        note_id = export_copilot_project_to_apple_notes(session, folder="Фотопроекты")
+        logger.info("[COPILOT] Заметка создана: %s", note_id)
+        await cb.answer(
+            "✅ Проект успешно экспортирован в Apple Notes "
+            "(папка «Фотопроекты», статус [К съемке])!",
+            show_alert=True,
+        )
+    except Exception as exc:
+        logger.error("[COPILOT] Ошибка экспорта в Apple Notes: %s", exc)
+        await cb.answer(
+            "⚠️ Не удалось создать заметку в Apple Notes. "
+            "Убедитесь, что приложение запущено на macOS.",
+            show_alert=True,
+        )
+
+
+@router.callback_query(F.data == "cp_finish", allowed_callback)
+async def cb_copilot_finish(cb: types.CallbackQuery):
+    """Завершение сессии арт-копайлота с поздравлением и очисткой."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия уже завершена")
+        return
+
+    topic = session.topic
+    manager.clear_session(uid)
+    await cb.answer("Сессия успешно завершена!")
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🎙 Новый арт-копайлот", callback_data="copilot_start",
+        ),
+    )
+
+    farewell = (
+        f"🎉 <b>Творческая разработка проекта «{safe_html_format(topic)}» завершена!</b>\n\n"
+        "Все идеи, манифест, световые схемы и рецепты для Fujifilm X-T4 "
+        "готовы к реализации на локации.\n\n"
+        "<i>Удачных кадров и чистого визуального выражения!</i>\n\n"
+        "Чтобы запустить новый проект, введите:\n"
+        "<code>/copilot &lt;ваша тема&gt;</code>"
+    )
+    try:
+        await cb.message.edit_text(farewell, parse_mode="HTML", reply_markup=builder.as_markup())
+    except Exception as e:
+        logger.debug("[COPILOT] finish edit failed: %s", e)
 
 
 async def handle_copilot_text_message(message: types.Message) -> bool:

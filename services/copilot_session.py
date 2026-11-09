@@ -74,6 +74,15 @@ class CopilotSession:
             })
             self.updated_at = time.time()
 
+    def get_active_project(self) -> dict[str, Any]:
+        """Возвращает выбранный проект либо первый доступный кандидат."""
+        if not self.candidate_projects:
+            return {}
+        idx = self.selected_project_idx if self.selected_project_idx is not None else 0
+        if 0 <= idx < len(self.candidate_projects):
+            return self.candidate_projects[idx]
+        return self.candidate_projects[0]
+
     def to_dict(self) -> dict[str, Any]:
         """Сериализация сессии в словарь."""
         return asdict(self)

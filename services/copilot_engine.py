@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
+import html
 import logging
 import re
+import time
 from typing import Any
 
 from services.ai_engine import get_ai_response_async, get_current_ai
@@ -927,3 +929,303 @@ async def refine_active_variant(session: CopilotSession, user_input: str, idx: i
     session.candidate_projects[idx] = p
     get_copilot_manager().save_session(session)
     return advice
+
+
+# ─── Шаг 12 (CP-6): Полевой ассистент, Midjourney-эскизы и Apple Notes ───
+
+STYLE_MIDJOURNEY_KEYWORDS: dict[str, str] = {
+    "Сюрреализм": (
+        "surrealism aesthetic, dreamlike metaphysical composition, "
+        "subconscious symbolism, Rene Magritte mood"
+    ),
+    "Пиктореализм": (
+        "pictorialism photo, soft-focus pictorial glow, painterly tonalism, "
+        "fine art vintage texture"
+    ),
+    "Экспрессионизм": (
+        "German expressionist cinema aesthetic, dramatic chiaroscuro lighting, "
+        "deep sharp angular shadows, psychological tension"
+    ),
+    "Импрессионизм": (
+        "impressionistic photography, luminous color vibration, "
+        "watercolor brush wash effect, intentional camera movement ICM blur"
+    ),
+    "Конструктивизм": (
+        "Russian constructivism aesthetic, Alexander Rodchenko diagonal composition, "
+        "dynamic industrial geometry, bold stark graphic lines"
+    ),
+}
+
+
+def build_raw_midjourney_prompt(session: CopilotSession) -> str:
+    """Генерирует чистый англоязычный промпт для Midjourney v6.1 / Flux."""
+    project = session.get_active_project()
+    hook = project.get("visual_hook") or session.topic
+    parts: list[str] = []
+
+    # Стилистические ключевые слова
+    for st in session.selected_styles:
+        mod = STYLE_MIDJOURNEY_KEYWORDS.get(st)
+        if mod:
+            parts.append(mod)
+
+    # Визуальный хук/сцена
+    if hook:
+        parts.append(f"cinematic shot of {hook}")
+
+    # Свет
+    light = project.get("lighting_scene") or session.tech_preferences.get("lighting", "")
+    if light:
+        light_lower = light.lower()
+        if "контровой" in light_lower:
+            parts.append("strong dramatic rim backlight, cinematic halo lighting")
+        elif "импульс" in light_lower or "лезви" in light_lower:
+            parts.append("hard razor-sharp directional shadow lines, harsh contrast lighting")
+        elif "рассеян" in light_lower:
+            parts.append("soft diffused atmospheric ambient glow")
+        else:
+            parts.append(f"dramatic artistic lighting: {light[:60]}")
+
+    # Оптика и насадки
+    tech = session.tech_preferences or {}
+    lens = (tech.get("lens") or "").lower()
+    if "гелиос" in lens or "helios" in lens:
+        parts.append("shot on vintage Helios 44-2 58mm f/2 lens, circular swirly bokeh")
+    elif "монокль" in lens:
+        parts.append("shot on soft focus monocle lens, ethereal halation glow")
+    else:
+        parts.append("shot on Fujinon lens, rich microcontrast")
+
+    filt = (tech.get("filter_accessory") or "").lower()
+    if "призм" in filt or "prism" in filt:
+        parts.append(
+            "refracted through optical triangular crystal glass prism, chromatic split flare"
+        )
+    elif "mist" in filt or "мист" in filt:
+        parts.append("Black Pro-Mist diffusion filter, soft glowing blooming highlights")
+
+    # Метод съемки / стабилизация
+    supp = (tech.get("support") or "").lower()
+    if "руки" in supp or "icm" in supp or "тремор" in supp:
+        parts.append(
+            "subtle intentional camera movement ICM blur, layered exposure watercolor feel"
+        )
+
+    # Фотографические параметры
+    parts.append(
+        "Fujifilm X-T4 film simulation Velvia, fine art gallery photography, "
+        "8k resolution, editorial aesthetic, 35mm film grain --ar 16:9 --v 6.1 --style raw"
+    )
+
+    return ", ".join(parts)
+
+
+def generate_midjourney_prompt(session: CopilotSession) -> str:
+    """Форматирует сообщение с Midjourney-промптом для Telegram с кликабельным <code> блоком."""
+    raw_prompt = build_raw_midjourney_prompt(session)
+    project = session.get_active_project()
+    title = project.get("title", session.topic)
+
+    return (
+        f"🎨 <b>Эскизный промпт для нейросетей (Midjourney v6.1 / Flux)</b>\n"
+        f"Проект: «{safe_html_format(title)}»\n\n"
+        f"<i>Используйте этот промпт для генерации раскадровки сцены перед съемкой:</i>\n\n"
+        f"<code>{html.escape(raw_prompt)}</code>\n\n"
+        f"💡 <i>Нажмите на блок с кодом выше, чтобы скопировать промпт в один клик.</i>"
+    )
+
+
+def generate_field_assistant_checklist(session: CopilotSession) -> str:
+    """Форматирует карманную шпаргалку / чек-лист перед съемкой для Telegram."""
+    project = session.get_active_project()
+    title = project.get("title", session.topic or "Фотопроект")
+    vector = project.get("vector", "Авторский вектор")
+    styles_str = (
+        ", ".join(session.selected_styles)
+        if session.selected_styles
+        else "Стиль автора"
+    )
+
+    tech = session.tech_preferences or {}
+    lens = tech.get("lens", "Гелиос 44-2 58mm f/2")
+    filt = tech.get("filter_accessory", "Black Pro-Mist 1/4")
+    supp = tech.get("support", "Съемка с рук (микро-ICM)")
+    light = project.get("lighting_scene") or tech.get("lighting", "Естественный / Контровой")
+    cam_setup = project.get(
+        "camera_setup", "1/15 с, f/2, ISO 160, Velvia, Тоновая кривая: -1/+1"
+    )
+    action = project.get(
+        "shooting_action", "Фиксация камеры, микро-смещение в момент экспозиции"
+    )
+    steps = project.get("shooting_steps") or [
+        "Оценить геометрию локации и направление основного источника света",
+        "Установить объектив и насадку, выставить базовые параметры X-T4",
+        "Проверить Focus Peaking по главному объекту",
+        "Сделать тестовый кадр, скорректировать экспозицию по гистограмме",
+        "Выполнить серию из 3-5 кадров с контролем физики движения",
+    ]
+
+    hook = project.get("visual_hook", "")
+
+    lines = [
+        f"🎒 <b>Полевой ассистент съемки: «{safe_html_format(title)}»</b>\n",
+        f"📌 <b>Тема:</b> {safe_html_format(session.topic)}",
+        f"🎭 <b>Стили:</b> <i>{safe_html_format(styles_str)}</i>",
+        f"🎯 <b>Вектор:</b> <i>{safe_html_format(vector)}</i>\n",
+    ]
+
+    if hook:
+        lines.append(
+            f"🖼 <b>Главный кадр:</b>\n<blockquote>{safe_html_format(hook)}</blockquote>\n"
+        )
+
+    lines.extend([
+        "✅ <b>Чек-лист перед выходом:</b>",
+        "   ▫️ Камера: <b>Fujifilm X-T4</b>",
+        f"   ▫️ Объектив: <code>{safe_html_format(lens)}</code>",
+        f"   ▫️ Насадка / фильтр: <code>{safe_html_format(filt)}</code>",
+        "   ▫️ Аккумуляторы: 2x NP-W235 (полный заряд)",
+        "   ▫️ SD-карта: UHS-II (проверен слот 1, свободное место)",
+        "   ▫️ Микрофибра и груша для чистки оптики",
+    ])
+
+    if "штатив" in supp.lower():
+        lines.append("   ▫️ Опора: Штатив и устойчивая площадка")
+    else:
+        lines.append("   ▫️ Опора: Съемка с рук (без тяжелого штатива)")
+
+    lines.extend([
+        "",
+        "⚙️ <b>Параметры Fujifilm X-T4:</b>",
+        f"   ▫️ Настройки: <code>{safe_html_format(cam_setup)}</code>",
+        f"   ▫️ Метод стабилизации: <i>{safe_html_format(supp)}</i>",
+        "",
+        "💡 <b>Свет и атмосфера:</b>",
+        f"   ▫️ {safe_html_format(light)}",
+        "",
+        "👐 <b>Физика съемки (действие фотографа):</b>",
+        f"   ▫️ {safe_html_format(action)}",
+        "",
+        "📋 <b>План действий на локации:</b>",
+    ])
+
+    for i, s in enumerate(steps, start=1):
+        lines.append(f"   {i}. {safe_html_format(s)}")
+
+    lines.extend([
+        "",
+        "<i>Используйте кнопки ниже для генерации Midjourney-промпта "
+        "или экспорта в Apple Notes.</i>",
+    ])
+
+    return "\n".join(lines)
+
+
+def format_copilot_project_for_notes(
+    session: CopilotSession,
+) -> tuple[str, str]:
+    """Форматирует проект копайлота в Markdown для Apple Notes со статусом [К съемке]."""
+    project = session.get_active_project()
+    title = project.get("title", session.topic or "Фотопроект")
+    note_title = f"[К съемке] {title}"
+
+    styles_str = (
+        ", ".join(session.selected_styles)
+        if session.selected_styles
+        else "Авторский стиль"
+    )
+    vector = project.get("vector", "Кураторский вектор")
+    created_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(session.updated_at))
+
+    tech = session.tech_preferences or {}
+    lens = tech.get("lens", "Гелиос 44-2 58mm f/2")
+    filt = tech.get("filter_accessory", "Black Pro-Mist 1/4")
+    supp = tech.get("support", "Съемка с рук (микро-ICM)")
+    light = project.get("lighting_scene") or tech.get("lighting", "Естественный / Контровой")
+    cam_setup = project.get("camera_setup", "1/15 с, f/2, ISO 160, Velvia")
+    action = project.get(
+        "shooting_action", "Фиксация камеры, микро-смещение в момент экспозиции"
+    )
+    steps = project.get("shooting_steps") or [
+        "Оценить геометрию локации и направление основного света",
+        "Установить объектив и насадку, выставить базовые параметры X-T4",
+        "Проверить Focus Peaking по главному объекту",
+        "Сделать тестовый кадр, скорректировать экспозицию",
+        "Выполнить серию кадров с контролем физики движения",
+    ]
+    hook = project.get("visual_hook", "")
+    manifesto = session.manifesto or "Художественное кредо проекта."
+    summary = session.summary or "Обсуждение темы зафиксировано автором."
+    mj_prompt = build_raw_midjourney_prompt(session)
+
+    supp_item = (
+        "- [ ] Штатив и устойчивая площадка"
+        if "штатив" in supp.lower()
+        else "- [ ] Проверить баланс стабилизации для съемки с рук"
+    )
+
+    steps_md = "\n".join(f"{i}. {s}" for i, s in enumerate(steps, start=1))
+
+    body_lines = [
+        f"# {note_title}",
+        "",
+        f"- **Тема:** {session.topic}",
+        f"- **Стилистическая триада:** {styles_str}",
+        f"- **Кураторский вектор:** {vector}",
+        f"- **Дата фиксации:** {created_str}",
+        "",
+        "## 📜 Художественный манифест",
+        f"> {manifesto}",
+        "",
+        "## 🖼 Визуальный образ кадра",
+        hook,
+        "",
+        "## 💡 Схема освещения",
+        light,
+        "",
+        "## 📷 Параметры съёмки (Fujifilm X-T4)",
+        "- **Камера:** Fujifilm X-T4",
+        f"- **Объектив:** {lens}",
+        f"- **Фильтр / Насадка:** {filt}",
+        f"- **Метод стабилизации:** {supp}",
+        f"- **Экспопараметры:** `{cam_setup}`",
+        "",
+        "## 👐 Физика съёмки (действие фотографа)",
+        action,
+        "",
+        "## 📋 Пошаговый план на локации",
+        steps_md,
+        "",
+        "## ✅ Чек-лист перед выходом",
+        "- [ ] Заряженные аккумуляторы NP-W235 (2 шт.)",
+        "- [ ] Чистая скоростная SD-карта UHS-II (проверен слот 1)",
+        f"- [ ] Камера Fujifilm X-T4 + объектив: {lens}",
+        f"- [ ] Насадка / фильтр: {filt}",
+        "- [ ] Микрофибра и салфетки для оптики",
+        supp_item,
+        "",
+        "## 🎨 Эскизный промпт (Midjourney v6.1 / Flux)",
+        f"`{mj_prompt}`",
+        "",
+        "## 💬 Резюме смыслового поиска автора",
+        summary,
+    ]
+
+    return note_title, "\n".join(body_lines)
+
+
+def export_copilot_project_to_apple_notes(
+    session: CopilotSession,
+    folder: str = "Фотопроекты",
+) -> str:
+    """Выгружает финализированный проект копайлота в Apple Notes со статусом [К съемке]."""
+    from services.apple_notes import create_note, ensure_folder
+
+    ensure_folder(folder)
+    title, body = format_copilot_project_for_notes(session)
+    note_id = create_note(title=title, body=body, folder=folder)
+    logger.info(
+        "[COPILOT] Проект «%s» экспортирован в Apple Notes (папка: %s, id: %s)",
+        title, folder, note_id,
+    )
+    return note_id
