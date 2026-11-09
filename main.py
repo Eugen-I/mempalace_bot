@@ -35,6 +35,7 @@ from handlers import (  # noqa: E402
     agent,
     brainstorm,
     chat,
+    copilot,
     digest,
     notes,
     notes_agent,
@@ -85,6 +86,7 @@ _safe_include(voice.router)
 _safe_include(palace.router)
 _safe_include(personal_note.router)
 _safe_include(brainstorm.router)
+_safe_include(copilot.router)
 _safe_include(digest.router)
 _safe_include(reminder.router)
 _safe_include(youtube_ui.router)

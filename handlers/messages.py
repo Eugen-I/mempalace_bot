@@ -280,6 +280,13 @@ async def process_user_message(message: types.Message):
     if uid in _waiting_for_note:
         return await process_note_input(uid, text, lambda t: message.answer(t))
 
+    # 0cca. Активный диалог с арт-копайлотом (Creative Co-Pilot)
+    from services.copilot_session import get_copilot_manager
+    if get_copilot_manager().is_in_copilot(uid, stage="discuss"):
+        from handlers.copilot import handle_copilot_text_message
+        if await handle_copilot_text_message(message):
+            return None
+
     # 0cc. Ожидание темы штурма
     if uid in _storm_waiting:
         from handlers.brainstorm import run_storm

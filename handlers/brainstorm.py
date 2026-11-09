@@ -223,6 +223,11 @@ async def cmd_storm(message: types.Message):
             ),
         )
         kb.row(
+            types.InlineKeyboardButton(
+                text="🎙 Арт-копайлот (Диалог)", callback_data="copilot_start",
+            ),
+        )
+        kb.row(
             types.InlineKeyboardButton(text="🎒 Арсенал", callback_data="bs_open_gear"),
             types.InlineKeyboardButton(text="📚 Фотомеханики", callback_data="bs_open_mechs"),
         )
@@ -274,6 +279,11 @@ async def btn_storm(message: types.Message):
     kb.row(
         types.InlineKeyboardButton(
             text="🎨 Лаборатория стилей (Триада)", callback_data="bs_start_fusion",
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🎙 Арт-копайлот (Диалог)", callback_data="copilot_start",
         ),
     )
     kb.row(
