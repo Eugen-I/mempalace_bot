@@ -17,7 +17,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import allowed_callback, allowed_only
 from services.copilot_engine import (
+    COPILOT_STYLES,
+    append_styles_to_summary,
+    format_styles_selection_card,
     generate_socratic_reply,
+    get_random_style_synergy,
     start_copilot_discussion,
     summarize_creative_dialogue,
 )
@@ -52,6 +56,48 @@ def build_copilot_dialogue_kb(session: CopilotSession) -> types.InlineKeyboardMa
             text="❌ Сбросить",
             callback_data="cp_reset",
         ),
+    )
+    return builder.as_markup()
+
+
+def build_styles_selection_kb(session: CopilotSession) -> types.InlineKeyboardMarkup:
+    """Интерактивная клавиатура стилистического конструктора."""
+    builder = InlineKeyboardBuilder()
+
+    style_btns = []
+    for name, info in COPILOT_STYLES.items():
+        is_sel = name in session.selected_styles
+        mark = "✅ " if is_sel else ""
+        btn_text = f"{mark}{info['icon']} {name}"
+        style_btns.append(types.InlineKeyboardButton(
+            text=btn_text, callback_data=f"cp_toggle_style:{name}",
+        ))
+
+    for i in range(0, len(style_btns), 2):
+        builder.row(*style_btns[i:i + 2])
+
+    builder.row(
+        types.InlineKeyboardButton(text="🎭 Драма", callback_data="cp_preset:preset_drama"),
+        types.InlineKeyboardButton(text="🌫 Живопись", callback_data="cp_preset:preset_pictorial"),
+        types.InlineKeyboardButton(text="🏛 Триада", callback_data="cp_preset:preset_triad"),
+    )
+    builder.row(
+        types.InlineKeyboardButton(text="🎲 Синергия", callback_data="cp_preset:random"),
+        types.InlineKeyboardButton(text="🧹 Очистить", callback_data="cp_clear_styles"),
+    )
+
+    sel_count = len(session.selected_styles)
+    if 1 <= sel_count <= 3:
+        confirm_text = f"🚀 Подтвердить стили ({sel_count}/3) ➡️"
+    else:
+        confirm_text = "⚠️ Выберите стили (от 1 до 3)"
+
+    builder.row(
+        types.InlineKeyboardButton(text=confirm_text, callback_data="cp_confirm_styles"),
+    )
+    builder.row(
+        types.InlineKeyboardButton(text="↩️ Назад к диалогу", callback_data="cp_back_to_discuss"),
+        types.InlineKeyboardButton(text="❌ Сбросить", callback_data="cp_reset"),
     )
     return builder.as_markup()
 
@@ -208,27 +254,157 @@ async def cb_copilot_to_styles(cb: types.CallbackQuery):
     session.stage = "styles"
     manager.save_session(session)
 
-    # Заготовка для следующего шага: вывод саммари и переход к стилям
-    kb = InlineKeyboardBuilder()
-    kb.row(
+    text = format_styles_selection_card(session)
+    kb = build_styles_selection_kb(session)
+    await status.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data == "cp_select_styles", allowed_callback)
+async def cb_copilot_select_styles(cb: types.CallbackQuery):
+    """Отображение стилистического конструктора."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    session.stage = "styles"
+    manager.save_session(session)
+    await cb.answer()
+    text = format_styles_selection_card(session)
+    kb = build_styles_selection_kb(session)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] edit styles card failed: %s", e)
+
+
+@router.callback_query(F.data.startswith("cp_toggle_style:"), allowed_callback)
+async def cb_copilot_toggle_style(cb: types.CallbackQuery):
+    """Переключение выбора стиля (чекбокс)."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    style_name = cb.data.split(":", 1)[1].strip()
+    if style_name in session.selected_styles:
+        session.selected_styles.remove(style_name)
+        await cb.answer(f"Снят стиль: {style_name}")
+    else:
+        if len(session.selected_styles) >= 3:
+            await cb.answer("⚠️ Можно выбрать максимум 3 стиля!", show_alert=True)
+            return
+        session.selected_styles.append(style_name)
+        await cb.answer(f"Добавлен: {style_name}")
+
+    manager.save_session(session)
+    text = format_styles_selection_card(session)
+    kb = build_styles_selection_kb(session)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] toggle style edit failed: %s", e)
+
+
+@router.callback_query(F.data.startswith("cp_preset:"), allowed_callback)
+async def cb_copilot_preset(cb: types.CallbackQuery):
+    """Применение готового пресета или случайной синергии стилей."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    preset_key = cb.data.split(":", 1)[1].strip()
+    if preset_key == "random":
+        session.selected_styles = get_random_style_synergy(count=3)
+        await cb.answer("🎲 Сгенерирована случайная синергия!")
+    elif preset_key == "preset_drama":
+        session.selected_styles = ["Сюрреализм", "Экспрессионизм"]
+        await cb.answer("Применен пресет: Драма и тайна")
+    elif preset_key == "preset_pictorial":
+        session.selected_styles = ["Пиктореализм", "Импрессионизм"]
+        await cb.answer("Применен пресет: Живописная элегия")
+    elif preset_key == "preset_triad":
+        session.selected_styles = ["Сюрреализм", "Экспрессионизм", "Пиктореализм"]
+        await cb.answer("Применен пресет: Классическая триада")
+
+    manager.save_session(session)
+    text = format_styles_selection_card(session)
+    kb = build_styles_selection_kb(session)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] preset edit failed: %s", e)
+
+
+@router.callback_query(F.data == "cp_clear_styles", allowed_callback)
+async def cb_copilot_clear_styles(cb: types.CallbackQuery):
+    """Сброс выбора стилей."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    session.selected_styles.clear()
+    manager.save_session(session)
+    await cb.answer("Выбор стилей очищен")
+    text = format_styles_selection_card(session)
+    kb = build_styles_selection_kb(session)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] clear styles edit failed: %s", e)
+
+
+@router.callback_query(F.data == "cp_confirm_styles", allowed_callback)
+async def cb_copilot_confirm_styles(cb: types.CallbackQuery):
+    """Подтверждение выбора стилей и переход к этапу манифеста."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    if not session.selected_styles:
+        await cb.answer("⚠️ Выберите хотя бы 1 стиль для продолжения!", show_alert=True)
+        return
+
+    append_styles_to_summary(session)
+    session.stage = "manifesto"
+    manager.save_session(session)
+
+    await cb.answer("Стили зафиксированы!")
+    builder = InlineKeyboardBuilder()
+    builder.row(
         types.InlineKeyboardButton(
-            text="🎨 Стилистический конструктор ➡️", callback_data="cp_select_styles",
+            text="✍️ Написать манифест проекта ➡️", callback_data="cp_to_manifesto",
         ),
     )
-    kb.row(
+    builder.row(
         types.InlineKeyboardButton(
-            text="↩️ Вернуться к обсуждению", callback_data="cp_back_to_discuss",
+            text="↩️ Изменить выбор стилей", callback_data="cp_select_styles",
         ),
         types.InlineKeyboardButton(text="❌ Сбросить", callback_data="cp_reset"),
     )
 
+    styles_list_ru = ", ".join(f"<b>{s}</b>" for s in session.selected_styles)
     text = (
-        f"📋 <b>Концептуальное резюме проекта</b>\n"
-        f"Тема: «<b>{safe_html_format(session.topic)}</b>»\n\n"
-        f"{summary}\n\n"
-        "<i>Следующий шаг: выбор стилей визуального синтеза (1–3 стиля).</i>"
+        f"🎨 <b>Стилистический синтез утвержден!</b>\n\n"
+        f"Выбранные направления: {styles_list_ru}\n\n"
+        f"📋 <b>Обновленное концептуальное резюме:</b>\n"
+        f"{session.summary}\n\n"
+        "<i>Следующий этап: создание и шлифовка художественного манифеста проекта.</i>"
     )
-    await status.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
 
 @router.callback_query(F.data == "cp_back_to_discuss", allowed_callback)

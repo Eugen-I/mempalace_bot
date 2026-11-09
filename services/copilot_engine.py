@@ -174,3 +174,91 @@ async def start_copilot_discussion(session: CopilotSession) -> str:
     session.add_assistant_message(opening)
     get_copilot_manager().save_session(session)
     return opening
+
+
+# ─── Шаг 8: Стилистический конструктор ───
+
+COPILOT_STYLES: dict[str, dict[str, str]] = {
+    "Сюрреализм": {
+        "icon": "👁",
+        "desc": "Онейрический сюжет, парадоксы, подсознание, метафоры",
+    },
+    "Пиктореализм": {
+        "icon": "🌫",
+        "desc": "Живописная мягкость, диффузия, монокль, бархатные тени",
+    },
+    "Экспрессионизм": {
+        "icon": "⚡️",
+        "desc": "Жесткие тени, экзистенциальный надлом, контраст, драма",
+    },
+    "Импрессионизм": {
+        "icon": "🎨",
+        "desc": "Акварельная лессировка, свет, микро-тремор, цветные тени",
+    },
+    "Конструктивизм": {
+        "icon": "📐",
+        "desc": "Геометрия ракурсов, ритм линий, диагонали, минимализм",
+    },
+}
+
+STYLE_PRESETS: list[tuple[str, str, list[str]]] = [
+    ("preset_drama", "🎭 Драма и тайна", ["Сюрреализм", "Экспрессионизм"]),
+    ("preset_pictorial", "🌫 Живописная элегия", ["Пиктореализм", "Импрессионизм"]),
+    ("preset_triad", "🏛 Классическая триада", ["Сюрреализм", "Экспрессионизм", "Пиктореализм"]),
+]
+
+
+def get_random_style_synergy(count: int = 2) -> list[str]:
+    """Генерирует случайную гармоничную комбинацию из 2 или 3 стилей."""
+    import secrets
+    all_styles = list(COPILOT_STYLES.keys())
+    k = max(1, min(count, len(all_styles)))
+    return secrets.SystemRandom().sample(all_styles, k)
+
+
+def format_styles_selection_card(session: CopilotSession) -> str:
+    """Форматирует карточку выбора стилей для Telegram."""
+    sel_count = len(session.selected_styles)
+    styles_list_text = []
+
+    for name, info in COPILOT_STYLES.items():
+        is_sel = name in session.selected_styles
+        mark = "✅" if is_sel else "▫️"
+        styles_list_text.append(f"{mark} <b>{info['icon']} {name}</b> — <i>{info['desc']}</i>")
+
+    styles_block = "\n".join(styles_list_text)
+
+    summary_preview = session.summary.strip()
+    if not summary_preview:
+        summary_preview = f"🎯 <b>Тема:</b> {session.topic}"
+
+    status_line = (
+        f"Выбрано: <b>{sel_count}/3</b>"
+        if sel_count > 0
+        else "<i>Стили не выбраны. Нажмите на кнопки ниже (от 1 до 3).</i>"
+    )
+
+    return (
+        f"🎨 <b>Стилистический конструктор арт-копайлота</b>\n\n"
+        f"{summary_preview}\n\n"
+        f"<b>Палитра доступных стилей:</b>\n"
+        f"{styles_block}\n\n"
+        f"📌 {status_line}"
+    )
+
+
+def append_styles_to_summary(session: CopilotSession) -> str:
+    """Добавляет выбранные стили к концептуальному резюме проекта."""
+    if not session.selected_styles:
+        return session.summary
+
+    styles_str = ", ".join(
+        f"{COPILOT_STYLES.get(s, {}).get('icon', '🎨')} {s}" for s in session.selected_styles
+    )
+    styles_section = f"\n🎭 <b>Выбранные стили синтеза:</b> {styles_str}"
+
+    if styles_section not in session.summary:
+        session.summary = f"{session.summary.strip()}\n{styles_section}"
+
+    get_copilot_manager().save_session(session)
+    return session.summary
