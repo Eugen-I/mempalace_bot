@@ -9,6 +9,8 @@
 
 import html
 import logging
+import re
+import urllib.parse
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -1052,6 +1054,8 @@ def get_curated_references(concept: FusedPhotoConcept) -> list[dict[str, str]]:
 
 def format_references_card(concept: FusedPhotoConcept, web_snippets: str = "") -> str:
     """Форматирует карточку художественных референсов для Telegram (HTML-safe)."""
+    from services.text_formatter import safe_html_format
+
     title_esc = html.escape(concept.title)
     triad_esc = html.escape(concept.triad.summary())
     lines = [
@@ -1066,15 +1070,28 @@ def format_references_card(concept: FusedPhotoConcept, web_snippets: str = "") -
         art_esc = html.escape(r["artist"])
         tech_esc = html.escape(r["technique"])
         q_esc = html.escape(r["query"])
+        q_encoded = urllib.parse.quote(r["query"])
+        google_url = f"https://www.google.com/search?tbm=isch&q={q_encoded}"
+        pinterest_url = f"https://www.pinterest.com/search/pins/?q={q_encoded}"
         lines.append(
-            f"• <b>[{s_esc}] {art_esc}</b>\n  <i>{tech_esc}</i>\n  🔍 <code>{q_esc}</code>"
+            f"• <b>[{s_esc}] {art_esc}</b>\n"
+            f"  <i>{tech_esc}</i>\n"
+            f"  🔍 <a href=\"{google_url}\">Google Картинки</a> • "
+            f"<a href=\"{pinterest_url}\">Pinterest</a> • <code>{q_esc}</code>"
         )
 
     if web_snippets.strip():
-        lines.append(f"\n🔎 <b>Находки из сети:</b>\n{html.escape(web_snippets.strip()[:600])}")
+        clean_snippets = web_snippets.strip()
+        clean_snippets = re.sub(r"<br\s*/?>", "\n", clean_snippets, flags=re.IGNORECASE)
+        clean_snippets = re.sub(r"^🌐\s*<b>Результаты поиска</b>\s*", "", clean_snippets)
+        clean_snippets = re.sub(r"^🔍\s*Результаты по[^\n]*\n+", "", clean_snippets)
+        clean_snippets = clean_snippets.strip()
+        if clean_snippets:
+            formatted_snippets = safe_html_format(clean_snippets[:700])
+            lines.append(f"\n🔎 <b>Находки из сети:</b>\n{formatted_snippets}")
 
     lines.append(
-        "\n💡 <i>Совет: скопируйте поисковый запрос (в теге кода) в Pinterest или Google Images "
-        "для изучения световых схем и композиций.</i>"
+        "\n💡 <i>Нажмите на ссылки «Google Картинки» или «Pinterest», чтобы сразу открыть "
+        "визуальные референсы в браузере.</i>"
     )
     return "\n".join(lines)

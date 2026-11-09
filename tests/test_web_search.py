@@ -442,6 +442,32 @@ async def test_search_web_escapes_html(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_web_no_br_tags_and_active_links(monkeypatch):
+    client = FakeClient([FakeResponse(json_data={
+        "AbstractText": "Описание темы",
+        "AbstractSource": "Вики",
+        "AbstractURL": "https://ru.wikipedia.org/wiki/Test",
+        "Results": [{"Text": "Статья про фотографию", "FirstURL": "https://example.com/photo"}],
+        "RelatedTopics": [],
+    })])
+    monkeypatch.setattr(ws.httpx, "AsyncClient", lambda *a, **k: _CtxManager(client))
+    out = await ws.search_web("фотография")
+    assert "<br>" not in out
+    assert "<br/>" not in out
+    assert '<a href="https://ru.wikipedia.org/wiki/Test">Вики</a>' in out
+    assert '<a href="https://example.com/photo">Статья про фотографию</a>' in out
+
+
+@pytest.mark.asyncio
+async def test_extract_href_uddg_redirect():
+    from selectolax.parser import HTMLParser
+
+    html = '<a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fart.com%2Fgallery&rut=1">Текст</a>'
+    node = HTMLParser(html).css_first("a")
+    assert ws._extract_href(node) == "https://art.com/gallery"
+
+
+@pytest.mark.asyncio
 async def test_search_web_empty_then_lite_fallback(monkeypatch):
     client = FakeClient([
         FakeResponse(json_data={"Results": [], "RelatedTopics": []}),

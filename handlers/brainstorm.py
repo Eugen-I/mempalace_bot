@@ -301,7 +301,9 @@ async def cb_storm_menu(cb: types.CallbackQuery):
     _storm_waiting[uid] = True
     text, kb = get_storm_menu_text_and_kb()
     try:
-        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+        await cb.message.edit_text(
+            text, parse_mode="HTML", reply_markup=kb.as_markup(), disable_web_page_preview=True,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.debug("[STORM] menu edit failed: %s", exc)
         await cb.message.answer(text, parse_mode="HTML", reply_markup=kb.as_markup())
@@ -405,7 +407,9 @@ async def cb_pick_idea(cb: types.CallbackQuery):
             "ideas": [selected_idea],
             "active_concept_idx": idx,
         }
-        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+        await cb.message.edit_text(
+            text, parse_mode="HTML", reply_markup=kb.as_markup(), disable_web_page_preview=True,
+        )
     else:
         await _storm_confirm(uid, cb.message.edit_text, [selected_idea], f"Идея {idx}")
 
@@ -441,7 +445,9 @@ async def cb_concept_page(cb: types.CallbackQuery):
         return
     text = format_concept_page(concept, page=page)
     kb = build_concept_navigation_kb(concept_idx=idx, page=page)
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+    await cb.message.edit_text(
+        text, parse_mode="HTML", reply_markup=kb.as_markup(), disable_web_page_preview=True,
+    )
 
 
 @router.callback_query(F.data.startswith("bs_prompt:"))
@@ -485,7 +491,9 @@ async def cb_concept_prompt(cb: types.CallbackQuery):
         ),
     )
     kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+    await cb.message.edit_text(
+        text, parse_mode="HTML", reply_markup=kb.as_markup(), disable_web_page_preview=True,
+    )
 
 
 @router.callback_query(F.data.startswith("bs_refs:"))
@@ -529,7 +537,9 @@ async def cb_concept_refs(cb: types.CallbackQuery):
         ),
     )
     kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+    await cb.message.edit_text(
+        text, parse_mode="HTML", reply_markup=kb.as_markup(), disable_web_page_preview=True,
+    )
 
 
 @router.callback_query(F.data.startswith("bs_deepen:"))
@@ -588,7 +598,9 @@ async def cb_concept_deepen(cb: types.CallbackQuery):
         ),
     )
     kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+    await cb.message.edit_text(
+        text, parse_mode="HTML", reply_markup=kb.as_markup(), disable_web_page_preview=True,
+    )
 
 
 @router.callback_query(F.data.startswith("bs_fuji_recipe:"))

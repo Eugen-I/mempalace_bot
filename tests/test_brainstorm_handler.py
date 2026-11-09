@@ -23,9 +23,9 @@ class FakeStatus:
         self.edits = []
         self.last_kw = None
 
-    async def edit_text(self, text, parse_mode=None, reply_markup=None):
+    async def edit_text(self, text, parse_mode=None, reply_markup=None, **kwargs):
         self.edits.append(text)
-        self.last_kw = {"parse_mode": parse_mode, "reply_markup": reply_markup}
+        self.last_kw = {"parse_mode": parse_mode, "reply_markup": reply_markup, **kwargs}
 
 
 class FakeMessage:
@@ -37,13 +37,13 @@ class FakeMessage:
         self.edits = []
         self.last_reply_markup = None
 
-    async def answer(self, text, parse_mode=None, reply_markup=None):
+    async def answer(self, text, parse_mode=None, reply_markup=None, **kwargs):
         self.answers.append(text)
         status = FakeStatus()
         self.last_status = status
         return status
 
-    async def edit_text(self, text, parse_mode=None, reply_markup=None):
+    async def edit_text(self, text, parse_mode=None, reply_markup=None, **kwargs):
         self.edits.append(text)
         self.last_reply_markup = reply_markup
 

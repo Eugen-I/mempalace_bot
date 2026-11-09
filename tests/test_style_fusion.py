@@ -618,6 +618,25 @@ def test_deepen_and_references_prompts_and_cards():
     assert "Мастера для визуального изучения" in refs_card
     assert "Сниппет из поиска" in refs_card
     assert "<!--" not in refs_card
+    assert "<br>" not in refs_card
+    assert "&lt;br&gt;" not in refs_card
+    assert "Google Картинки" in refs_card
+    assert "Pinterest" in refs_card
+    assert "https://www.google.com/search?tbm=isch&amp;q=" in refs_card or "https://www.google.com/search?tbm=isch&q=" in refs_card
+    assert "https://www.pinterest.com/search/pins/?q=" in refs_card
+
+    # Карточка референсов с HTML-сниппетами из поиска (очистка <br> и ссылок)
+    raw_snippets = (
+        "🌐 <b>Результаты поиска</b><br><br>"
+        "🔍 Результаты по «Сюрреализм photography» (HTML):<br>"
+        '1. <a href="https://example.com/ref1">Amateur Photographer</a> — история журнала.<br>'
+        "2. Работы мастеров сюрреализма."
+    )
+    card_with_html = format_references_card(concept, web_snippets=raw_snippets)
+    assert "<br>" not in card_with_html
+    assert "&lt;br&gt;" not in card_with_html
+    assert '<a href="https://example.com/ref1">Amateur Photographer</a>' in card_with_html
+    assert "Работы мастеров сюрреализма." in card_with_html
 
 
 def test_parse_fusion_concepts_truncated_max_tokens():

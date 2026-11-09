@@ -142,6 +142,12 @@ def test_format_strips_outer_whitespace():
     assert safe_html_format("  текст  ") == "текст"
 
 
+def test_format_converts_br_to_newline():
+    assert safe_html_format("строка 1<br>строка 2<br/>строка 3<br />строка 4") == (
+        "строка 1\nстрока 2\nстрока 3\nстрока 4"
+    )
+
+
 def test_format_multiline_combined():
     text = "# Док\n\nкакой-то **важный** `код`"
     out = safe_html_format(text)

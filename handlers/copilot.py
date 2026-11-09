@@ -53,6 +53,11 @@ from services.copilot_kg_linker import (
     save_project_to_kg,
 )
 from services.copilot_mindmap import export_project_mindmap_file, format_mindmap_card
+from services.fuji_multiexposure import (
+    build_multiexposure_plan,
+    format_multiexposure_card,
+    generate_surreal_multiexposure,
+)
 from services.copilot_session import CopilotSession, get_copilot_manager
 from services.text_formatter import safe_html_format
 
@@ -347,10 +352,51 @@ def build_field_assistant_kb(session: CopilotSession) -> types.InlineKeyboardMar
     )
     builder.row(
         types.InlineKeyboardButton(
+            text="🎞 Мультиэкспозиция X-T4",
+            callback_data="cp_multiexposure",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
             text="↩️ К вариантам проектов", callback_data="cp_to_variants",
         ),
         types.InlineKeyboardButton(
             text="🏁 Завершить сессию", callback_data="cp_finish",
+        ),
+    )
+    return builder.as_markup()
+
+
+def build_multiexposure_kb(
+    active_mode: str = "DARK",
+    frames_count: int = 2,
+) -> types.InlineKeyboardMarkup:
+    """Клавиатура управления режимами мультиэкспозиции Fujifilm X-T4."""
+    builder = InlineKeyboardBuilder()
+
+    btn_dark = ("✅ " if active_mode == "DARK" else "") + "🌑 Тёмный"
+    btn_bright = ("✅ " if active_mode == "BRIGHT" else "") + "🌕 Яркий"
+    btn_avg = ("✅ " if active_mode == "AVERAGE" else "") + "⚖️ Средний"
+    btn_add = ("✅ " if active_mode == "ADDITIVE" else "") + "➕ Сложение"
+
+    builder.row(
+        types.InlineKeyboardButton(text=btn_dark, callback_data="cp_me_blend:DARK"),
+        types.InlineKeyboardButton(text=btn_bright, callback_data="cp_me_blend:BRIGHT"),
+    )
+    builder.row(
+        types.InlineKeyboardButton(text=btn_avg, callback_data="cp_me_blend:AVERAGE"),
+        types.InlineKeyboardButton(text=btn_add, callback_data="cp_me_blend:ADDITIVE"),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🎲 Сюрреалистичный комбо (Cadavre Exquis)",
+            callback_data="cp_me_surreal",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="↩️ К полевому чек-листу",
+            callback_data="cp_to_field_assistant",
         ),
     )
     return builder.as_markup()
@@ -1352,6 +1398,73 @@ async def cb_copilot_export_mindmap(cb: types.CallbackQuery):
             f"⚠️ Не удалось создать ментальную карту: {safe_html_format(str(exc))}",
             parse_mode="HTML",
         )
+
+
+@router.callback_query(F.data == "cp_multiexposure", allowed_callback)
+async def cb_copilot_multiexposure(cb: types.CallbackQuery):
+    """Отображение сценария мультиэкспозиции X-T4 с автоподбором режима под проект."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    plan = build_multiexposure_plan(session=session)
+    text = format_multiexposure_card(plan)
+    kb = build_multiexposure_kb(active_mode=plan.blend_mode, frames_count=plan.frames_count)
+
+    await cb.answer("🎞 Мультиэкспозиция X-T4 сформирована")
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] multiexposure edit failed: %s", e)
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("cp_me_blend:"), allowed_callback)
+async def cb_copilot_me_blend(cb: types.CallbackQuery):
+    """Переключение аппаратного режима наложения мультиэкспозиции."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message or not cb.data:
+        await cb.answer("Сессия не найдена")
+        return
+
+    target_mode = cb.data.split(":", 1)[1]
+    plan = build_multiexposure_plan(session=session, blend_mode=target_mode)
+    text = format_multiexposure_card(plan)
+    kb = build_multiexposure_kb(active_mode=plan.blend_mode, frames_count=plan.frames_count)
+
+    await cb.answer(f"Режим переключен: {plan.blend_mode_ru}")
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] multiexposure blend edit failed: %s", e)
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data == "cp_me_surreal", allowed_callback)
+async def cb_copilot_me_surreal(cb: types.CallbackQuery):
+    """Генерация стохастической сюрреалистической мультиэкспозиции методом Cadavre Exquis."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    plan = generate_surreal_multiexposure(session=session)
+    text = format_multiexposure_card(plan)
+    kb = build_multiexposure_kb(active_mode=plan.blend_mode, frames_count=plan.frames_count)
+
+    await cb.answer("🎲 Сюрреалистический комбо сгенерирован!")
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] surreal multiexposure edit failed: %s", e)
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.callback_query(F.data == "cp_finish", allowed_callback)

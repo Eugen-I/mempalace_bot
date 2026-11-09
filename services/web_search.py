@@ -26,6 +26,49 @@ YAHOO_SEARCH_URL = "https://search.yahoo.com/search"
 _SNIPPET_SELECTORS = ".table-snippet, .result__snippet, .compText"
 
 
+def _extract_href(node) -> str:
+    """Извлекает и очищает URL ссылки из узла или его контекста."""
+    import urllib.parse
+
+    raw = ""
+    if getattr(node, "tag", None) == "a":
+        raw = node.attributes.get("href") or ""
+    if not raw:
+        child_a = node.css_first("a")
+        if child_a:
+            raw = child_a.attributes.get("href") or ""
+    if not raw and getattr(node, "parent", None):
+        if node.parent.tag == "a":
+            raw = node.parent.attributes.get("href") or ""
+        else:
+            parent_a = node.parent.css_first("a")
+            if parent_a:
+                raw = parent_a.attributes.get("href") or ""
+            elif getattr(node.parent, "parent", None):
+                gp_a = node.parent.parent.css_first("a.result__url, a.result-link, a")
+                if gp_a:
+                    raw = gp_a.attributes.get("href") or ""
+
+    if not raw:
+        return ""
+
+    if "uddg=" in raw:
+        try:
+            parsed = urllib.parse.urlparse(raw)
+            qs = urllib.parse.parse_qs(parsed.query)
+            uddg = qs.get("uddg")
+            if uddg and uddg[0]:
+                return uddg[0]
+        except Exception as exc:
+            logger.debug("[WebSearch] Failed to parse uddg redirect: %s", exc)
+
+    if raw.startswith("//"):
+        return "https:" + raw
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return raw
+    return ""
+
+
 def _collect_snippets(html_text: str, selectors: str, min_len: int,
                       max_results: int) -> list[dict]:
     """Извлекает сниппеты через selectolax (вместо regex-парсинга HTML)."""
@@ -36,7 +79,8 @@ def _collect_snippets(html_text: str, selectors: str, min_len: int,
     for node in tree.css(selectors):
         text = node.text(strip=True)
         if len(text) > min_len:
-            results.append({"text": text, "url": ""})
+            url = _extract_href(node)
+            results.append({"text": text, "url": url})
             if len(results) >= max_results:
                 break
     return results
@@ -202,9 +246,18 @@ async def search_web(query: str, max_results: int = 5) -> str:
         abstract = data.get("AbstractText", "")
         if abstract:
             source = data.get("AbstractSource", "")
+            abstract_url = data.get("AbstractURL", "")
             line = f"📖 {html.escape(abstract)}"
             if source:
-                line += f"\n   Источник: {source}"
+                if abstract_url:
+                    line += (
+                        f'\n   Источник: <a href="{html.escape(abstract_url)}">'
+                        f'{html.escape(source)}</a>'
+                    )
+                else:
+                    line += f"\n   Источник: {html.escape(source)}"
+            elif abstract_url:
+                line += f'\n   <a href="{html.escape(abstract_url)}">Источник</a>'
             parts.append(line)
             parts.append("")
 
@@ -234,14 +287,16 @@ async def search_web(query: str, max_results: int = 5) -> str:
                 text = r.get("Text", "") or r.get("Result", "")
                 url = r.get("FirstURL", "")
                 if text:
-                    parts.append(f"{i}. {text}")
+                    text_esc = html.escape(text)
                     if url:
-                        parts.append(f"   {url}")
+                        parts.append(f'{i}. <a href="{html.escape(url)}">{text_esc}</a>')
+                    else:
+                        parts.append(f"{i}. {text_esc}")
             parts.append("")
 
-        result = "<br>".join(parts).strip()
+        result = "\n".join(parts).strip()
         if result:
-            return f"🌐 <b>Результаты поиска</b><br><br>{result}"
+            return f"🌐 <b>Результаты поиска</b>\n\n{result}"
 
         # 2. Fallback: Lite
         logger.info(f"[WebSearch] Instant Answer пустой, пробуем Lite для: {query}")
@@ -257,8 +312,13 @@ async def search_web(query: str, max_results: int = 5) -> str:
         if html_results:
             parts = [f"🔍 Результаты по «{html.escape(query)}» (Lite):"]
             for i, r in enumerate(html_results, 1):
-                parts.append(f"{i}. {r['text']}")
-            return "🌐 <b>Результаты поиска</b><br><br>" + "<br>".join(parts)
+                text_esc = html.escape(r["text"])
+                url = r.get("url", "")
+                if url:
+                    parts.append(f'{i}. <a href="{html.escape(url)}">{text_esc}</a>')
+                else:
+                    parts.append(f"{i}. {text_esc}")
+            return "🌐 <b>Результаты поиска</b>\n\n" + "\n".join(parts)
 
         # 3. Последний fallback: полный HTML
         logger.info(f"[WebSearch] Lite пустой, пробуем полный HTML для: {query}")
@@ -274,8 +334,13 @@ async def search_web(query: str, max_results: int = 5) -> str:
         if html_results:
             parts = [f"🔍 Результаты по «{html.escape(query)}» (HTML):"]
             for i, r in enumerate(html_results, 1):
-                parts.append(f"{i}. {r['text']}")
-            return "🌐 <b>Результаты поиска</b><br><br>" + "<br>".join(parts)
+                text_esc = html.escape(r["text"])
+                url = r.get("url", "")
+                if url:
+                    parts.append(f'{i}. <a href="{html.escape(url)}">{text_esc}</a>')
+                else:
+                    parts.append(f"{i}. {text_esc}")
+            return "🌐 <b>Результаты поиска</b>\n\n" + "\n".join(parts)
 
         return f"🤷 Ничего не найдено по запросу «{html.escape(query)}»."
 
