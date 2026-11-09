@@ -12,7 +12,7 @@ import pytest
 
 from handlers import copilot as h
 import services.copilot_engine as engine
-from services.copilot_session import CopilotSession, CopilotSessionManager, get_copilot_manager
+from services.copilot_session import CopilotSession, CopilotSessionManager
 
 
 class FakeUser:
@@ -172,7 +172,7 @@ async def test_cmd_copilot_with_topic_starts_session(monkeypatch):
 @pytest.mark.asyncio
 async def test_handle_copilot_text_message(monkeypatch):
     mgr = h.get_copilot_manager()
-    sess = mgr.create_or_replace_session(4242, "Городской туман")
+    mgr.create_or_replace_session(4242, "Городской туман")
 
     async def fake_reply(sess, text):
         return "Интересная мысль про фонари. Какой свет используем?"
@@ -243,7 +243,64 @@ async def test_cb_copilot_reset():
     mgr = h.get_copilot_manager()
     mgr.create_or_replace_session(4242, "Тема")
     assert mgr.get_session(4242) is not None
+    h._copilot_waiting_topic[4242] = True
 
     cb = FakeCb(data="cp_reset")
     await h.cb_copilot_reset(cb)
     assert mgr.get_session(4242) is None
+    assert 4242 not in h._copilot_waiting_topic
+
+
+@pytest.mark.asyncio
+async def test_cmd_copilot_without_args_sets_waiting_topic():
+    h._copilot_waiting_topic.clear()
+    msg = FakeMessage(text="/copilot")
+    await h.cmd_copilot(msg)
+    assert 4242 in h._copilot_waiting_topic
+
+
+@pytest.mark.asyncio
+async def test_cb_copilot_start_sets_waiting_topic_and_clears_storm():
+    from handlers.brainstorm import _storm_waiting
+    _storm_waiting[4242] = True
+    h._copilot_waiting_topic.clear()
+
+    cb = FakeCb(data="copilot_start")
+    await h.cb_copilot_start(cb)
+
+    assert 4242 in h._copilot_waiting_topic
+    assert 4242 not in _storm_waiting
+    assert any("Арт-копайлот" in a for a in cb.message.answers)
+
+
+@pytest.mark.asyncio
+async def test_cb_copilot_new_prompt_clears_session_and_sets_waiting():
+    from handlers.brainstorm import _storm_waiting
+    mgr = h.get_copilot_manager()
+    mgr.create_or_replace_session(4242, "Старый проект")
+    _storm_waiting[4242] = "fusion"
+    h._copilot_waiting_topic.clear()
+
+    cb = FakeCb(data="cp_new_prompt")
+    await h.cb_copilot_new_prompt(cb)
+
+    assert mgr.get_session(4242) is None
+    assert 4242 in h._copilot_waiting_topic
+    assert 4242 not in _storm_waiting
+    assert any("Новый проект" in a for a in cb.message.answers)
+
+
+@pytest.mark.asyncio
+async def test_launch_copilot_session(monkeypatch):
+    async def fake_start(sess):
+        return "Вводный вопрос арт-директора"
+
+    monkeypatch.setattr(h, "start_copilot_discussion", fake_start)
+    msg = FakeMessage(text="Ребенок в депрессии")
+    await h.launch_copilot_session(msg, "Ребенок в депрессии")
+
+    mgr = h.get_copilot_manager()
+    sess = mgr.get_session(4242)
+    assert sess is not None
+    assert sess.topic == "Ребенок в депрессии"
+    assert any("Вводный вопрос арт-директора" in e for e in msg.last_status.edits)

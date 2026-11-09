@@ -139,7 +139,7 @@ def _mechanic_preview_kb() -> InlineKeyboardBuilder:
 # ─── Команды и меню арсенала ───
 
 
-@router.message(Command("gear", "арсенал"))
+@router.message(Command("gear", "арсенал", ignore_case=True))
 @allowed_only
 async def cmd_gear(message: types.Message):
     """Показывает карточку арсенала техники пользователя."""
@@ -280,7 +280,7 @@ async def cb_gear_close(cb: types.CallbackQuery):
 # ─── Команды и меню фотомеханик ───
 
 
-@router.message(Command("mechanics", "приемы"))
+@router.message(Command("mechanics", "приемы", ignore_case=True))
 @allowed_only
 async def cmd_mechanics(message: types.Message):
     """Показывает список доступных фотомеханик."""

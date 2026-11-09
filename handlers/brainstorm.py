@@ -233,15 +233,27 @@ def get_storm_menu_text_and_kb() -> tuple[str, InlineKeyboardBuilder]:
     return text, kb
 
 
+def _clear_copilot_waiting(uid: int) -> None:
+    """Очищает состояние ожидания темы копайлота во избежание взаимных блокировок."""
+    try:
+        from handlers.copilot import _copilot_waiting_topic
+        _copilot_waiting_topic.pop(uid, None)
+    except Exception as exc:
+        logger.debug("[STORM] clear copilot waiting failed: %s", exc)
+
+
 # ─── /штурм <тема> и /синтез ───
 
 
-@router.message(Command("штурм"))
+@router.message(Command("штурм", "storm", ignore_case=True))
 @allowed_only
 async def cmd_storm(message: types.Message):
-    topic = ((message.text or "")[len("/штурм"):]).lstrip()
+    raw_text = message.text or ""
+    parts = raw_text.split(maxsplit=1)
+    topic = parts[1].strip() if len(parts) > 1 else ""
     if not topic:
         _storm_waiting[message.from_user.id] = True
+        _clear_copilot_waiting(message.from_user.id)
         text, kb = get_storm_menu_text_and_kb()
         await message.answer(
             text,
@@ -253,7 +265,7 @@ async def cmd_storm(message: types.Message):
     await run_storm(message.from_user.id, status, topic)
 
 
-@router.message(Command("синтез", "fusion", "лаборатория"))
+@router.message(Command("синтез", "fusion", "лаборатория", ignore_case=True))
 @allowed_only
 async def cmd_fusion_storm(message: types.Message):
     raw_text = message.text or ""
@@ -261,6 +273,7 @@ async def cmd_fusion_storm(message: types.Message):
     topic = parts[1].strip() if len(parts) > 1 else ""
     if not topic:
         _storm_waiting[message.from_user.id] = "fusion"
+        _clear_copilot_waiting(message.from_user.id)
         kb = InlineKeyboardBuilder()
         kb.row(
             types.InlineKeyboardButton(text="🎒 Арсенал", callback_data="bs_open_gear"),
@@ -284,6 +297,7 @@ async def cmd_fusion_storm(message: types.Message):
 @allowed_only
 async def btn_storm(message: types.Message):
     _storm_waiting[message.from_user.id] = True
+    _clear_copilot_waiting(message.from_user.id)
     text, kb = get_storm_menu_text_and_kb()
     await message.answer(
         text,
@@ -299,6 +313,7 @@ async def cb_storm_menu(cb: types.CallbackQuery):
     await cb.answer()
     uid = cb.from_user.id
     _storm_waiting[uid] = True
+    _clear_copilot_waiting(uid)
     text, kb = get_storm_menu_text_and_kb()
     try:
         await cb.message.edit_text(
@@ -315,6 +330,7 @@ async def cb_start_fusion(cb: types.CallbackQuery):
     await cb.answer()
     uid = cb.from_user.id
     _storm_waiting[uid] = "fusion"
+    _clear_copilot_waiting(uid)
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
     await cb.message.edit_text(
@@ -957,6 +973,7 @@ async def cb_cancel(cb: types.CallbackQuery):
     await cb.answer()
     _storm_data.pop(cb.from_user.id, None)
     _storm_waiting.pop(cb.from_user.id, None)
+    _clear_copilot_waiting(cb.from_user.id)
     try:
         await cb.message.edit_text("❌ Отменено.")
     except Exception as exc:  # noqa: BLE001 — сообщение может быть удалено

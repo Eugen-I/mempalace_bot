@@ -287,6 +287,44 @@ async def process_user_message(message: types.Message):
         if await handle_copilot_text_message(message):
             return None
 
+    # 0cc_copilot_wait. Ожидание темы для Арт-Копайлота
+    from handlers.copilot import _copilot_waiting_topic, cmd_copilot, launch_copilot_session
+    if uid in _copilot_waiting_topic:
+        _copilot_waiting_topic.pop(uid, None)
+        _storm_waiting.pop(uid, None)
+        clean_topic = text.strip()
+        if clean_topic.lower().startswith(("/copilot", "/копайлот")):
+            parts = clean_topic.split(maxsplit=1)
+            clean_topic = parts[1].strip() if len(parts) > 1 else ""
+        if clean_topic:
+            return await launch_copilot_session(message, clean_topic)
+        else:
+            return await cmd_copilot(message)
+
+    # 0cc_copilot_direct. Прямой перехват команд арт-копайлота (защита от утечки в общий чат)
+    if text.lower().startswith(("/copilot", "/копайлот")):
+        _storm_waiting.pop(uid, None)
+        _copilot_waiting_topic.pop(uid, None)
+        parts = text.split(maxsplit=1)
+        copilot_topic = parts[1].strip() if len(parts) > 1 else ""
+        if copilot_topic:
+            return await launch_copilot_session(message, copilot_topic)
+        else:
+            return await cmd_copilot(message)
+
+    # 0cc_storm_direct. Прямой перехват команд штурма и синтеза (защита от утечки в общий чат)
+    if text.lower().startswith(("/штурм", "/storm")):
+        _storm_waiting.pop(uid, None)
+        _copilot_waiting_topic.pop(uid, None)
+        from handlers.brainstorm import cmd_storm
+        return await cmd_storm(message)
+
+    if text.lower().startswith(("/синтез", "/fusion", "/лаборатория")):
+        _storm_waiting.pop(uid, None)
+        _copilot_waiting_topic.pop(uid, None)
+        from handlers.brainstorm import cmd_fusion_storm
+        return await cmd_fusion_storm(message)
+
     # 0cc. Ожидание темы штурма
     if uid in _storm_waiting:
         from services.photographer_gear import is_gear_description
@@ -299,9 +337,10 @@ async def process_user_message(message: types.Message):
 
         wait_val = _storm_waiting.pop(uid, None)
         mode = "fusion" if wait_val == "fusion" else "standard"
+        clean_storm_topic = text.strip()
         status_msg = "🎨 Запускаю лабораторию синтеза…" if mode == "fusion" else "🧠 Запускаю штурм…"
         status = await message.answer(status_msg)
-        return await run_storm(uid, status, text, mode=mode)
+        return await run_storm(uid, status, clean_storm_topic, mode=mode)
 
     # 0ccb. Ожидание ответа на рефлексию после штурма
     if uid in _reflection_waiting:

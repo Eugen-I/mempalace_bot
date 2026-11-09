@@ -298,6 +298,8 @@ async def test_cb_back_expired():
 
 
 async def test_cb_cancel_clears_state():
+    from handlers.copilot import _copilot_waiting_topic
+    _copilot_waiting_topic[4242] = True
     await h.run_storm(4242, FakeStatus(), "Тема")
     h._storm_waiting[4242] = True
     cb = FakeCb(data="bs_cancel")
@@ -305,6 +307,7 @@ async def test_cb_cancel_clears_state():
     assert "Отменено" in cb.message.edits[-1]
     assert 4242 not in h._storm_data
     assert 4242 not in h._storm_waiting
+    assert 4242 not in _copilot_waiting_topic
 
 
 # ─── Границы: количество идей ───
@@ -687,7 +690,10 @@ async def test_run_storm_auto_fallback_on_gemini_429(monkeypatch):
     async def fake_get_ai(engine, model, msgs, sampling=None):
         calls.append((engine, model))
         if engine == "gemini":
-            return "❌ Ошибка ИИ (gemini): 429 Quota exceeded for metric: generate_content_free_tier_requests"
+            return (
+                "❌ Ошибка ИИ (gemini): 429 Quota exceeded for metric: "
+                "generate_content_free_tier_requests"
+            )
         return (
             '{"projects": [{\n'
             '  "title": "Локальный проект от Qwen",\n'

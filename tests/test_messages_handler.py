@@ -225,6 +225,8 @@ def _clean_state():
     get_copilot_manager().clear_session(999)
     from handlers.brainstorm import _storm_waiting
     _storm_waiting.clear()
+    from handlers.copilot import _copilot_waiting_topic
+    _copilot_waiting_topic.clear()
     messages._last_user_query.clear()
     yield
 
@@ -1951,3 +1953,75 @@ def test_ai_search_success_caches_final_answer(monkeypatch, tmp_path):
     assert data["messages"][-1] == {
         "role": "assistant", "content": "финальный ответ",
     }
+
+
+def test_copilot_waiting_topic_interception(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.copilot import _copilot_waiting_topic
+    _copilot_waiting_topic[4242] = True
+
+    launched = []
+
+    async def fake_launch(msg, topic):
+        launched.append((msg.from_user.id, topic))
+
+    monkeypatch.setattr("handlers.copilot.launch_copilot_session", fake_launch)
+
+    msg = FakeMessage(text="Ребенок в депрессии")
+    asyncio.run(messages.process_user_message(msg))
+
+    assert launched == [(4242, "Ребенок в депрессии")]
+    assert 4242 not in _copilot_waiting_topic
+
+
+def test_copilot_waiting_topic_with_slash_command(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.copilot import _copilot_waiting_topic
+    _copilot_waiting_topic[4242] = True
+
+    launched = []
+
+    async def fake_launch(msg, topic):
+        launched.append((msg.from_user.id, topic))
+
+    monkeypatch.setattr("handlers.copilot.launch_copilot_session", fake_launch)
+
+    msg = FakeMessage(text="/Copilot Ребенок в депрессии")
+    asyncio.run(messages.process_user_message(msg))
+
+    assert launched == [(4242, "Ребенок в депрессии")]
+    assert 4242 not in _copilot_waiting_topic
+
+
+def test_direct_copilot_command_case_insensitive(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    launched = []
+
+    async def fake_launch(msg, topic):
+        launched.append((msg.from_user.id, topic))
+
+    monkeypatch.setattr("handlers.copilot.launch_copilot_session", fake_launch)
+
+    msg = FakeMessage(text="/Copilot Архитипы Юнга")
+    asyncio.run(messages.process_user_message(msg))
+
+    assert launched == [(4242, "Архитипы Юнга")]
+
+
+def test_storm_waiting_redirects_to_copilot_on_command(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    from handlers.brainstorm import _storm_waiting
+    _storm_waiting[4242] = "fusion"
+
+    launched = []
+
+    async def fake_launch(msg, topic):
+        launched.append((msg.from_user.id, topic))
+
+    monkeypatch.setattr("handlers.copilot.launch_copilot_session", fake_launch)
+
+    msg = FakeMessage(text="/Copilot Ребенок в депрессии")
+    asyncio.run(messages.process_user_message(msg))
+
+    assert launched == [(4242, "Ребенок в депрессии")]
+    assert 4242 not in _storm_waiting

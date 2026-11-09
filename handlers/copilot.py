@@ -67,10 +67,13 @@ from services.copilot_series import (
 )
 from services.copilot_session import CopilotSession, get_copilot_manager
 from services.text_formatter import safe_html_format
+from services.ttl_dict import TtlDict
 
 logger = logging.getLogger("CopilotHandler")
 
 router = Router()
+
+_copilot_waiting_topic: TtlDict = TtlDict(ttl=3600)
 
 
 def build_copilot_dialogue_kb(session: CopilotSession) -> types.InlineKeyboardMarkup:
@@ -591,7 +594,27 @@ def build_fuji_recipe_kb(slot_name: str = "C1") -> types.InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-@router.message(Command("copilot", "копайлот"))
+async def launch_copilot_session(message: types.Message, topic: str) -> None:
+    """Запуск новой сессии с заданной темой."""
+    uid = message.from_user.id
+    manager = get_copilot_manager()
+    session = manager.create_or_replace_session(uid, topic)
+    status_msg = await message.answer("🧠 <i>Арт-директор изучает тему…</i>", parse_mode="HTML")
+
+    opening = await start_copilot_discussion(session)
+    kb = build_copilot_dialogue_kb(session)
+
+    header = f"🎙 <b>Арт-копайлот | Тема: «{safe_html_format(session.topic)}»</b>\n\n"
+    text = f"{header}{safe_html_format(opening)}"
+
+    try:
+        await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.warning("[COPILOT] edit status failed: %s", e)
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.message(Command("copilot", "копайлот", ignore_case=True))
 @allowed_only
 async def cmd_copilot(message: types.Message):
     """Точка входа: /copilot <тема проекта>."""
@@ -603,6 +626,7 @@ async def cmd_copilot(message: types.Message):
     existing = manager.get_session(uid)
 
     if not args:
+        _copilot_waiting_topic[uid] = True
         if existing:
             builder = InlineKeyboardBuilder()
             if existing.stage == "completed":
@@ -636,7 +660,8 @@ async def cmd_copilot(message: types.Message):
                 f"🎙 <b>Арт-копайлот</b>\n\n"
                 f"У вас есть проект: «<b>{safe_html_format(existing.topic)}</b>»\n"
                 f"Текущий статус: <i>{stage_ru}</i>\n\n"
-                "Хотите открыть материалы или начать новый проект?",
+                "Хотите открыть материалы или начать новый проект?\n"
+                "<i>Или напишите тему прямо в ответ на это сообщение.</i>",
                 parse_mode="HTML",
                 reply_markup=builder.as_markup(),
             )
@@ -646,38 +671,57 @@ async def cmd_copilot(message: types.Message):
             "🎙 <b>Арт-копайлот: Соавторство фотопроекта</b>\n\n"
             "Задайте тему или художественный замысел проекта:\n"
             "<code>/copilot Архитипы Юнга в обычной жизни</code>\n\n"
-            "<i>Вы сможете обсудить идею с арт-директором, подобрать стили "
-            "и параметры съемки X-T4.</i>",
+            "<i>Вы можете ввести команду или написать тему прямо в ответ на это сообщение.</i>",
             parse_mode="HTML",
         )
         return
 
     # Запуск новой сессии с заданной темой
-    session = manager.create_or_replace_session(uid, args)
-    status_msg = await message.answer("🧠 <i>Арт-директор изучает тему…</i>", parse_mode="HTML")
-
-    opening = await start_copilot_discussion(session)
-    kb = build_copilot_dialogue_kb(session)
-
-    header = f"🎙 <b>Арт-копайлот | Тема: «{safe_html_format(session.topic)}»</b>\n\n"
-    text = f"{header}{safe_html_format(opening)}"
-
-    try:
-        await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    except Exception as e:
-        logger.warning("[COPILOT] edit status failed: %s", e)
-        await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    _copilot_waiting_topic.pop(uid, None)
+    await launch_copilot_session(message, args)
 
 
 @router.callback_query(F.data == "copilot_start", allowed_callback)
 async def cb_copilot_start(cb: types.CallbackQuery):
     """Быстрый запуск копайлота из меню Штурма."""
     await cb.answer()
+    uid = cb.from_user.id
+    _copilot_waiting_topic[uid] = True
+    try:
+        from handlers.brainstorm import _storm_waiting
+        _storm_waiting.pop(uid, None)
+    except Exception as e:
+        logger.debug("[COPILOT] storm_waiting pop error: %s", e)
+
     if cb.message:
         await cb.message.answer(
             "🎙 <b>Арт-копайлот (Диалоговая лаборатория)</b>\n\n"
             "Введите команду с вашей темой:\n"
             "<code>/copilot Ваша тема</code>\n\n"
+            "Или напишите тему прямо в ответ на это сообщение.",
+            parse_mode="HTML",
+        )
+
+
+@router.callback_query(F.data == "cp_new_prompt", allowed_callback)
+async def cb_copilot_new_prompt(cb: types.CallbackQuery):
+    """Сброс текущей сессии и запрос новой темы копайлота."""
+    await cb.answer()
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    manager.clear_session(uid)
+    _copilot_waiting_topic[uid] = True
+    try:
+        from handlers.brainstorm import _storm_waiting
+        _storm_waiting.pop(uid, None)
+    except Exception as e:
+        logger.debug("[COPILOT] storm_waiting pop error: %s", e)
+
+    if cb.message:
+        await cb.message.answer(
+            "🎙 <b>Арт-копайлот: Новый проект</b>\n\n"
+            "Задайте тему или художественный замысел проекта:\n"
+            "<code>/copilot Архитипы Юнга в обычной жизни</code>\n\n"
             "Или напишите тему прямо в ответ на это сообщение.",
             parse_mode="HTML",
         )
@@ -777,6 +821,7 @@ async def cb_copilot_pause(cb: types.CallbackQuery):
 async def cb_copilot_reset(cb: types.CallbackQuery):
     """Сброс сессии."""
     uid = cb.from_user.id
+    _copilot_waiting_topic.pop(uid, None)
     manager = get_copilot_manager()
     manager.clear_session(uid)
     await cb.answer("Сессия сброшена")
@@ -1956,7 +2001,7 @@ def _format_recipe_book_list(
     return "\n".join(lines), builder.as_markup()
 
 
-@router.message(Command("myrecipes", "книга_рецептов", "recipes"))
+@router.message(Command("myrecipes", "книга_рецептов", "recipes", ignore_case=True))
 @allowed_only
 async def cmd_myrecipes(message: types.Message):
     """Точка входа в постоянную «Книгу рецептов фотографа»."""
@@ -2141,7 +2186,7 @@ async def cb_copilot_recipe_standalone_roll(cb: types.CallbackQuery):
         logger.debug("[COPILOT] standalone roll edit failed: %s", e)
 
 
-@router.message(Command("recipe", "рецепт", "fuji", "cadavre"))
+@router.message(Command("recipe", "рецепт", "fuji", "cadavre", ignore_case=True))
 @allowed_only
 async def cmd_recipe(message: types.Message):
     """Точка входа в рецепты Fujifilm X-T4: вывод рецепта проекта или роллер сюрреализма."""
