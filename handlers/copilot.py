@@ -58,7 +58,17 @@ def build_copilot_dialogue_kb(session: CopilotSession) -> types.InlineKeyboardMa
     """Клавиатура управления Сократическим диалогом."""
     builder = InlineKeyboardBuilder()
 
-    # Если было хотя бы 2 реплики, можно перейти к выбору стилей
+    # Кнопка ассоциативных резонансов из Дворца Памяти
+    resonances = session.tech_preferences.get("palace_resonances")
+    if isinstance(resonances, list) and len(resonances) > 0:
+        builder.row(
+            types.InlineKeyboardButton(
+                text="💡 Мысли из Дворца Памяти",
+                callback_data="cp_palace_resonances",
+            ),
+        )
+
+    # Если было хотя бы 1 реплика, можно перейти к выбору стилей
     user_turns = sum(1 for m in session.dialogue_history if m.get("role") == "user")
     if user_turns >= 1:
         builder.row(
@@ -502,6 +512,57 @@ async def cb_copilot_resume(cb: types.CallbackQuery):
         "Отправьте реплику текстом или голосом:"
     )
     await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data == "cp_palace_resonances", allowed_callback)
+async def cb_copilot_palace_resonances(cb: types.CallbackQuery):
+    """Отображение карточки ассоциативных резонансов из Дворца Памяти."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена", show_alert=True)
+        return
+
+    from services.copilot_palace_bridge import (
+        format_palace_resonances_card,
+        get_or_find_session_resonances,
+    )
+
+    resonances = get_or_find_session_resonances(session)
+    text = format_palace_resonances_card(resonances, topic=session.topic)
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(
+            text="↩️ Назад к диалогу",
+            callback_data="cp_back_to_dialogue",
+        ),
+    )
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "cp_back_to_dialogue", allowed_callback)
+async def cb_copilot_back_to_dialogue(cb: types.CallbackQuery):
+    """Возврат из карточки резонансов к Сократическому диалогу."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена", show_alert=True)
+        return
+
+    kb = build_copilot_dialogue_kb(session)
+    last_bot_msg = next(
+        (m["content"] for m in reversed(session.dialogue_history) if m.get("role") == "assistant"),
+        "",
+    )
+    text = (
+        f"🎙 <b>Арт-копайлот | Тема: «{safe_html_format(session.topic)}»</b>\n\n"
+        f"<i>Арт-директор:</i>\n{safe_html_format(last_bot_msg)}\n\n"
+        "Отправьте реплику текстом или голосом:"
+    )
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.callback_query(F.data == "cp_pause", allowed_callback)

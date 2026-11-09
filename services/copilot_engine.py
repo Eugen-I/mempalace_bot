@@ -55,10 +55,19 @@ COPILOT_SUMMARIZE_SYSTEM = """Ты — арт-куратор.
 
 
 def build_socratic_messages(
-    topic: str, dialogue_history: list[dict[str, Any]],
+    topic: str,
+    dialogue_history: list[dict[str, Any]],
+    palace_resonances: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     """Формирует список сообщений для языковой модели Сократического диалога."""
     system_content = f"{COPILOT_SOCRATIC_SYSTEM}\n\nТЕМА ПРОЕКТА: «{topic}»."
+    if palace_resonances:
+        from services.copilot_palace_bridge import format_palace_resonances_context
+
+        res_ctx = format_palace_resonances_context(palace_resonances)
+        if res_ctx:
+            system_content += f"\n\n{res_ctx}"
+
     messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
 
     for entry in dialogue_history:
@@ -73,7 +82,12 @@ def build_socratic_messages(
 async def generate_socratic_reply(session: CopilotSession, user_input: str) -> str:
     """Обрабатывает реплику пользователя и генерирует следующий вопрос/мысль арт-директора."""
     session.add_user_message(user_input)
-    messages = build_socratic_messages(session.topic, session.dialogue_history)
+    from services.copilot_palace_bridge import get_or_find_session_resonances
+
+    resonances = get_or_find_session_resonances(session)
+    messages = build_socratic_messages(
+        session.topic, session.dialogue_history, palace_resonances=resonances,
+    )
 
     engine, model = get_current_ai()
     sampling = {"temperature": 0.75, "max_tokens": 500}
@@ -156,13 +170,25 @@ async def summarize_creative_dialogue(session: CopilotSession) -> str:
 
 async def start_copilot_discussion(session: CopilotSession) -> str:
     """Генерирует первое вступительное слово и первый Сократический вопрос арт-директора."""
+    from services.copilot_palace_bridge import (
+        format_palace_resonances_context,
+        get_or_find_session_resonances,
+    )
+
+    resonances = get_or_find_session_resonances(session)
+    system_content = COPILOT_SOCRATIC_SYSTEM
+    if resonances:
+        res_ctx = format_palace_resonances_context(resonances)
+        if res_ctx:
+            system_content += f"\n\n{res_ctx}"
+
     prompt = (
         f"Фотограф выбрал тему для арт-проекта: «{session.topic}».\n"
         "Выступи как вдохновляющий арт-директор: в 1–2 фразах подчеркни потенциал темы "
         "и задай первый вопрос, определяющий эмоциональное ядро или конфликт кадра."
     )
     messages = [
-        {"role": "system", "content": COPILOT_SOCRATIC_SYSTEM},
+        {"role": "system", "content": system_content},
         {"role": "user", "content": prompt},
     ]
 
