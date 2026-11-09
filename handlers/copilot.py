@@ -19,14 +19,18 @@ from config import allowed_callback, allowed_only
 from services.copilot_engine import (
     COPILOT_STYLES,
     append_styles_to_summary,
+    consult_tech_parameters,
     format_manifesto_card,
     format_styles_selection_card,
+    format_tech_card,
     generate_initial_manifesto,
     generate_socratic_reply,
     get_random_style_synergy,
+    init_tech_preferences,
     refine_manifesto,
     start_copilot_discussion,
     summarize_creative_dialogue,
+    update_tech_preference,
 )
 from services.copilot_session import CopilotSession, get_copilot_manager
 from services.text_formatter import safe_html_format
@@ -130,6 +134,97 @@ def build_manifesto_kb(session: CopilotSession) -> types.InlineKeyboardMarkup:
         types.InlineKeyboardButton(text="↩️ К выбору стилей", callback_data="cp_select_styles"),
         types.InlineKeyboardButton(text="❌ Сбросить", callback_data="cp_reset"),
     )
+    return builder.as_markup()
+
+
+def build_tech_kb(session: CopilotSession) -> types.InlineKeyboardMarkup:
+    """Интерактивная клавиатура технического сетапа и арсенала."""
+    tech = session.tech_preferences or {}
+    support = tech.get("support", "")
+    lens = tech.get("lens", "")
+    filter_acc = tech.get("filter_accessory", "")
+    lighting = tech.get("lighting", "")
+
+    builder = InlineKeyboardBuilder()
+
+    # Ряд 1: Метод съемки (С рук vs Штатив)
+    is_handheld = "рук" in support.lower()
+    builder.row(
+        types.InlineKeyboardButton(
+            text=f"{'✅' if is_handheld else '▫️'} 👐 С рук (ICM)",
+            callback_data="cp_tech:support:handheld",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{'✅' if not is_handheld else '▫️'} 🔭 Штатив",
+            callback_data="cp_tech:support:tripod",
+        ),
+    )
+
+    # Ряд 2: Объектив (Гелиос vs Fuji)
+    is_helios = "гелиос" in lens.lower() or "helios" in lens.lower()
+    builder.row(
+        types.InlineKeyboardButton(
+            text=f"{'✅' if is_helios else '▫️'} 🌀 Гелиос 44-2",
+            callback_data="cp_tech:lens:helios",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{'✅' if not is_helios else '▫️'} 📷 XF 18-55mm",
+            callback_data="cp_tech:lens:fuji",
+        ),
+    )
+
+    # Ряд 3: Фильтр / Призма
+    is_mist = "mist" in filter_acc.lower()
+    is_prism = "призм" in filter_acc.lower()
+    builder.row(
+        types.InlineKeyboardButton(
+            text=f"{'✅' if is_mist else '▫️'} 🔮 Pro-Mist",
+            callback_data="cp_tech:filter:mist",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{'✅' if is_prism else '▫️'} 💎 Призма",
+            callback_data="cp_tech:filter:prism",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{'✅' if not is_mist and not is_prism else '▫️'} 🚫 Без",
+            callback_data="cp_tech:filter:none",
+        ),
+    )
+
+    # Ряд 4: Свет
+    is_backlight = "контровой" in lighting.lower()
+    is_flash = "импульс" in lighting.lower() or "лезвие" in lighting.lower()
+    builder.row(
+        types.InlineKeyboardButton(
+            text=f"{'✅' if is_backlight else '▫️'} 💡 Контровой",
+            callback_data="cp_tech:light:backlight",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{'✅' if is_flash else '▫️'} ⚡️ Импульс",
+            callback_data="cp_tech:light:flash",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{'✅' if not is_backlight and not is_flash else '▫️'} 🕯 Рассеянный",
+            callback_data="cp_tech:light:ambient",
+        ),
+    )
+
+    # Ряд 5: Переход к генерации вариантов проектов (CP-5)
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🚀 Сгенерировать варианты проектов (CP-5) ➡️",
+            callback_data="cp_confirm_tech",
+        ),
+    )
+
+    # Ряд 6: Навигация
+    builder.row(
+        types.InlineKeyboardButton(
+            text="↩️ К манифесту", callback_data="cp_to_manifesto",
+        ),
+        types.InlineKeyboardButton(text="❌ Сбросить", callback_data="cp_reset"),
+    )
+
     return builder.as_markup()
 
 
@@ -555,6 +650,97 @@ async def cb_copilot_confirm_manifesto(cb: types.CallbackQuery):
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
 
+# ─── Шаг 10: Обработчики технического сетапа и арсенала ───
+
+@router.callback_query(F.data == "cp_to_tech", allowed_callback)
+async def cb_copilot_to_tech(cb: types.CallbackQuery):
+    """Открытие экрана съемочных параметров и арсенала X-T4."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    session.stage = "tech"
+    if not session.tech_preferences:
+        init_tech_preferences(session)
+    manager.save_session(session)
+
+    text = format_tech_card(session)
+    kb = build_tech_kb(session)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] to tech edit failed: %s", e)
+
+
+@router.callback_query(F.data.startswith("cp_tech:"), allowed_callback)
+async def cb_copilot_tech_toggle(cb: types.CallbackQuery):
+    """Быстрое переключение параметров съемки (поддержка, объектив, фильтр, свет)."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    parts = cb.data.split(":", 2)
+    if len(parts) == 3:
+        _, key, val = parts
+        update_tech_preference(session, key, val)
+
+    await cb.answer("Параметры обновлены")
+    text = format_tech_card(session)
+    kb = build_tech_kb(session)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] tech toggle edit failed: %s", e)
+
+
+@router.callback_query(F.data == "cp_confirm_tech", allowed_callback)
+async def cb_copilot_confirm_tech(cb: types.CallbackQuery):
+    """Утверждение технических параметров и переход к генерации вариантов проектов."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    session.stage = "variants"
+    manager.save_session(session)
+    await cb.answer("Съемочный сетап зафиксирован!")
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🎲 Создать 2–3 контрастных проекта (CP-5) ➡️",
+            callback_data="cp_to_variants",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="↩️ К параметрам съемки", callback_data="cp_to_tech",
+        ),
+        types.InlineKeyboardButton(text="❌ Сбросить", callback_data="cp_reset"),
+    )
+
+    tech = session.tech_preferences or {}
+    text = (
+        f"⚙️ <b>Съемочный сетап утвержден!</b>\n\n"
+        f"📷 Камера: <b>{safe_html_format(tech.get('camera', 'Fujifilm X-T4'))}</b>\n"
+        f"🔍 Стекло: <b>{safe_html_format(tech.get('lens', ''))}</b>\n"
+        f"👐 Метод: <b>{safe_html_format(tech.get('support', ''))}</b>\n"
+        f"⏱ Выдержка/диафрагма: <code>{safe_html_format(tech.get('shutter_speed', ''))}</code>, "
+        f"<code>{safe_html_format(tech.get('aperture', ''))}</code>, "
+        f"<code>{safe_html_format(tech.get('film_sim', ''))}</code>\n\n"
+        "<i>Следующий этап: контрастная дивергенция 2–3 вариантов проектов (Шаг 11 / CP-5).</i>"
+    )
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+
 async def handle_copilot_text_message(message: types.Message) -> bool:
     """Обработчик входящего текста/голоса внутри активных этапов копайлота."""
     uid = message.from_user.id
@@ -594,6 +780,20 @@ async def handle_copilot_text_message(message: types.Message) -> bool:
             await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
         except Exception as e:
             logger.warning("[COPILOT] edit manifesto failed: %s", e)
+            await message.answer(text, parse_mode="HTML", reply_markup=kb)
+        return True
+
+    if session.stage == "tech":
+        status_msg = await message.answer(
+            "⚙️ <i>Консультируюсь с технологом съемки…</i>", parse_mode="HTML",
+        )
+        advice = await consult_tech_parameters(session, user_text)
+        text = format_tech_card(session, advice=advice)
+        kb = build_tech_kb(session)
+        try:
+            await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception as e:
+            logger.warning("[COPILOT] edit tech failed: %s", e)
             await message.answer(text, parse_mode="HTML", reply_markup=kb)
         return True
 

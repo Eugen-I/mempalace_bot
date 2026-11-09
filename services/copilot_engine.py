@@ -382,3 +382,254 @@ def format_manifesto_card(session: CopilotSession) -> str:
         "<i>Скорректируйте тональность кнопками ниже "
         "или отправьте пожелание текстом/голосом:</i>"
     )
+
+
+# ─── Шаг 10: Технический сетап и консультации арт-технолога ───
+
+SUPPORT_PRESETS: dict[str, dict[str, str]] = {
+    "handheld": {
+        "name": "С рук (микро-ICM)",
+        "shutter_speed": '1/6"',
+        "notes": "Микро-тремор 1–2 мм между кадрами для живописного мазка",
+    },
+    "tripod": {
+        "name": "Штатив (статика)",
+        "shutter_speed": '1/15"',
+        "notes": "Четкий контур неподвижных объектов, управляемый смаз",
+    },
+}
+
+LENS_PRESETS: dict[str, dict[str, str]] = {
+    "helios": {
+        "name": "Гелиос 44-2 58mm f/2",
+        "aperture": "f/2",
+        "notes": "Закрученное боке на открытой, мягкий контраст",
+    },
+    "fuji": {
+        "name": "Fujinon XF 18-55mm f/2.8-4 R LM OIS",
+        "aperture": "f/2.8–f/4",
+        "notes": "Оптический стаб OIS, быстрая резкость",
+    },
+}
+
+FILTER_PRESETS: dict[str, str] = {
+    "mist": "Black Pro-Mist 1/4 (ореол светов)",
+    "prism": "Хрустальная треугольная призма",
+    "none": "Без фильтра (чистая оптика)",
+}
+
+LIGHTING_PRESETS: dict[str, str] = {
+    "backlight": "Контровой свет фонаря / силуэт",
+    "flash": "Импульсный свет / жесткое боковое лезвие",
+    "ambient": "Естественный рассеянный полумрак",
+}
+
+COPILOT_TECH_SYSTEM = (
+    "Ты — опытный оператор и технолог художественной фотографии Fujifilm X-T4.\n"
+    "Твоя цель — помочь фотографу адаптировать съемочные параметры камеры и арсенала "
+    "под конкретные условия и творческий замысел.\n"
+    "Отвечай лаконично (2–4 предложения): дай конкретный практический совет по выдержке, "
+    "диафрагме, свету и положению камеры (руки vs штатив).\n"
+    "Общайся на русском языке уважительно и профессионально."
+)
+
+
+def init_tech_preferences(session: CopilotSession) -> dict[str, Any]:
+    """Инициализирует базовые технические параметры съемки на основе выбранных стилей и арсенала."""
+    styles_lower = [s.lower() for s in session.selected_styles]
+
+    if any(s in styles_lower for s in ("импрессионизм", "пиктореализм")):
+        tech = {
+            "camera": "Fujifilm X-T4",
+            "lens": LENS_PRESETS["helios"]["name"],
+            "support": SUPPORT_PRESETS["handheld"]["name"],
+            "shutter_speed": '1/6"',
+            "aperture": "f/2",
+            "iso": "320",
+            "film_sim": "Velvia" if "импрессионизм" in styles_lower else "Classic Chrome",
+            "filter_accessory": FILTER_PRESETS["mist"],
+            "lighting": LIGHTING_PRESETS["backlight"],
+            "handwriting_notes": "Живописная лессировка, микро-тремор на 1/6s, мягкие света",
+        }
+    elif "экспрессионизм" in styles_lower:
+        tech = {
+            "camera": "Fujifilm X-T4",
+            "lens": LENS_PRESETS["helios"]["name"],
+            "support": SUPPORT_PRESETS["handheld"]["name"],
+            "shutter_speed": '1/15"',
+            "aperture": "f/2",
+            "iso": "800",
+            "film_sim": "Monochrome",
+            "filter_accessory": FILTER_PRESETS["none"],
+            "lighting": LIGHTING_PRESETS["flash"],
+            "handwriting_notes": "Жесткий графичный контраст, тени-лезвия, эмоциональный накал",
+        }
+    else:
+        tech = {
+            "camera": "Fujifilm X-T4",
+            "lens": LENS_PRESETS["fuji"]["name"],
+            "support": SUPPORT_PRESETS["handheld"]["name"],
+            "shutter_speed": '1/15"',
+            "aperture": "f/2.8",
+            "iso": "400",
+            "film_sim": "Classic Chrome",
+            "filter_accessory": FILTER_PRESETS["prism"],
+            "lighting": LIGHTING_PRESETS["backlight"],
+            "handwriting_notes": "Геометрические преломления, двойная экспозиция, сложная оптика",
+        }
+
+    session.tech_preferences = tech
+    get_copilot_manager().save_session(session)
+    return tech
+
+
+def update_tech_preference(session: CopilotSession, key: str, value: str) -> None:
+    """Обновляет отдельный параметр технического сетапа по кнопке."""
+    if not session.tech_preferences:
+        init_tech_preferences(session)
+
+    tech = session.tech_preferences
+
+    if key == "support":
+        preset = SUPPORT_PRESETS.get(value, SUPPORT_PRESETS["handheld"])
+        tech["support"] = preset["name"]
+        tech["shutter_speed"] = preset["shutter_speed"]
+    elif key == "lens":
+        preset = LENS_PRESETS.get(value, LENS_PRESETS["helios"])
+        tech["lens"] = preset["name"]
+        tech["aperture"] = preset["aperture"]
+    elif key == "filter":
+        tech["filter_accessory"] = FILTER_PRESETS.get(value, FILTER_PRESETS["mist"])
+    elif key == "light":
+        tech["lighting"] = LIGHTING_PRESETS.get(value, LIGHTING_PRESETS["backlight"])
+
+    session.tech_preferences = tech
+    get_copilot_manager().save_session(session)
+
+
+async def consult_tech_parameters(session: CopilotSession, user_input: str) -> str:
+    """Консультирует автора по съемочным параметрам с учетом его пожеланий и обновляет настройки."""
+    if not session.tech_preferences:
+        init_tech_preferences(session)
+
+    tech = session.tech_preferences
+    user_lower = user_input.lower()
+
+    if "штатив" in user_lower:
+        tech["support"] = SUPPORT_PRESETS["tripod"]["name"]
+        tech["shutter_speed"] = '1/15"'
+    elif "рук" in user_lower or "тремор" in user_lower:
+        tech["support"] = SUPPORT_PRESETS["handheld"]["name"]
+        tech["shutter_speed"] = '1/6"'
+
+    if "гелиос" in user_lower or "helios" in user_lower:
+        tech["lens"] = LENS_PRESETS["helios"]["name"]
+        tech["aperture"] = "f/2"
+    elif "xf" in user_lower or "18-55" in user_lower:
+        tech["lens"] = LENS_PRESETS["fuji"]["name"]
+        tech["aperture"] = "f/2.8"
+
+    if "призм" in user_lower:
+        tech["filter_accessory"] = FILTER_PRESETS["prism"]
+    elif "mist" in user_lower or "мист" in user_lower:
+        tech["filter_accessory"] = FILTER_PRESETS["mist"]
+
+    if "velvia" in user_lower or "вельвия" in user_lower:
+        tech["film_sim"] = "Velvia"
+    elif "монохром" in user_lower or "чб" in user_lower or "acros" in user_lower:
+        tech["film_sim"] = "Monochrome"
+    elif "хром" in user_lower or "chrome" in user_lower:
+        tech["film_sim"] = "Classic Chrome"
+
+    clean_note = user_input.strip()
+    if clean_note:
+        tech["handwriting_notes"] = clean_note[:120]
+
+    prompt = (
+        f"Тема: «{session.topic}».\n"
+        f"Манифест: {session.manifesto}\n"
+        f"Камера: {tech.get('camera')}, Объектив: {tech.get('lens')}, "
+        f"Метод: {tech.get('support')}.\n"
+        f"Выдержка: {tech.get('shutter_speed')}, Диафрагма: {tech.get('aperture')}, "
+        f"ISO: {tech.get('iso')}, Пленка: {tech.get('film_sim')}.\n"
+        f"Свет: {tech.get('lighting')}, Оптика: {tech.get('filter_accessory')}.\n\n"
+        f"Пожелание/вопрос фотографа: «{user_input}»\n\n"
+        "Дай короткий практический совет оператора (2–3 предложения) "
+        "по реализации на Fujifilm X-T4."
+    )
+
+    messages = [
+        {"role": "system", "content": COPILOT_TECH_SYSTEM},
+        {"role": "user", "content": prompt},
+    ]
+
+    engine_name, model = get_current_ai()
+    sampling = {"temperature": 0.7, "max_tokens": 300}
+
+    try:
+        raw = await get_ai_response_async(engine_name, model, messages, sampling=sampling)
+        if raw.startswith("❌") and engine_name != "qwen":
+            engine_name, model = "qwen", "qwen2.5:7b"
+            raw = await get_ai_response_async(engine_name, model, messages, sampling=sampling)
+        advice = raw.strip()
+    except Exception as exc:
+        logger.error("[COPILOT] consult tech failed: %s", exc)
+        advice = (
+            f"Для работы с «{tech.get('lens')}» на Fujifilm X-T4 рекомендую "
+            f"зафиксировать выдержку {tech.get('shutter_speed')} "
+            f"и диафрагму {tech.get('aperture')}. "
+            "Используйте ручную фокусировку (Focus Peaking) для контроля микро-контраста."
+        )
+
+    session.tech_preferences = tech
+    get_copilot_manager().save_session(session)
+    return advice
+
+
+def format_tech_card(session: CopilotSession, advice: str = "") -> str:
+    """Форматирует карточку технических параметров съемки для Telegram."""
+    tech = session.tech_preferences or {}
+    camera = tech.get("camera", "Fujifilm X-T4")
+    lens = tech.get("lens", "Гелиос 44-2 58mm f/2")
+    support = tech.get("support", "С рук (микро-ICM)")
+    filter_acc = tech.get("filter_accessory", "Black Pro-Mist 1/4")
+    lighting = tech.get("lighting", "Контровой свет фонаря")
+    shutter = tech.get("shutter_speed", '1/6"')
+    aperture = tech.get("aperture", "f/2")
+    iso = tech.get("iso", "400")
+    film_sim = tech.get("film_sim", "Classic Chrome")
+    notes = tech.get("handwriting_notes", "Микро-тремор рук, сочные тени")
+
+    styles_str = ", ".join(
+        f"{COPILOT_STYLES.get(s, {}).get('icon', '🎨')} <b>{s}</b>"
+        for s in session.selected_styles
+    ) if session.selected_styles else "<i>Свободный синтез</i>"
+
+    lines = [
+        "⚙️ <b>Съемочный сетап и почерк автора</b>",
+        f"Тема: «<b>{safe_html_format(session.topic)}</b>»",
+        f"Стили: {styles_str}\n",
+        f"📷 <b>Камера:</b> {safe_html_format(camera)}",
+        f"🔍 <b>Объектив:</b> <b>{safe_html_format(lens)}</b>",
+        f"👐 <b>Метод съемки:</b> <b>{safe_html_format(support)}</b>",
+        f"🔮 <b>Фильтр/Оптика:</b> {safe_html_format(filter_acc)}",
+        f"💡 <b>Свет:</b> {safe_html_format(lighting)}\n",
+        "⏱ <b>Параметры экспозиции:</b>",
+        f"• Выдержка: <code>{safe_html_format(shutter)}</code>",
+        f"• Диафрагма: <code>{safe_html_format(aperture)}</code>",
+        f"• ISO: <code>{safe_html_format(iso)}</code>",
+        f"• Профиль плёнки: <code>{safe_html_format(film_sim)}</code>\n",
+        f"✍️ <b>Почерк и приём:</b> <i>{safe_html_format(notes)}</i>",
+    ]
+
+    if advice:
+        lines.append(
+            f"\n💡 <b>Совет оператора:</b>\n"
+            f"<blockquote>{safe_html_format(advice)}</blockquote>"
+        )
+
+    lines.append(
+        "\n<i>Переключайте сетап кнопками ниже "
+        "или напишите условия съемки текстом/голосом:</i>"
+    )
+    return "\n".join(lines)
