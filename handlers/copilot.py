@@ -58,6 +58,13 @@ from services.fuji_multiexposure import (
     format_multiexposure_card,
     generate_surreal_multiexposure,
 )
+from services.copilot_series import (
+    PhotoSeries,
+    build_series_storyboard,
+    export_series_to_apple_notes,
+    format_series_overview_card,
+    format_series_shot_card,
+)
 from services.copilot_session import CopilotSession, get_copilot_manager
 from services.text_formatter import safe_html_format
 
@@ -358,6 +365,12 @@ def build_field_assistant_kb(session: CopilotSession) -> types.InlineKeyboardMar
     )
     builder.row(
         types.InlineKeyboardButton(
+            text="🎞 Кураторская серия (3–5 кадров)",
+            callback_data="cp_view_series",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
             text="↩️ К вариантам проектов", callback_data="cp_to_variants",
         ),
         types.InlineKeyboardButton(
@@ -396,6 +409,95 @@ def build_multiexposure_kb(
     builder.row(
         types.InlineKeyboardButton(
             text="↩️ К полевому чек-листу",
+            callback_data="cp_to_field_assistant",
+        ),
+    )
+    return builder.as_markup()
+
+
+def build_series_overview_kb(
+    series: PhotoSeries,
+    session: CopilotSession | None = None,
+) -> types.InlineKeyboardMarkup:
+    """Клавиатура сводной карточки кураторской фотосерии."""
+    builder = InlineKeyboardBuilder()
+
+    is_triptych = series.series_format == "triptych"
+    btn_triptych = "3️⃣ Триптих ✅" if is_triptych else "3️⃣ Триптих"
+    btn_penta = "5️⃣ Пентаптих (5 кадров) ✅" if not is_triptych else "5️⃣ Пентаптих (5 кадров)"
+
+    builder.row(
+        types.InlineKeyboardButton(
+            text=btn_triptych, callback_data="cp_series_format:triptych"
+        ),
+        types.InlineKeyboardButton(
+            text=btn_penta, callback_data="cp_series_format:penta"
+        ),
+    )
+
+    if series.shots:
+        builder.row(
+            types.InlineKeyboardButton(
+                text="🔍 Смотреть раскадровку (Кадр 1) ➡️",
+                callback_data="cp_series_shot:0",
+            ),
+        )
+
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🍏 В Apple Notes [Серия к съемке]",
+            callback_data="cp_series_export_notes",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="↩️ К полевому ассистенту",
+            callback_data="cp_to_field_assistant",
+        ),
+    )
+    return builder.as_markup()
+
+
+def build_series_shot_kb(
+    series: PhotoSeries,
+    shot_idx: int,
+) -> types.InlineKeyboardMarkup:
+    """Клавиатура детального просмотра одного кадра серии."""
+    builder = InlineKeyboardBuilder()
+    total = len(series.shots)
+
+    nav_btns = []
+    if shot_idx > 0:
+        nav_btns.append(
+            types.InlineKeyboardButton(
+                text="⬅️ Пред. кадр",
+                callback_data=f"cp_series_shot:{shot_idx - 1}",
+            )
+        )
+    nav_btns.append(
+        types.InlineKeyboardButton(
+            text="🖼 Обзор серии",
+            callback_data="cp_view_series",
+        )
+    )
+    if shot_idx < total - 1:
+        nav_btns.append(
+            types.InlineKeyboardButton(
+                text="След. кадр ➡️",
+                callback_data=f"cp_series_shot:{shot_idx + 1}",
+            )
+        )
+    builder.row(*nav_btns)
+
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🍏 В Apple Notes [Серия к съемке]",
+            callback_data="cp_series_export_notes",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="↩️ К полевому ассистенту",
             callback_data="cp_to_field_assistant",
         ),
     )
@@ -1465,6 +1567,147 @@ async def cb_copilot_me_surreal(cb: types.CallbackQuery):
     except Exception as e:
         logger.debug("[COPILOT] surreal multiexposure edit failed: %s", e)
         await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+def _get_or_create_series(
+    session: CopilotSession,
+    series_format: str = "triptych",
+) -> PhotoSeries:
+    """Извлекает кэшированную серию из сессии или строит новую."""
+    if session.series_data and isinstance(session.series_data, dict):
+        cur_fmt = session.series_data.get("series_format")
+        if cur_fmt == series_format:
+            try:
+                return PhotoSeries.from_dict(session.series_data)
+            except Exception as err:
+                logger.debug("[COPILOT] series from_dict failed: %s", err)
+
+    fmt = "triptych" if series_format != "penta" else "penta"
+    series = build_series_storyboard(session, series_format=fmt)
+    session.series_data = series.to_dict()
+    manager = get_copilot_manager()
+    manager.save_session(session)
+    return series
+
+
+@router.callback_query(F.data == "cp_view_series", allowed_callback)
+async def cb_copilot_view_series(cb: types.CallbackQuery):
+    """Сводный экран кураторской фотосерии (раскадровка + экспликация)."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    cur_fmt = "triptych"
+    if session.series_data and isinstance(session.series_data, dict):
+        cur_fmt = session.series_data.get("series_format") or "triptych"
+
+    series = _get_or_create_series(session, series_format=cur_fmt)
+    text = format_series_overview_card(series)
+    kb = build_series_overview_kb(series, session)
+
+    await cb.answer("🎞 Кураторская фотосерия сформирована")
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] series overview edit failed: %s", e)
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("cp_series_format:"), allowed_callback)
+async def cb_copilot_series_format(cb: types.CallbackQuery):
+    """Переключение формата фотосерии: триптих (3 кадра) или пентаптих (5 кадров)."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message or not cb.data:
+        await cb.answer("Сессия не найдена")
+        return
+
+    target_fmt = cb.data.split(":", 1)[1]
+    if target_fmt not in ("triptych", "penta"):
+        target_fmt = "triptych"
+
+    series = build_series_storyboard(session, series_format=target_fmt)
+    session.series_data = series.to_dict()
+    manager.save_session(session)
+
+    text = format_series_overview_card(series)
+    kb = build_series_overview_kb(series, session)
+
+    fmt_name = "Триптих" if target_fmt == "triptych" else "Пентаптих"
+    await cb.answer(f"Формат переключен: {fmt_name}")
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] series format edit failed: %s", e)
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("cp_series_shot:"), allowed_callback)
+async def cb_copilot_series_shot(cb: types.CallbackQuery):
+    """Детальный просмотр конкретного кадра серии с промптом Midjourney."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message or not cb.data:
+        await cb.answer("Сессия не найдена")
+        return
+
+    idx_str = cb.data.split(":", 1)[1] if ":" in cb.data else "0"
+    try:
+        shot_idx = int(idx_str)
+    except ValueError:
+        shot_idx = 0
+
+    cur_fmt = "triptych"
+    if session.series_data and isinstance(session.series_data, dict):
+        cur_fmt = session.series_data.get("series_format") or "triptych"
+
+    series = _get_or_create_series(session, series_format=cur_fmt)
+    if shot_idx < 0 or shot_idx >= len(series.shots):
+        shot_idx = 0
+
+    text = format_series_shot_card(series, shot_idx=shot_idx)
+    kb = build_series_shot_kb(series, shot_idx=shot_idx)
+
+    await cb.answer(f"Кадр {shot_idx + 1} из {len(series.shots)}")
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] series shot edit failed: %s", e)
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data == "cp_series_export_notes", allowed_callback)
+async def cb_copilot_series_export_notes(cb: types.CallbackQuery):
+    """Пакетный экспорт всей кураторской серии в Apple Notes."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    cur_fmt = "triptych"
+    if session.series_data and isinstance(session.series_data, dict):
+        cur_fmt = session.series_data.get("series_format") or "triptych"
+
+    series = _get_or_create_series(session, series_format=cur_fmt)
+    ok, note_or_err = export_series_to_apple_notes(series, folder="Фотопроекты")
+    if ok:
+        await cb.answer(
+            f"✅ Серия «{series.project_title}» экспортирована в Apple Notes "
+            f"(папка «Фотопроекты», статус [Серия к съемке])!",
+            show_alert=True,
+        )
+    else:
+        await cb.answer(
+            f"⚠️ Ошибка экспорта серии в Apple Notes: {note_or_err[:60]}",
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == "cp_finish", allowed_callback)

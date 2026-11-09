@@ -48,6 +48,7 @@ class CopilotSession:
     tech_preferences: dict[str, Any] = field(default_factory=dict)
     candidate_projects: list[dict[str, Any]] = field(default_factory=list)
     selected_project_idx: int | None = None
+    series_data: dict[str, Any] | None = None
     is_paused: bool = False
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
