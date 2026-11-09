@@ -62,6 +62,60 @@ def extract_json_from_text(text: str):
     return None
 
 
+def extract_partial_json_array(
+    text: str,
+    array_keys: tuple[str, ...] = ("projects", "ideas"),
+) -> list[dict]:
+    """Извлекает завершённые словари из частично обрезанного JSON массива.
+
+    Если ответ модели был обрезан по лимиту токенов посреди генерации,
+    стандартный JSONDecoder ломается на всём документе. Данная функция
+    находит массив по ключам (или корневой список [) и поочередно
+    извлекает все полностью закрытые объекты {...}, игнорируя недописанный хвост.
+    """
+    if not text:
+        return []
+
+    cleaned = re.sub(r"⚠️.*$", "", text, flags=re.DOTALL).strip()
+    cleaned = re.sub(r"```+$", "", cleaned).strip()
+
+    decoder = json.JSONDecoder(strict=False)
+    results = []
+
+    start_bracket = -1
+    for key in array_keys:
+        idx = cleaned.find(f'"{key}"')
+        if idx != -1:
+            bracket_idx = cleaned.find("[", idx)
+            if bracket_idx != -1:
+                start_bracket = bracket_idx
+                break
+
+    if start_bracket == -1:
+        start_bracket = cleaned.find("[")
+
+    if start_bracket != -1:
+        pos = start_bracket + 1
+        length = len(cleaned)
+        while pos < length:
+            while pos < length and cleaned[pos] in " \t\r\n,":
+                pos += 1
+            if pos >= length or cleaned[pos] == "]":
+                break
+            if cleaned[pos] == "{":
+                try:
+                    obj, end_pos = decoder.raw_decode(cleaned, pos)
+                    if isinstance(obj, dict):
+                        results.append(obj)
+                    pos = end_pos
+                except json.JSONDecodeError:
+                    break
+            else:
+                pos += 1
+
+    return results
+
+
 def safe_parse_llm_json(text: str, expected_type=None):
     """Безопасный парсинг JSON от LLM с валидацией типа результата."""
     result = extract_json_from_text(text)

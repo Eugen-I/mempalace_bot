@@ -4,7 +4,11 @@
 ввод, валидация типа, граничные значения (None, пустая строка,
 вложенные объекты, множественные фенсы).
 """
-from services.json_parser import extract_json_from_text, safe_parse_llm_json
+from services.json_parser import (
+    extract_json_from_text,
+    extract_partial_json_array,
+    safe_parse_llm_json,
+)
 
 # ─── extract_json_from_text: happy path ───
 
@@ -200,3 +204,44 @@ def test_multiple_broken_fences_returns_none():
     """Все фенсы битые и объектов нет — по-прежнему None."""
     text = '```json\n{"a": \n```\n```json\n{"b":\n```'
     assert extract_json_from_text(text) is None
+
+
+# ─── extract_partial_json_array: спасение обрезанных массивов ───
+
+def test_extract_partial_json_array_truncated():
+    text = (
+        '{\n  "projects": [\n'
+        '    {"title": "П1", "manifesto": "Текст 1"},\n'
+        '    {"title": "П2", "manifesto": "Текст 2"},\n'
+        '    {"title": "П3", "manifesto": "Обрезанная с'
+    )
+    items = extract_partial_json_array(text, array_keys=("projects",))
+    assert len(items) == 2
+    assert items[0]["title"] == "П1"
+    assert items[1]["title"] == "П2"
+
+
+def test_extract_partial_json_array_with_token_notice():
+    text = (
+        '```json\n{\n  "projects": [\n'
+        '    {"title": "П1", "manifesto": "Текст 1"}\n'
+        '  ]\n}\n```\n\n'
+        '⚠️ <i>(Ответ модели был обрезан из-за лимита токенов)</i>'
+    )
+    items = extract_partial_json_array(text, array_keys=("projects",))
+    assert len(items) == 1
+    assert items[0]["title"] == "П1"
+
+
+def test_extract_partial_json_array_empty():
+    assert extract_partial_json_array("") == []
+    assert extract_partial_json_array(None) == []
+    assert extract_partial_json_array("просто текст без json") == []
+
+
+def test_extract_partial_json_array_root_list():
+    text = '[\n  {"title": "Идея 1"},\n  {"title": "Идея 2"},\n  {"title": "Идея 3'
+    items = extract_partial_json_array(text)
+    assert len(items) == 2
+    assert items[0]["title"] == "Идея 1"
+    assert items[1]["title"] == "Идея 2"

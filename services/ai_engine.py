@@ -285,7 +285,8 @@ def _extract_gemini_text(response: Any) -> str:
             if "MAX_TOKENS" in fr_str:
                 logger.warning("[GEMINI] Ответ был обрезан по MAX_TOKENS")
                 notice = "\n\n⚠️ <i>(Ответ модели был обрезан из-за лимита токенов)</i>"
-                if text and notice not in text:
+                is_json = text.lstrip().startswith(("{", "[", "```json", "```"))
+                if not is_json and text and notice not in text:
                     text += notice
     except Exception as e:
         logger.debug("Failed checking finish_reason: %s", e)
@@ -491,14 +492,18 @@ def _iter_ai_chunks(
             or 8192
         )
         temperature = sampling_dict.get("temperature", 0.7)
-        config = genai_types.GenerateContentConfig(
-            system_instruction=(
+        config_kwargs: dict[str, Any] = {
+            "system_instruction": (
                 system_prompt if stream
                 else _system_instruction(messages, system_prompt)
             ),
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-        )
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+        }
+        if hasattr(genai_types, "ThinkingConfig") and "2.5" in model:
+            config_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=0)
+
+        config = genai_types.GenerateContentConfig(**config_kwargs)
 
         if stream:
             response = client.models.generate_content_stream(

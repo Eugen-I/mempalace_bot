@@ -618,3 +618,33 @@ def test_deepen_and_references_prompts_and_cards():
     assert "Мастера для визуального изучения" in refs_card
     assert "Сниппет из поиска" in refs_card
     assert "<!--" not in refs_card
+
+
+def test_parse_fusion_concepts_truncated_max_tokens():
+    raw_truncated = (
+        '```json\n{\n  "projects": [\n'
+        '    {\n'
+        '      "title": "Первый завершенный концепт",\n'
+        '      "triad": {\n'
+        '        "narrative": {"role": "narrative", "style": "Сюрреализм", "traits": "Сон"},\n'
+        '        "lighting": {"role": "lighting", "style": "Экспрессионизм", "traits": "Тени"},\n'
+        '        "optics": {"role": "optics", "style": "Пиктореализм", "traits": "Монокль"},\n'
+        '        "rationale": "Синергия сна и теней"\n'
+        '      },\n'
+        '      "manifesto": "Манифест первого концепта",\n'
+        '      "scene_description": "Улица ночью",\n'
+        '      "lighting_setup": "Фонарь",\n'
+        '      "camera_setup": {"Выдержка": "1/6 с", "Диафрагма": "f/8.0"},\n'
+        '      "shooting_action": "Микро-ICM",\n'
+        '      "gear_recipe": {"camera": "Fujifilm X-T4"},\n'
+        '      "shooting_steps": ["1. Подготовить сетап", "2. Сделать спуск"]\n'
+        '    },\n'
+        '    {\n'
+        '      "title": "Второй обрезанный концепт",\n'
+        '      "manifesto": "Недописанный манифест...\n'
+        '⚠️ <i>(Ответ модели был обрезан из-за лимита токенов)</i>'
+    )
+    concepts = parse_fusion_concepts(raw_truncated)
+    assert len(concepts) == 1
+    assert concepts[0].title == "Первый завершенный концепт"
+    assert concepts[0].shooting_action == "Микро-ICM"

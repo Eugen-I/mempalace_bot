@@ -79,7 +79,7 @@ def mock_ai(monkeypatch):
     monkeypatch.setattr(h, "get_ai_response_async", _fake_ai)
     monkeypatch.setattr(h, "get_current_ai", lambda: ("ollama", "qwen2.5"))
 
-    async def _fake_context(topic):
+    async def _fake_context(topic, mode="standard", folder=None):
         return {"notes": "n", "palace": "p", "kg": "k"}
 
     monkeypatch.setattr(bs, "collect_context", _fake_context)
@@ -678,3 +678,45 @@ async def test_cb_back_to_ideas_preserves_fusion():
     # Кнопка идеи должна быть с палитрой 🎨 1
     labels = [btn.text for row in kb.inline_keyboard for btn in row]
     assert "🎨 1" in labels
+
+
+async def test_run_storm_auto_fallback_on_gemini_429(monkeypatch):
+    """При ошибке 429 от Gemini штурм автоматически переключается на Ollama qwen2.5:7b."""
+    calls = []
+
+    async def fake_get_ai(engine, model, msgs, sampling=None):
+        calls.append((engine, model))
+        if engine == "gemini":
+            return "❌ Ошибка ИИ (gemini): 429 Quota exceeded for metric: generate_content_free_tier_requests"
+        return (
+            '{"projects": [{\n'
+            '  "title": "Локальный проект от Qwen",\n'
+            '  "triad": {\n'
+            '    "narrative": {"role": "narrative", "style": "Сюрреализм", "traits": "Сон"},\n'
+            '    "lighting": {"role": "lighting", "style": "Экспрессионизм", "traits": "Тени"},\n'
+            '    "optics": {"role": "optics", "style": "Импрессионизм", "traits": "Свет"},\n'
+            '    "rationale": "Синергия"\n'
+            '  },\n'
+            '  "manifesto": "Манифест",\n'
+            '  "scene_description": "Локация",\n'
+            '  "lighting_setup": "Свет",\n'
+            '  "camera_setup": {"Выдержка": "1/6 с", "Диафрагма": "f/8.0"},\n'
+            '  "shooting_action": "Микро-ICM",\n'
+            '  "gear_recipe": {"camera": "Fujifilm X-T4"},\n'
+            '  "shooting_steps": ["1. Шаг 1", "2. Шаг 2"]\n'
+            '}]}'
+        )
+
+    monkeypatch.setattr(h, "get_current_ai", lambda: ("gemini", "gemini-2.5-flash"))
+    monkeypatch.setattr(h, "get_ai_response_async", fake_get_ai)
+
+    status = FakeStatus()
+    await h.run_storm(4242, status, "туман", mode="fusion")
+
+    assert len(calls) == 2
+    assert calls[0] == ("gemini", "gemini-2.5-flash")
+    assert calls[1] == ("qwen", "qwen2.5:7b")
+
+    assert any("Переключаюсь на локальный Qwen" in edit for edit in status.edits)
+    assert 4242 in h._storm_data
+    assert h._storm_data[4242]["ideas"][0].title == "Локальный проект от Qwen"

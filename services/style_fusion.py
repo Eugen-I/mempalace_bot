@@ -12,7 +12,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from services.json_parser import safe_parse_llm_json
+from services.json_parser import extract_partial_json_array, safe_parse_llm_json
 
 logger = logging.getLogger("StyleFusion")
 
@@ -286,7 +286,9 @@ def build_fusion_system_prompt() -> str:
     """Системный промпт для режима генерации концепт-проектов (Fusion Lab)."""
     return (
         "Ты — арт-директор и ведущий фото-технолог творческой лаборатории MemPalace.\n"
-        "Твоя задача — сгенерировать 3–5 законченных авторских концепт-проектов для съёмки.\n"
+        "Твоя задача — сгенерировать ровно 2–3 законченных авторских концепт-проекта для съёмки.\n"
+        "Формулируй мысли ёмко, пластично и конкретно, избегая лишней воды, "
+        "чтобы ответ полностью уложился в JSON без обрезания токенов.\n"
         "Каждый проект обязан строго следовать ТРИАДЕ СТИЛЕЙ: соединять 3 направления искусства "
         "(Сюрреализм, Пиктореализм, Экспрессионизм, Импрессионизм), распределённых по ролям:\n"
         "1. Сюжет и метафора (narrative)\n"
@@ -397,18 +399,21 @@ def validate_fusion_concept(concept: FusedPhotoConcept) -> tuple[bool, str]:
 
 def parse_fusion_concepts(raw_response: str) -> list[FusedPhotoConcept]:
     """Парсит и валидирует концепт-проекты из ответа LLM."""
+    projects_raw: list[Any] = []
     parsed = safe_parse_llm_json(raw_response, expected_type=dict)
-    if not isinstance(parsed, dict):
-        # Попытка парсинга, если модель вернула список напрямую
+    if isinstance(parsed, dict):
+        projects_raw = parsed.get("projects") or parsed.get("ideas") or []
+    elif not isinstance(parsed, dict):
         list_parsed = safe_parse_llm_json(raw_response, expected_type=list)
         if isinstance(list_parsed, list):
-            parsed = {"projects": list_parsed}
-        else:
-            logger.warning("[FUSION] Failed to parse JSON response: %s", raw_response[:200])
-            return []
+            projects_raw = list_parsed
 
-    projects_raw = parsed.get("projects") or parsed.get("ideas") or []
-    if not isinstance(projects_raw, list):
+    # Fallback: спасение закрытых проектов из частично обрезанного ответа (MAX_TOKENS)
+    if not projects_raw:
+        projects_raw = extract_partial_json_array(raw_response, array_keys=("projects", "ideas"))
+
+    if not isinstance(projects_raw, list) or not projects_raw:
+        logger.warning("[FUSION] Failed to parse JSON response: %s", raw_response[:200])
         return []
 
     valid_concepts: list[FusedPhotoConcept] = []

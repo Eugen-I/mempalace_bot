@@ -9,6 +9,7 @@
 идеи → мост в существующий save-флоу Дворца (handlers.palace.save).
 """
 
+import html
 import logging
 
 from aiogram import F, Router, types
@@ -59,7 +60,43 @@ async def run_storm(uid: int, status_msg, topic: str, mode: str = "standard"):
             ]
             sampling = bs.storm_sampling_params("fusion")
             raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
-            ideas = bs.parse_fusion_ideas(raw)
+
+            # Авто-переключение на локальный Ollama при исчерпании квоты (429) или сетевой ошибке
+            is_quota_or_err = (
+                raw.startswith("❌")
+                or "429" in raw
+                or "quota" in raw.lower()
+                or "resource_exhausted" in raw.lower()
+            )
+            if is_quota_or_err and engine != "qwen":
+                logger.warning(
+                    "[STORM] Engine %s failed: %s. Auto-fallback to local Ollama (qwen2.5:7b)...",
+                    engine, raw[:100],
+                )
+                await _status_edit(
+                    status_msg,
+                    "⚠️ Лимит облачной модели исчерпан. Переключаюсь на локальный Qwen…",
+                )
+                engine, model = "qwen", "qwen2.5:7b"
+                raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
+
+            try:
+                ideas = bs.parse_fusion_ideas(raw)
+            except Exception as parse_err:
+                if engine != "qwen":
+                    logger.warning(
+                        "[STORM] Parse failed on %s: %s. Retrying with local Ollama...",
+                        engine, parse_err,
+                    )
+                    await _status_edit(
+                        status_msg,
+                        "🔄 Облачная модель дала неполный ответ. Повторяю через локальный Qwen…",
+                    )
+                    engine, model = "qwen", "qwen2.5:7b"
+                    raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
+                    ideas = bs.parse_fusion_ideas(raw)
+                else:
+                    raise
         else:
             await _status_edit(status_msg, "🔍 Собираю контекст базы знаний…")
             context = await bs.collect_context(topic)
@@ -71,10 +108,65 @@ async def run_storm(uid: int, status_msg, topic: str, mode: str = "standard"):
                 {"role": "user", "content": bs.build_storm_prompt(topic, context)},
             ]
             raw = await get_ai_response_async(engine, model, msgs)
-            ideas = bs.parse_ideas(raw)
+
+            is_quota_or_err = (
+                raw.startswith("❌")
+                or "429" in raw
+                or "quota" in raw.lower()
+                or "resource_exhausted" in raw.lower()
+            )
+            if is_quota_or_err and engine != "qwen":
+                logger.warning(
+                    "[STORM] Engine %s failed: %s. Auto-fallback to local Ollama (qwen2.5:7b)...",
+                    engine, raw[:100],
+                )
+                await _status_edit(
+                    status_msg,
+                    "⚠️ Лимит облачной модели исчерпан. Переключаюсь на локальный Qwen…",
+                )
+                engine, model = "qwen", "qwen2.5:7b"
+                raw = await get_ai_response_async(engine, model, msgs)
+
+            try:
+                ideas = bs.parse_ideas(raw)
+            except Exception as parse_err:
+                if engine != "qwen":
+                    logger.warning(
+                        "[STORM] Standard parse failed on %s: %s. Retrying with local Ollama...",
+                        engine, parse_err,
+                    )
+                    await _status_edit(
+                        status_msg,
+                        "🔄 Облачная модель дала сбой. Повторяю через локальный Qwen…",
+                    )
+                    engine, model = "qwen", "qwen2.5:7b"
+                    raw = await get_ai_response_async(engine, model, msgs)
+                    ideas = bs.parse_ideas(raw)
+                else:
+                    raise
     except Exception as exc:
         logger.error("[STORM] run failed: %s", exc, exc_info=True)
-        await _status_edit(status_msg, f"❌ Ошибка штурма: {exc}")
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🎨 Повторить штурм",
+                callback_data="bs_start_fusion",
+            ),
+            types.InlineKeyboardButton(
+                text="⚙️ Настройки моделей",
+                callback_data="settings:models",
+            ),
+        )
+        try:
+            await status_msg.edit_text(
+                f"❌ <b>Ошибка штурма:</b> {html.escape(str(exc))}\n\n"
+                "Вы можете повторить попытку или переключить модель в /settings.",
+                parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
+        except Exception as edit_err:
+            logger.debug("[STORM] status edit with kb failed: %s", edit_err)
+            await _status_edit(status_msg, f"❌ Ошибка штурма: {exc}")
         return
 
     _storm_data[uid] = {
