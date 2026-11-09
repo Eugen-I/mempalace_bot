@@ -13,6 +13,7 @@ from typing import Any
 
 from services.ai_engine import get_ai_response_async, get_current_ai
 from services.copilot_session import CopilotSession, get_copilot_manager
+from services.text_formatter import safe_html_format
 
 logger = logging.getLogger("CopilotEngine")
 
@@ -262,3 +263,122 @@ def append_styles_to_summary(session: CopilotSession) -> str:
 
     get_copilot_manager().save_session(session)
     return session.summary
+
+
+# ─── Шаг 9: Соавторство манифеста ───
+
+COPILOT_MANIFESTO_SYSTEM = """Ты — куратор выставок и автор художественных манифестов.
+Твоя задача — сформулировать плотный авторский манифест фотопроекта (2–4 предложения).
+
+ТРЕБОВАНИЯ:
+1. Манифест выражает философское и визуальное кредо серии снимков.
+2. Он соединяет концептуальный конфликт темы и выбранные стили визуального языка.
+3. Без штампов, живой поэтический язык с акцентом на оптику, свет и психологию кадра.
+4. Вывод: только текст самого манифеста, без вступительных слов и без кавычек.
+"""
+
+
+async def generate_initial_manifesto(session: CopilotSession) -> str:
+    """Генерирует первый вариант манифеста на основе саммари и выбранных стилей."""
+    styles_str = (
+        ", ".join(session.selected_styles) if session.selected_styles else "Свободный синтез"
+    )
+    prompt = (
+        f"Тема проекта: «{session.topic}».\n"
+        f"Выбранные стили: {styles_str}.\n"
+        f"Концептуальное резюме:\n{session.summary}\n\n"
+        "Напиши сильный авторский манифест (2–4 предложения)."
+    )
+
+    messages = [
+        {"role": "system", "content": COPILOT_MANIFESTO_SYSTEM},
+        {"role": "user", "content": prompt},
+    ]
+
+    engine_name, model = get_current_ai()
+    sampling = {"temperature": 0.75, "max_tokens": 400}
+
+    try:
+        raw = await get_ai_response_async(engine_name, model, messages, sampling=sampling)
+        if raw.startswith("❌") and engine_name != "qwen":
+            engine_name, model = "qwen", "qwen2.5:7b"
+            raw = await get_ai_response_async(engine_name, model, messages, sampling=sampling)
+        manifesto = raw.strip().strip('"').strip('«»')
+    except Exception as exc:
+        logger.error("[COPILOT] generate manifesto failed: %s", exc)
+        manifesto = (
+            f"В проекте «{session.topic}» мы исследуем невидимые слои реальности "
+            f"через синтез стилей {styles_str}. "
+            "Кадр становится пространством, где свет ломает привычные формы, "
+            "а тень обнажает скрытую суть человека."
+        )
+
+    session.manifesto = manifesto
+    get_copilot_manager().save_session(session)
+    return manifesto
+
+
+async def refine_manifesto(session: CopilotSession, instruction: str) -> str:
+    """Модифицирует существующий манифест по указанию или кастомному тексту автора."""
+    current_manifesto = session.manifesto.strip()
+    styles_str = (
+        ", ".join(session.selected_styles) if session.selected_styles else "Свободный синтез"
+    )
+
+    instruction_map = {
+        "darker": "Сделай манифест более мрачным, экзистенциальным, тревожным и контрастным.",
+        "metaphoric": "Сделай манифест более метафоричным, поэтичным, сновидческим и воздушным.",
+        "shorter": "Сократи манифест до ровно 2 предельно плотных и афористичных предложений.",
+        "reroll": "Предложи совершенно другой ракурс и художественную метафору в манифесте.",
+    }
+    action_text = instruction_map.get(instruction, instruction)
+
+    prompt = (
+        f"Тема: «{session.topic}».\n"
+        f"Стили: {styles_str}.\n"
+        f"Текущий манифест:\n{current_manifesto}\n\n"
+        f"Задача: перепиши манифест с учетом пожелания автора:\n"
+        f"«{action_text}»\n\n"
+        "Верни только обновленный текст манифеста (2–4 предложения)."
+    )
+
+    messages = [
+        {"role": "system", "content": COPILOT_MANIFESTO_SYSTEM},
+        {"role": "user", "content": prompt},
+    ]
+
+    engine_name, model = get_current_ai()
+    sampling = {"temperature": 0.75, "max_tokens": 400}
+
+    try:
+        raw = await get_ai_response_async(engine_name, model, messages, sampling=sampling)
+        if raw.startswith("❌") and engine_name != "qwen":
+            engine_name, model = "qwen", "qwen2.5:7b"
+            raw = await get_ai_response_async(engine_name, model, messages, sampling=sampling)
+        manifesto = raw.strip().strip('"').strip('«»')
+    except Exception as exc:
+        logger.error("[COPILOT] refine manifesto failed: %s", exc)
+        manifesto = current_manifesto
+
+    session.manifesto = manifesto
+    get_copilot_manager().save_session(session)
+    return manifesto
+
+
+def format_manifesto_card(session: CopilotSession) -> str:
+    """Форматирует карточку манифеста для Telegram."""
+    styles_str = ", ".join(
+        f"{COPILOT_STYLES.get(s, {}).get('icon', '🎨')} <b>{s}</b>"
+        for s in session.selected_styles
+    ) if session.selected_styles else "<i>Свободный синтез</i>"
+
+    manifesto_body = session.manifesto or "<i>Манифест формируется…</i>"
+
+    return (
+        f"📜 <b>Художественный манифест проекта</b>\n"
+        f"Тема: «<b>{safe_html_format(session.topic)}</b>»\n"
+        f"Стили: {styles_str}\n\n"
+        f"<blockquote>{safe_html_format(manifesto_body)}</blockquote>\n\n"
+        "<i>Скорректируйте тональность кнопками ниже "
+        "или отправьте пожелание текстом/голосом:</i>"
+    )

@@ -19,9 +19,12 @@ from config import allowed_callback, allowed_only
 from services.copilot_engine import (
     COPILOT_STYLES,
     append_styles_to_summary,
+    format_manifesto_card,
     format_styles_selection_card,
+    generate_initial_manifesto,
     generate_socratic_reply,
     get_random_style_synergy,
+    refine_manifesto,
     start_copilot_discussion,
     summarize_creative_dialogue,
 )
@@ -97,6 +100,34 @@ def build_styles_selection_kb(session: CopilotSession) -> types.InlineKeyboardMa
     )
     builder.row(
         types.InlineKeyboardButton(text="↩️ Назад к диалогу", callback_data="cp_back_to_discuss"),
+        types.InlineKeyboardButton(text="❌ Сбросить", callback_data="cp_reset"),
+    )
+    return builder.as_markup()
+
+
+def build_manifesto_kb(session: CopilotSession) -> types.InlineKeyboardMarkup:
+    """Клавиатура соавторства и тональной коррекции манифеста."""
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        types.InlineKeyboardButton(text="🌑 Мрачнее", callback_data="cp_manif_mod:darker"),
+        types.InlineKeyboardButton(
+            text="🕊 Метафоричнее", callback_data="cp_manif_mod:metaphoric",
+        ),
+        types.InlineKeyboardButton(text="✂️ Короче", callback_data="cp_manif_mod:shorter"),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🔄 Другой ракурс", callback_data="cp_manif_mod:reroll",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="✅ Утвердить манифест ➡️", callback_data="cp_confirm_manifesto",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(text="↩️ К выбору стилей", callback_data="cp_select_styles"),
         types.InlineKeyboardButton(text="❌ Сбросить", callback_data="cp_reset"),
     )
     return builder.as_markup()
@@ -426,31 +457,144 @@ async def cb_copilot_back_to_discuss(cb: types.CallbackQuery):
     )
 
 
-async def handle_copilot_text_message(message: types.Message) -> bool:
-    """Обработчик входящего текста/голоса, если пользователь находится в активном диалоге копайлота.
+# ─── Шаг 9: Обработчики манифеста ───
 
-    Возвращает True, если сообщение было обработано копайлотом, иначе False.
-    """
+@router.callback_query(F.data == "cp_to_manifesto", allowed_callback)
+async def cb_copilot_to_manifesto(cb: types.CallbackQuery):
+    """Генерация или открытие карточки манифеста."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    session.stage = "manifesto"
+    manager.save_session(session)
+
+    if not session.manifesto:
+        await cb.answer("Формирую манифест...")
+        try:
+            await cb.message.edit_text(
+                "✍️ <i>Арт-директор формулирует авторский манифест проекта…</i>",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.debug("[COPILOT] status edit failed: %s", e)
+        await generate_initial_manifesto(session)
+
+    text = format_manifesto_card(session)
+    kb = build_manifesto_kb(session)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] to manifesto edit failed: %s", e)
+
+
+@router.callback_query(F.data.startswith("cp_manif_mod:"), allowed_callback)
+async def cb_copilot_manif_mod(cb: types.CallbackQuery):
+    """Коррекция тональности манифеста (darker, metaphoric, shorter, reroll)."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    instruction = cb.data.split(":", 1)[1].strip()
+    await cb.answer("Переписываю манифест…")
+    try:
+        await cb.message.edit_text(
+            "✍️ <i>Шлифую манифест проекта…</i>", parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.debug("[COPILOT] refine status edit failed: %s", e)
+
+    await refine_manifesto(session, instruction)
+    text = format_manifesto_card(session)
+    kb = build_manifesto_kb(session)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] refine manifesto edit failed: %s", e)
+
+
+@router.callback_query(F.data == "cp_confirm_manifesto", allowed_callback)
+async def cb_copilot_confirm_manifesto(cb: types.CallbackQuery):
+    """Утверждение манифеста и переход к этапу технического сетапа."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    session.stage = "tech"
+    manager.save_session(session)
+    await cb.answer("Манифест утвержден!")
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(
+            text="📷 Параметры съемки и арсенал X-T4 ➡️", callback_data="cp_to_tech",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="↩️ Редактировать манифест", callback_data="cp_to_manifesto",
+        ),
+        types.InlineKeyboardButton(text="❌ Сбросить", callback_data="cp_reset"),
+    )
+
+    text = (
+        f"📜 <b>Манифест успешно утвержден!</b>\n\n"
+        f"<blockquote>{safe_html_format(session.manifesto)}</blockquote>\n\n"
+        "<i>Следующий этап: выбор оптики, расчет выдержки/диафрагмы "
+        "и учет условий съемки под Fujifilm X-T4.</i>"
+    )
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+
+async def handle_copilot_text_message(message: types.Message) -> bool:
+    """Обработчик входящего текста/голоса внутри активных этапов копайлота."""
     uid = message.from_user.id
     manager = get_copilot_manager()
     session = manager.get_session(uid)
 
-    if not session or session.is_paused or session.stage != "discuss":
+    if not session or session.is_paused:
         return False
 
     user_text = (message.text or "").strip()
     if not user_text:
         return False
 
-    status_msg = await message.answer("💭 <i>Арт-директор обдумывает мысль…</i>", parse_mode="HTML")
-    reply = await generate_socratic_reply(session, user_text)
-    kb = build_copilot_dialogue_kb(session)
+    if session.stage == "discuss":
+        status_msg = await message.answer(
+            "💭 <i>Арт-директор обдумывает мысль…</i>", parse_mode="HTML",
+        )
+        reply = await generate_socratic_reply(session, user_text)
+        kb = build_copilot_dialogue_kb(session)
 
-    text = f"🎙 <b>Арт-директор:</b>\n\n{safe_html_format(reply)}"
-    try:
-        await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    except Exception as e:
-        logger.warning("[COPILOT] edit reply failed: %s", e)
-        await message.answer(text, parse_mode="HTML", reply_markup=kb)
+        text = f"🎙 <b>Арт-директор:</b>\n\n{safe_html_format(reply)}"
+        try:
+            await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception as e:
+            logger.warning("[COPILOT] edit reply failed: %s", e)
+            await message.answer(text, parse_mode="HTML", reply_markup=kb)
+        return True
 
-    return True
+    if session.stage == "manifesto":
+        status_msg = await message.answer(
+            "✍️ <i>Переписываю манифест с учетом ваших пожеланий…</i>", parse_mode="HTML",
+        )
+        await refine_manifesto(session, user_text)
+        text = format_manifesto_card(session)
+        kb = build_manifesto_kb(session)
+        try:
+            await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception as e:
+            logger.warning("[COPILOT] edit manifesto failed: %s", e)
+            await message.answer(text, parse_mode="HTML", reply_markup=kb)
+        return True
+
+    return False

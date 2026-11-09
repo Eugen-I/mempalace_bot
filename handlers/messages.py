@@ -282,7 +282,7 @@ async def process_user_message(message: types.Message):
 
     # 0cca. Активный диалог с арт-копайлотом (Creative Co-Pilot)
     from services.copilot_session import get_copilot_manager
-    if get_copilot_manager().is_in_copilot(uid, stage="discuss"):
+    if get_copilot_manager().is_in_copilot(uid):
         from handlers.copilot import handle_copilot_text_message
         if await handle_copilot_text_message(message):
             return None
