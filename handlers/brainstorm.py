@@ -11,6 +11,7 @@
 
 import html
 import logging
+from typing import Any
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
@@ -37,6 +38,91 @@ async def _status_edit(status_msg, text: str):
         await status_msg.edit_text(f"🧠 {safe_html_format(text)}", parse_mode="HTML")
     except Exception as e:  # noqa: BLE001 — edit может упасть (429 и т.п.)
         logger.warning("[STORM] status edit failed: %s", e)
+
+
+async def safe_edit_or_split_send(
+    message: types.Message,
+    text: str,
+    reply_markup: types.InlineKeyboardMarkup | None = None,
+    parse_mode: str = "HTML",
+    disable_web_page_preview: bool = True,
+) -> None:
+    """Редактирует сообщение с защитой от лимита длины Telegram (MESSAGE_TOO_LONG).
+
+    Если форматированный текст превышает 3800 символов, разбивает его через split_message:
+    первая часть редактирует исходное сообщение, а последующие отправляются через answer,
+    с прикреплением reply_markup к последнему сообщению.
+    """
+    from services.text_formatter import split_message
+
+    parts = split_message(text, limit=3800)
+    if not parts:
+        parts = [text]
+
+    edit_kw: dict[str, Any] = {"parse_mode": parse_mode}
+    if reply_markup is not None:
+        edit_kw["reply_markup"] = reply_markup
+    if disable_web_page_preview:
+        edit_kw["disable_web_page_preview"] = disable_web_page_preview
+
+    if len(parts) == 1:
+        try:
+            await message.edit_text(parts[0], **edit_kw)
+        except TypeError as type_err:
+            if "disable_web_page_preview" in str(type_err):
+                edit_kw.pop("disable_web_page_preview", None)
+                await message.edit_text(parts[0], **edit_kw)
+            else:
+                raise
+        except Exception as exc:
+            logger.warning("[STORM] edit_text single part failed: %s, fallback to answer", exc)
+            if hasattr(message, "answer"):
+                try:
+                    await message.answer(
+                        parts[0],
+                        parse_mode=parse_mode,
+                        reply_markup=reply_markup,
+                    )
+                except Exception as ans_err:
+                    logger.warning("[STORM] fallback answer failed: %s", ans_err)
+        return
+
+    # Если текст длинный (>3800 символов):
+    p0_kw = dict(edit_kw)
+    p0_kw.pop("reply_markup", None)
+    try:
+        await message.edit_text(parts[0], **p0_kw)
+    except TypeError as type_err:
+        if "disable_web_page_preview" in str(type_err):
+            p0_kw.pop("disable_web_page_preview", None)
+            await message.edit_text(parts[0], **p0_kw)
+        else:
+            raise
+    except Exception as exc:
+        logger.warning("[STORM] edit_text first part failed: %s, fallback to answer", exc)
+        if hasattr(message, "answer"):
+            try:
+                await message.answer(parts[0], parse_mode=parse_mode)
+            except Exception as ans_err:
+                logger.warning("[STORM] fallback answer part 0 failed: %s", ans_err)
+
+    if hasattr(message, "answer"):
+        for part in parts[1:-1]:
+            await message.answer(
+                part,
+                parse_mode=parse_mode,
+            )
+
+        await message.answer(
+            parts[-1],
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        )
+    else:
+        try:
+            await message.edit_text(parts[0], **edit_kw)
+        except Exception as fallback_exc:
+            logger.warning("[STORM] fallback edit_text failed: %s", fallback_exc)
 
 
 async def run_storm(uid: int, status_msg, topic: str, mode: str = "standard"):
@@ -200,8 +286,11 @@ async def run_storm(uid: int, status_msg, topic: str, mode: str = "standard"):
         text = bs.format_ideas_text(topic, ideas)
 
     try:
-        await status_msg.edit_text(
-            text, parse_mode="HTML", reply_markup=kb.as_markup(),
+        await safe_edit_or_split_send(
+            status_msg,
+            text,
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML",
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[STORM] show ideas failed: %s", exc)
@@ -461,8 +550,12 @@ async def cb_concept_page(cb: types.CallbackQuery):
         return
     text = format_concept_page(concept, page=page)
     kb = build_concept_navigation_kb(concept_idx=idx, page=page)
-    await cb.message.edit_text(
-        text, parse_mode="HTML", reply_markup=kb.as_markup(), disable_web_page_preview=True,
+    await safe_edit_or_split_send(
+        cb.message,
+        text,
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
 
@@ -507,8 +600,12 @@ async def cb_concept_prompt(cb: types.CallbackQuery):
         ),
     )
     kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
-    await cb.message.edit_text(
-        text, parse_mode="HTML", reply_markup=kb.as_markup(), disable_web_page_preview=True,
+    await safe_edit_or_split_send(
+        cb.message,
+        text,
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
 
@@ -553,8 +650,12 @@ async def cb_concept_refs(cb: types.CallbackQuery):
         ),
     )
     kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
-    await cb.message.edit_text(
-        text, parse_mode="HTML", reply_markup=kb.as_markup(), disable_web_page_preview=True,
+    await safe_edit_or_split_send(
+        cb.message,
+        text,
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
 
@@ -614,8 +715,12 @@ async def cb_concept_deepen(cb: types.CallbackQuery):
         ),
     )
     kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
-    await cb.message.edit_text(
-        text, parse_mode="HTML", reply_markup=kb.as_markup(), disable_web_page_preview=True,
+    await safe_edit_or_split_send(
+        cb.message,
+        text,
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
 
@@ -665,7 +770,8 @@ async def cb_concept_fuji_recipe(cb: types.CallbackQuery):
         )
     )
 
-    await cb.message.edit_text(
+    await safe_edit_or_split_send(
+        cb.message,
         card_text,
         parse_mode="HTML",
         reply_markup=kb.as_markup(),
@@ -869,7 +975,8 @@ async def cb_back_to_ideas(cb: types.CallbackQuery):
     else:
         text = bs.format_ideas_text(data.get("topic", ""), ideas)
 
-    await cb.message.edit_text(
+    await safe_edit_or_split_send(
+        cb.message,
         text,
         parse_mode="HTML",
         reply_markup=kb.as_markup(),

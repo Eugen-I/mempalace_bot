@@ -33,7 +33,7 @@ class FakeMessage:
         self.edits = []
         self.last_reply_markup = None
 
-    async def edit_text(self, text, parse_mode=None, reply_markup=None):
+    async def edit_text(self, text, parse_mode=None, reply_markup=None, **kwargs):
         self.edits.append(text)
         self.last_reply_markup = reply_markup
 

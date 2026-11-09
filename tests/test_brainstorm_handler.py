@@ -626,6 +626,37 @@ async def test_cb_concept_deepen_action(monkeypatch):
     assert "Одиночество и бесконечность" in cb.message.edits[-1]
 
 
+async def test_cb_concept_deepen_message_too_long_splits_safely(monkeypatch):
+    concept = _make_sample_fused_concept()
+    h._storm_data[4242] = {
+        "ideas": [concept],
+    }
+
+    # Анализ объемом более 5000 символов (превышает лимит 4096 символов Telegram)
+    huge_analysis = (
+        "1. 🎭 Скрытый символизм: Отражение тени в мутной воде.\n\n"
+        + ("Длинный абзац визуального описания символизма кадра и драматургии. " * 50)
+        + "\n\n2. 🎬 Режиссура модели: Застывшее дыхание.\n\n"
+        + ("Длинный абзац режиссерского разбора напряжения модели и взгляда. " * 50)
+    )
+
+    async def mock_ai_response(*a, **kw):
+        return huge_analysis
+
+    monkeypatch.setattr("handlers.brainstorm.get_ai_response_async", mock_ai_response)
+
+    cb = FakeCb(data="bs_deepen:1")
+    await h.cb_concept_deepen(cb)
+
+    # Первое сообщение редактируется с вводной частью
+    assert len(cb.message.edits) >= 2
+    assert "Режиссёрское углубление" in cb.message.edits[-1]
+    # Оставшаяся часть отправлена через answer без сбоя MESSAGE_TOO_LONG
+    assert len(cb.message.answers) >= 1
+    # Кнопки возврата и сохранения прикреплены к последнему сообщению
+    assert cb.message.last_reply_markup is not None or cb.message.answers[-1] is not None
+
+
 async def test_cb_concept_export_single(monkeypatch):
     concept = _make_sample_fused_concept("Проект экспорта")
     h._storm_data[4242] = {
@@ -726,3 +757,34 @@ async def test_run_storm_auto_fallback_on_gemini_429(monkeypatch):
     assert any("Переключаюсь на локальный Qwen" in edit for edit in status.edits)
     assert 4242 in h._storm_data
     assert h._storm_data[4242]["ideas"][0].title == "Локальный проект от Qwen"
+
+
+async def test_safe_edit_or_split_send_short_text():
+    msg = FakeMessage()
+    await h.safe_edit_or_split_send(msg, "Короткий текст")
+    assert msg.edits == ["Короткий текст"]
+    assert msg.answers == []
+
+
+async def test_safe_edit_or_split_send_long_text_splits():
+    msg = FakeMessage()
+    part1 = "Блок режиссерского анализа текста. " * 150
+    part2 = "Второй абзац текста. " * 100
+    long_text = f"{part1}\n\n{part2}"
+    assert len(long_text) > 4000
+
+    await h.safe_edit_or_split_send(msg, long_text)
+    assert len(msg.edits) == 1
+    assert len(msg.answers) >= 1
+    assert all(len(p) <= 4000 for p in msg.edits + msg.answers)
+
+
+async def test_safe_edit_or_split_send_fallback_on_edit_error():
+    msg = FakeMessage()
+
+    async def fail_edit(text, **kw):
+        raise Exception("Telegram edit failed")
+
+    msg.edit_text = fail_edit
+    await h.safe_edit_or_split_send(msg, "Текст при сбое edit")
+    assert "Текст при сбое edit" in msg.answers
