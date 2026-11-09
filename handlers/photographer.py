@@ -21,10 +21,16 @@ from services.photo_mechanics import (
     parse_mechanic_from_text,
 )
 from services.photographer_gear import (
+    GearProfile,
+    categorize_gear_name,
     enrich_gear_item,
+    enrich_gear_profile,
     format_gear_card,
+    format_safe_gear_card,
     get_default_gear_profile,
+    is_gear_description,
     load_gear_profile,
+    parse_gear_description,
     save_gear_profile,
 )
 from services.ttl_dict import TtlDict
@@ -48,14 +54,63 @@ def _is_mech_waiting(message: types.Message) -> bool:
     return bool(uid and uid in _mech_waiting)
 
 
-def _gear_menu_kb() -> InlineKeyboardBuilder:
+def _gear_menu_kb(profile: GearProfile | None = None) -> InlineKeyboardBuilder:
+    prof = profile or load_gear_profile()
     kb = InlineKeyboardBuilder()
-    kb.row(types.InlineKeyboardButton(text="➕ Добавить технику", callback_data="gear_add"))
+
+    cat_row1 = []
+    if prof.cameras:
+        cat_row1.append(types.InlineKeyboardButton(
+            text=f"📷 Камеры ({len(prof.cameras)})", callback_data="gear_cat_camera"
+        ))
+    if prof.lenses:
+        cat_row1.append(types.InlineKeyboardButton(
+            text=f"🔍 Объективы ({len(prof.lenses)})", callback_data="gear_cat_lens"
+        ))
+    if cat_row1:
+        kb.row(*cat_row1)
+
+    cat_row2 = []
+    if prof.filters:
+        cat_row2.append(types.InlineKeyboardButton(
+            text=f"🎞 Фильтры ({len(prof.filters)})", callback_data="gear_cat_filter"
+        ))
+    if prof.lighting:
+        cat_row2.append(types.InlineKeyboardButton(
+            text=f"💡 Свет ({len(prof.lighting)})", callback_data="gear_cat_lighting"
+        ))
+    if prof.accessories:
+        cat_row2.append(types.InlineKeyboardButton(
+            text=f"🔮 Аксессуары ({len(prof.accessories)})", callback_data="gear_cat_accessory"
+        ))
+    if cat_row2:
+        kb.row(*cat_row2)
+
+    kb.row(
+        types.InlineKeyboardButton(text="➕ Добавить технику", callback_data="gear_add"),
+        types.InlineKeyboardButton(text="📝 Заполнить списком", callback_data="gear_add_list"),
+    )
     kb.row(
         types.InlineKeyboardButton(text="📚 Фотомеханики", callback_data="gear_to_mechanics"),
         types.InlineKeyboardButton(text="🔄 Сброс", callback_data="gear_reset_default"),
     )
-    kb.row(types.InlineKeyboardButton(text="❌ Закрыть", callback_data="gear_close"))
+    kb.row(
+        types.InlineKeyboardButton(text="🔙 В меню Штурма", callback_data="gear_to_storm"),
+        types.InlineKeyboardButton(text="❌ Закрыть", callback_data="gear_close"),
+    )
+    return kb
+
+
+def _gear_category_kb(category: str) -> InlineKeyboardBuilder:
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(text="🎒 Все категории", callback_data="gear_open"),
+        types.InlineKeyboardButton(text="📚 Фотомеханики", callback_data="gear_to_mechanics"),
+    )
+    kb.row(
+        types.InlineKeyboardButton(text="🔙 В меню Штурма", callback_data="gear_to_storm"),
+        types.InlineKeyboardButton(text="❌ Закрыть", callback_data="gear_close"),
+    )
     return kb
 
 
@@ -64,8 +119,9 @@ def _mechanics_menu_kb() -> InlineKeyboardBuilder:
     kb.row(types.InlineKeyboardButton(text="➕ Добавить фотоприём", callback_data="mech_add"))
     kb.row(
         types.InlineKeyboardButton(text="🎒 Мой арсенал", callback_data="mech_to_gear"),
-        types.InlineKeyboardButton(text="❌ Закрыть", callback_data="mech_close"),
+        types.InlineKeyboardButton(text="🔙 В меню Штурма", callback_data="mech_to_storm"),
     )
+    kb.row(types.InlineKeyboardButton(text="❌ Закрыть", callback_data="mech_close"))
     return kb
 
 
@@ -88,11 +144,11 @@ def _mechanic_preview_kb() -> InlineKeyboardBuilder:
 async def cmd_gear(message: types.Message):
     """Показывает карточку арсенала техники пользователя."""
     prof = load_gear_profile()
-    text = format_gear_card(prof)
+    text = format_safe_gear_card(prof)
     await message.answer(
         text,
         parse_mode="HTML",
-        reply_markup=_gear_menu_kb().as_markup(),
+        reply_markup=_gear_menu_kb(prof).as_markup(),
     )
 
 
@@ -101,15 +157,33 @@ async def cmd_gear(message: types.Message):
 async def cb_gear_open(cb: types.CallbackQuery):
     await cb.answer()
     prof = load_gear_profile()
-    text = format_gear_card(prof)
+    text = format_safe_gear_card(prof)
     try:
         await cb.message.edit_text(
             text,
             parse_mode="HTML",
-            reply_markup=_gear_menu_kb().as_markup(),
+            reply_markup=_gear_menu_kb(prof).as_markup(),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[GEAR] edit card failed: %s", exc)
+
+
+@router.callback_query(F.data.startswith("gear_cat_"))
+@allowed_callback
+async def cb_gear_category(cb: types.CallbackQuery):
+    """Показывает подробные карточки техники выбранной категории."""
+    await cb.answer()
+    cat = (cb.data or "").replace("gear_cat_", "")
+    prof = load_gear_profile()
+    text = format_safe_gear_card(prof, category=cat)
+    try:
+        await cb.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=_gear_category_kb(cat).as_markup(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[GEAR] edit category card failed: %s", exc)
 
 
 @router.callback_query(F.data == "gear_add")
@@ -125,6 +199,32 @@ async def cb_gear_add(cb: types.CallbackQuery):
         "Напишите название камеры, объектива, фильтра или аксессуара.\n"
         "<i>Например: «Гелиос 44-2 58mm f/2» или «Black Pro-Mist 1/4»</i>\n\n"
         "ИИ исследует оптический характер и сохранит технику."
+    )
+    await cb.message.answer(
+        prompt_text,
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data == "gear_add_list")
+@allowed_callback
+async def cb_gear_add_list(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    _gear_waiting[uid] = "list"
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="gear_cancel_input"))
+    prompt_text = (
+        "🎒 <b>Заполнение арсенала фотографа списком</b>\n\n"
+        "Отправьте полный список вашего оборудования одним сообщением.\n\n"
+        "<i>Например:\n"
+        "Фотокамера Fujifilm X-T4. Объективы: 1. Pentacon 2.8/29, 2. Kamlan 50mm F1.1...\n"
+        "Светофильтр: K&F ND 2-400nd.\n"
+        "Фотовспышка Godox V1F.\n"
+        "Штатив трёхногий.</i>\n\n"
+        "ИИ распознает технику, проведет отдельное исследование для каждого предмета "
+        "и заполнит профиль приёмами и ожидаемыми эффектами."
     )
     await cb.message.answer(
         prompt_text,
@@ -151,25 +251,30 @@ async def cb_gear_reset_default(cb: types.CallbackQuery):
     await cb.answer("Сброшено к базовому набору")
     prof = get_default_gear_profile()
     save_gear_profile(prof)
-    text = format_gear_card(prof)
+    text = format_safe_gear_card(prof)
     try:
         await cb.message.edit_text(
             text,
             parse_mode="HTML",
-            reply_markup=_gear_menu_kb().as_markup(),
+            reply_markup=_gear_menu_kb(prof).as_markup(),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[GEAR] reset default failed: %s", exc)
 
 
+@router.callback_query(F.data.in_(["gear_to_storm", "mech_to_storm"]))
+@allowed_callback
+async def cb_photographer_back_to_storm(cb: types.CallbackQuery):
+    """Возвращает пользователя в главное меню Штурма (шаг назад)."""
+    from handlers.brainstorm import cb_storm_menu
+    await cb_storm_menu(cb)
+
+
 @router.callback_query(F.data == "gear_close")
 @allowed_callback
 async def cb_gear_close(cb: types.CallbackQuery):
-    await cb.answer()
-    try:
-        await cb.message.delete()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("[GEAR] close delete failed: %s", exc)
+    """Шаг назад к меню Штурма при нажатии 'Закрыть' в арсенале."""
+    await cb_photographer_back_to_storm(cb)
 
 
 # ─── Команды и меню фотомеханик ───
@@ -253,14 +358,67 @@ async def cb_mech_cancel_input(cb: types.CallbackQuery):
 @router.callback_query(F.data == "mech_close")
 @allowed_callback
 async def cb_mech_close(cb: types.CallbackQuery):
-    await cb.answer()
-    try:
-        await cb.message.delete()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("[MECH] close delete failed: %s", exc)
+    """Шаг назад к меню Штурма при нажатии 'Закрыть' в фотомеханиках."""
+    await cb_photographer_back_to_storm(cb)
 
 
 # ─── Ввод данных пользователем: текст или фото ───
+
+
+async def process_bulk_gear_input(message: types.Message, raw_text: str) -> None:
+    """Обрабатывает список техники: парсинг, исследование и сохранение."""
+    parsed_items = parse_gear_description(raw_text)
+    items_to_process = (
+        parsed_items or [{"name": raw_text, "category": categorize_gear_name(raw_text)}]
+    )
+
+    status = await message.answer(
+        f"🔍 Распознано предметов: <b>{len(items_to_process)}</b>.\n"
+        "Начинаю индивидуальное исследование каждого через веб-поиск…",
+        parse_mode="HTML",
+    )
+
+    async def _update_progress(idx: int, total: int, current_name: str) -> None:
+        try:
+            await status.edit_text(
+                f"🔍 Исследую ({idx}/{total}): <b>{html.escape(current_name)}</b>…\n"
+                "<i>Поиск оптических свойств, приёмов и ожидаемого результата</i>",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.debug("[GEAR] status edit failed: %s", e)
+
+    try:
+        new_profile = await enrich_gear_profile(items_to_process, status_cb=_update_progress)
+        save_gear_profile(new_profile)
+
+        card_preview = format_gear_card(new_profile)
+        kb = InlineKeyboardBuilder()
+        kb.row(types.InlineKeyboardButton(text="🎒 Посмотреть арсенал", callback_data="gear_open"))
+        kb.row(types.InlineKeyboardButton(
+            text="🎨 Лаборатория стилей", callback_data="bs_start_fusion"
+        ))
+
+        if len(card_preview) > 3800:
+            await status.edit_text(
+                f"✅ <b>Арсенал успешно сформирован ({len(items_to_process)} предм.)!</b>\n\n"
+                "Все предметы сохранены на постоянной основе в профиль.",
+                parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
+        else:
+            header = f"✅ <b>Арсенал успешно сформирован ({len(items_to_process)} предм.)!</b>\n\n"
+            await status.edit_text(
+                f"{header}{card_preview}",
+                parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
+    except Exception as exc:
+        logger.error("[GEAR] bulk enrich failed: %s", exc, exc_info=True)
+        await status.edit_text(
+            f"❌ Ошибка при формировании арсенала: {html.escape(str(exc))}",
+            parse_mode="HTML",
+        )
 
 
 @router.message(F.text, _is_gear_waiting)
@@ -268,9 +426,14 @@ async def cb_mech_close(cb: types.CallbackQuery):
 async def handle_gear_text_input(message: types.Message):
     """Обработка названия техники от пользователя."""
     uid = message.from_user.id
-    _gear_waiting.pop(uid, None)
+    mode = _gear_waiting.pop(uid, None)
     gear_name = (message.text or "").strip()
     if not gear_name or gear_name.startswith("/"):
+        return
+
+    parsed = parse_gear_description(gear_name)
+    if len(parsed) > 1 or mode == "list" or is_gear_description(gear_name):
+        await process_bulk_gear_input(message, gear_name)
         return
 
     status = await message.answer(
@@ -289,10 +452,17 @@ async def handle_gear_text_input(message: types.Message):
         traits_info = ""
         if item.optical_traits:
             traits_info = f"\n✨ <b>Оптика:</b> {html.escape(item.optical_traits)}"
+        todo_info = ""
+        if getattr(item, "what_to_do", ""):
+            todo_info = f"\n🎯 <b>Что делать:</b> {html.escape(item.what_to_do)}"
+        result_info = ""
+        if getattr(item, "expected_result", ""):
+            result_info = f"\n🔮 <b>Результат:</b> {html.escape(item.expected_result)}"
+
         reply_text = (
             f"✅ <b>Техника добавлена в арсенал!</b>\n\n"
             f"📷 <b>{html.escape(item.name)}</b> (категория: <i>{item.category}</i>)"
-            f"{traits_info}{styles_info}"
+            f"{traits_info}{todo_info}{result_info}{styles_info}"
         )
         kb = InlineKeyboardBuilder()
         kb.row(types.InlineKeyboardButton(

@@ -553,7 +553,11 @@ def _sync_ai_call(
     start_time = time.time()
     logger.info(f"[SYNC_CALL] Starting call. Engine: {engine}, Model: {model}")
 
-    system_prompt = _build_system_prompt(context, user_query, has_images)
+    existing_sys = _find_system_message(messages)
+    if existing_sys and (existing_sys.get("content") or "").strip():
+        system_prompt = existing_sys.get("content", "").strip()
+    else:
+        system_prompt = _build_system_prompt(context, user_query, has_images)
 
     try:
         return "".join(_iter_ai_chunks(
@@ -731,7 +735,11 @@ async def stream_ai_events_async(
     queue: asyncio.Queue[AIStreamEvent | None] = asyncio.Queue()
     emitted_text = False
 
-    system_prompt = _build_system_prompt(context, user_query, has_images)
+    existing_sys = _find_system_message(messages)
+    if existing_sys and (existing_sys.get("content") or "").strip():
+        system_prompt = existing_sys.get("content", "").strip()
+    else:
+        system_prompt = _build_system_prompt(context, user_query, has_images)
 
     def _emit_text(text: str) -> None:
         nonlocal emitted_text

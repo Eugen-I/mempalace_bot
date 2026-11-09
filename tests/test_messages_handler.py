@@ -220,6 +220,11 @@ def _clean_state():
 
     fsm.clear(4242)
     fsm.clear(999)
+    from services.copilot_session import get_copilot_manager
+    get_copilot_manager().clear_session(4242)
+    get_copilot_manager().clear_session(999)
+    from handlers.brainstorm import _storm_waiting
+    _storm_waiting.clear()
     messages._last_user_query.clear()
     yield
 

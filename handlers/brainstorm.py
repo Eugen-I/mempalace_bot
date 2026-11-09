@@ -207,6 +207,32 @@ async def run_storm(uid: int, status_msg, topic: str, mode: str = "standard"):
         logger.warning("[STORM] show ideas failed: %s", exc)
 
 
+def get_storm_menu_text_and_kb() -> tuple[str, InlineKeyboardBuilder]:
+    """Возвращает канонический текст и клавиатуру главного меню Штурма."""
+    text = (
+        "🧠 <b>Штурм</b>\n\n"
+        "Введите тему для генерации идей.\n"
+        "Бот соберёт контекст из ваших заметок, записей Дворца и графа знаний."
+    )
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🎨 Лаборатория стилей (Триада)", callback_data="bs_start_fusion",
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🎙 Арт-копайлот (Диалог)", callback_data="copilot_start",
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(text="🎒 Арсенал", callback_data="bs_open_gear"),
+        types.InlineKeyboardButton(text="📚 Фотомеханики", callback_data="bs_open_mechs"),
+    )
+    kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
+    return text, kb
+
+
 # ─── /штурм <тема> и /синтез ───
 
 
@@ -216,26 +242,9 @@ async def cmd_storm(message: types.Message):
     topic = ((message.text or "")[len("/штурм"):]).lstrip()
     if not topic:
         _storm_waiting[message.from_user.id] = True
-        kb = InlineKeyboardBuilder()
-        kb.row(
-            types.InlineKeyboardButton(
-                text="🎨 Лаборатория стилей (Триада)", callback_data="bs_start_fusion",
-            ),
-        )
-        kb.row(
-            types.InlineKeyboardButton(
-                text="🎙 Арт-копайлот (Диалог)", callback_data="copilot_start",
-            ),
-        )
-        kb.row(
-            types.InlineKeyboardButton(text="🎒 Арсенал", callback_data="bs_open_gear"),
-            types.InlineKeyboardButton(text="📚 Фотомеханики", callback_data="bs_open_mechs"),
-        )
-        kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
+        text, kb = get_storm_menu_text_and_kb()
         await message.answer(
-            "🧠 <b>Штурм</b>\n\n"
-            "Введите тему для генерации идей.\n"
-            "Бот соберёт контекст из ваших заметок, записей Дворца и графа знаний.",
+            text,
             parse_mode="HTML",
             reply_markup=kb.as_markup(),
         )
@@ -275,27 +284,27 @@ async def cmd_fusion_storm(message: types.Message):
 @allowed_only
 async def btn_storm(message: types.Message):
     _storm_waiting[message.from_user.id] = True
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        types.InlineKeyboardButton(
-            text="🎨 Лаборатория стилей (Триада)", callback_data="bs_start_fusion",
-        ),
-    )
-    kb.row(
-        types.InlineKeyboardButton(
-            text="🎙 Арт-копайлот (Диалог)", callback_data="copilot_start",
-        ),
-    )
-    kb.row(
-        types.InlineKeyboardButton(text="🎒 Арсенал", callback_data="bs_open_gear"),
-        types.InlineKeyboardButton(text="📚 Фотомеханики", callback_data="bs_open_mechs"),
-    )
-    kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
+    text, kb = get_storm_menu_text_and_kb()
     await message.answer(
-        "🧠 <b>Штурм</b>\n\nВведите тему для генерации идей.",
+        text,
         parse_mode="HTML",
         reply_markup=kb.as_markup(),
     )
+
+
+@router.callback_query(F.data.in_(["bs_menu", "storm_menu"]))
+@allowed_callback
+async def cb_storm_menu(cb: types.CallbackQuery):
+    """Возвращает пользователя в главное меню Штурма (шаг назад) и активирует ожидание темы."""
+    await cb.answer()
+    uid = cb.from_user.id
+    _storm_waiting[uid] = True
+    text, kb = get_storm_menu_text_and_kb()
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[STORM] menu edit failed: %s", exc)
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb.as_markup())
 
 
 @router.callback_query(F.data == "bs_start_fusion")
@@ -457,6 +466,7 @@ async def cb_concept_prompt(cb: types.CallbackQuery):
     if not isinstance(concept, FusedPhotoConcept):
         return
     prompt_text = build_midjourney_prompt(concept)
+    concept.midjourney_prompt = prompt_text
     title_esc = safe_html_format(concept.title)
     text = (
         f"🎨 <b>Промпт Midjourney / Flux.1</b>\n"
@@ -466,6 +476,14 @@ async def cb_concept_prompt(cb: types.CallbackQuery):
         "Вставьте его в Midjourney (/imagine) или Flux.</i>"
     )
     kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text="📝 В Apple Notes", callback_data=f"bs_export_concept:{idx}",
+        ),
+        types.InlineKeyboardButton(
+            text="🏛 Во Дворец", callback_data=f"bs_save_concept:{idx}",
+        ),
+    )
     kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
 
@@ -502,6 +520,14 @@ async def cb_concept_refs(cb: types.CallbackQuery):
 
     text = format_references_card(concept, web_snippets=web_snippets)
     kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text="📝 В Apple Notes", callback_data=f"bs_export_concept:{idx}",
+        ),
+        types.InlineKeyboardButton(
+            text="🏛 Во Дворец", callback_data=f"bs_save_concept:{idx}",
+        ),
+    )
     kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
 
@@ -545,14 +571,159 @@ async def cb_concept_deepen(cb: types.CallbackQuery):
             {"role": "user", "content": build_deepen_user_prompt(concept)},
         ]
         analysis = await get_ai_response_async(engine, model, msgs)
+        if not analysis.startswith("❌"):
+            concept.deepened_analysis = analysis
         text = format_deepen_card(concept, analysis)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[STORM] Deepen analysis failed: %s", exc)
         text = f"❌ Не удалось углубить образ: {exc}"
 
     kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text="📝 В Apple Notes", callback_data=f"bs_export_concept:{idx}",
+        ),
+        types.InlineKeyboardButton(
+            text="🏛 Во Дворец", callback_data=f"bs_save_concept:{idx}",
+        ),
+    )
     kb.row(types.InlineKeyboardButton(text="◀️ Назад к проекту", callback_data=f"bs_page:{idx}:1"))
     await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("bs_fuji_recipe:"))
+@allowed_callback
+async def cb_concept_fuji_recipe(cb: types.CallbackQuery):
+    """Показывает карточку внутрикамерного рецепта Fujifilm X-T4 для концепта."""
+    if not cb.data or not cb.message:
+        return
+    uid = cb.from_user.id
+    data = _storm_data.get(uid)
+    if not data:
+        await cb.answer("❌ Сессия истекла.", show_alert=True)
+        return
+    try:
+        idx = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        return
+    ideas = data.get("ideas", [])
+    if idx < 1 or idx > len(ideas):
+        await cb.answer("❌ Проект не найден.", show_alert=True)
+        return
+    concept = ideas[idx - 1]
+    from services.fuji_recipes import (
+        build_fuji_recipe_for_concept,
+        format_fuji_recipe_card,
+    )
+
+    recipe = build_fuji_recipe_for_concept(concept)
+    card_text = format_fuji_recipe_card(recipe, slot_name="C1")
+
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text="💾 В книгу рецептов",
+            callback_data=f"bs_recipe_save:{idx}",
+        ),
+        types.InlineKeyboardButton(
+            text="🍏 В Apple Notes",
+            callback_data=f"bs_recipe_export:{idx}",
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text="◀️ Назад к проекту",
+            callback_data=f"bs_page:{idx}:3",
+        )
+    )
+
+    await cb.message.edit_text(
+        card_text,
+        parse_mode="HTML",
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("bs_recipe_save:"))
+@allowed_callback
+async def cb_concept_recipe_save(cb: types.CallbackQuery):
+    """Сохраняет рецепт концепта в постоянную «Книгу рецептов фотографа»."""
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    data = _storm_data.get(uid)
+    if not data:
+        await cb.answer("❌ Сессия истекла.", show_alert=True)
+        return
+    try:
+        idx = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        return
+    ideas = data.get("ideas", [])
+    if idx < 1 or idx > len(ideas):
+        await cb.answer("❌ Проект не найден.", show_alert=True)
+        return
+    concept = ideas[idx - 1]
+    from services.fuji_recipes import (
+        build_fuji_recipe_for_concept,
+        save_recipe_to_book,
+    )
+
+    recipe = build_fuji_recipe_for_concept(concept)
+    ok = save_recipe_to_book(recipe, user_id=uid, slot_hint="C1")
+    if ok:
+        await cb.answer(
+            f"✅ Рецепт «{recipe.recipe_name}» сохранён в книгу рецептов!",
+            show_alert=True,
+        )
+    else:
+        await cb.answer("❌ Не удалось сохранить рецепт в книгу.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("bs_recipe_export:"))
+@allowed_callback
+async def cb_concept_recipe_export(cb: types.CallbackQuery):
+    """Экспортирует рецепт концепта в Apple Notes (папка «Фотопроекты»)."""
+    if not cb.data:
+        return
+    uid = cb.from_user.id
+    data = _storm_data.get(uid)
+    if not data:
+        await cb.answer("❌ Сессия истекла.", show_alert=True)
+        return
+    try:
+        idx = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        return
+    ideas = data.get("ideas", [])
+    if idx < 1 or idx > len(ideas):
+        await cb.answer("❌ Проект не найден.", show_alert=True)
+        return
+    concept = ideas[idx - 1]
+    from services.apple_notes import AppleNotesError
+    from services.fuji_recipes import (
+        build_fuji_recipe_for_concept,
+        export_fuji_recipe_to_apple_notes,
+    )
+
+    recipe = build_fuji_recipe_for_concept(concept)
+    project_title = getattr(concept, "title", "")
+    try:
+        export_fuji_recipe_to_apple_notes(
+            recipe,
+            slot_name="C1",
+            project_title=project_title,
+            folder="Фотопроекты",
+        )
+        await cb.answer(
+            f"✅ Рецепт «{recipe.recipe_name}» экспортирован в Apple Notes (папка «Фотопроекты»)!",
+            show_alert=True,
+        )
+    except AppleNotesError as exc:
+        await cb.answer(f"❌ Ошибка Apple Notes: {exc}", show_alert=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[STORM] Recipe export failed: %s", exc)
+        await cb.answer("❌ Сбой сохранения рецепта в Apple Notes.", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("bs_export_concept:"))

@@ -405,25 +405,25 @@ def test_format_concept_for_apple_notes():
 
     title, body = format_concept_for_apple_notes(concept)
     assert title == "[В планах] Акварельный призрак"
-    assert "# [В планах] Акварельный призрак" in body
-    assert "**Статус:** `[В планах]`" in body
-    assert "## 🎭 Триада стилистического синтеза" in body
+    assert "<h1>[В планах] Акварельный призрак</h1>" in body
+    assert "<b>Статус:</b> <code>[В планах]</code>" in body
+    assert "<h2>🎭 Триада стилистического синтеза</h2>" in body
     assert "Сюрреализм" in body
     assert "Экспрессионизм" in body
     assert "Импрессионизм" in body
-    assert "## 📜 Художественный манифест" in body
+    assert "<h2>📜 Художественный манифест</h2>" in body
     assert "Исследование эфемерности материи" in body
-    assert "## 🖼 Визуальная сцена и композиция" in body
-    assert "## 💡 Схема освещения" in body
-    assert "## 📷 Параметры камеры (Fujifilm X-T4)" in body
-    assert "**Выдержка:** `1/6 с`" in body
-    assert "## 👐 Физика съёмки (действие рук)" in body
-    assert "## 🎒 Рецепт оборудования" in body
-    assert "## 📋 Пошаговый план съёмки" in body
-    assert "1. Кадр 1: Резкий контур фонаря." in body
-    assert "## ✅ Чек-лист перед выходом" in body
+    assert "<h2>🖼 Визуальная сцена и композиция</h2>" in body
+    assert "<h2>💡 Схема освещения</h2>" in body
+    assert "<h2>📷 Параметры камеры (Fujifilm X-T4)</h2>" in body
+    assert "<b>Выдержка:</b> <code>1/6 с</code>" in body
+    assert "<h2>👐 Физика съёмки (действие рук)</h2>" in body
+    assert "<h2>🎒 Рецепт оборудования</h2>" in body
+    assert "<h2>📋 Пошаговый план съёмки</h2>" in body
+    assert "<li>Кадр 1: Резкий контур фонаря.</li>" in body
+    assert "<h2>✅ Чек-лист перед выходом</h2>" in body
     assert "Fujifilm X-T4 + объектив: Гелиос 44-2 58mm f/2" in body
-    assert "Насадки: Black Pro-Mist 1/4" in body
+    assert "Насадки/аксессуары: Black Pro-Mist 1/4" in body
 
 
 def test_format_concept_for_apple_notes_already_prefixed():
@@ -648,3 +648,89 @@ def test_parse_fusion_concepts_truncated_max_tokens():
     assert len(concepts) == 1
     assert concepts[0].title == "Первый завершенный концепт"
     assert concepts[0].shooting_action == "Микро-ICM"
+
+
+def test_deepen_card_html_formatting():
+    """format_deepen_card преобразует сырой маркдаун в безопасный HTML Telegram."""
+    from services.style_fusion import format_deepen_card
+
+    triad = generate_style_triad()
+    concept = FusedPhotoConcept(title="Сновидение осени", triad=triad)
+    raw_md = (
+        "### 1. Скрытый символизм\n"
+        "Лист как метафора **увядания времени**.\n\n"
+        "### 2. Режиссура модели\n"
+        "- Замедленное дыхание\n"
+        "- Взгляд в сторону контрового света"
+    )
+    card = format_deepen_card(concept, raw_md)
+    assert "###" not in card
+    assert "**" not in card
+    assert "<b>1. Скрытый символизм</b>" in card
+    assert "<b>увядания времени</b>" in card
+    assert "• Замедленное дыхание" in card
+
+
+def test_apple_notes_export_full_content_and_html():
+    """Экспорт в Apple Notes содержит все расширенные разделы без сырых символов маркдауна."""
+    triad = generate_style_triad()
+    concept = FusedPhotoConcept(
+        title="Осенняя мистерия",
+        triad=triad,
+        manifesto="Философия осени.",
+        scene_description="Опавшие кленовые листья в воде.",
+        camera_setup={"Выдержка": "1/2 с", "Диафрагма": "f/8.0"},
+        shooting_action="Штатив и поворот ND-фильтра",
+        gear_recipe={"camera": "Fujifilm X-T4", "lens": "Kamlan 50mm F1.1"},
+        shooting_steps=["1. Поставить штатив", "2. Сделать кадр"],
+        deepened_analysis="### Символизм\n**Таинство** воды и времени.",
+        midjourney_prompt="/imagine prompt: autumn leaves --ar 16:9",
+        fuji_recipe="Film: Velvia, WB: Daylight R+2 B-1",
+    )
+    title, body = format_concept_for_apple_notes(concept)
+    assert title == "[В планах] Осенняя мистерия"
+    assert "<h1>[В планах] Осенняя мистерия</h1>" in body
+    assert "<h2>🎭 Триада стилистического синтеза</h2>" in body
+    assert "<h2>🔍 Режиссёрское углубление художественного образа</h2>" in body
+    assert "<b>Таинство</b>" in body
+    assert "###" not in body
+    assert "**" not in body
+    assert "<h2>🎨 Промпт Midjourney / Flux.1</h2>" in body
+    assert "autumn leaves --ar 16:9" in body
+    assert "<h2>🎛 Внутрикамерный рецепт Fujifilm X-T4" in body
+    assert "<h2>🌐 Художественные референсы мастеров</h2>" in body
+
+
+def test_factory_mechanics_diversity():
+    """Заводские фотомеханики содержат разнообразный оптический арсенал."""
+    from services.photo_mechanics import get_factory_mechanics
+
+    mechs = get_factory_mechanics()
+    ids = {m.id for m in mechs}
+    assert "watercolor_dark_multiexposure" in ids
+    assert "center_hole_distortion" in ids
+    assert "reversed_front_element_swirl" in ids
+    assert "kamlan_ultra_shallow_dof" in ids
+    assert "nd_silky_motion" in ids
+    assert "sheer_fabric_veil" in ids
+
+
+def test_concept_micro_actions_persistence():
+    """Поля углубления, Midjourney и рецепта сохраняются при to_dict / from_dict."""
+    triad = generate_style_triad()
+    c1 = FusedPhotoConcept(
+        title="Проект с сохранением",
+        triad=triad,
+        deepened_analysis="Глубокий анализ",
+        midjourney_prompt="mj prompt",
+        fuji_recipe="fuji recipe",
+    )
+    d = c1.to_dict()
+    assert d["deepened_analysis"] == "Глубокий анализ"
+    assert d["midjourney_prompt"] == "mj prompt"
+    assert d["fuji_recipe"] == "fuji recipe"
+
+    c2 = FusedPhotoConcept.from_dict(d)
+    assert c2.deepened_analysis == "Глубокий анализ"
+    assert c2.midjourney_prompt == "mj prompt"
+    assert c2.fuji_recipe == "fuji recipe"

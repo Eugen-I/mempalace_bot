@@ -725,16 +725,44 @@ def ideas_to_text(ideas: list) -> str:
         if hasattr(idea, "title"):
             title = idea.title
             parts = [f"{i}. {title}"]
+            triad = getattr(idea, "triad", None)
+            if triad and hasattr(triad, "summary"):
+                parts.append(f"🎭 Триада стилей: {triad.summary()}")
+                if getattr(triad, "rationale", ""):
+                    parts.append(f"Обоснование синергии: {triad.rationale}")
             manifesto = getattr(idea, "manifesto", "")
             if manifesto:
-                parts.append(f"Манифест: {manifesto}")
+                parts.append(f"📜 Манифест:\n{manifesto}")
             scene = getattr(idea, "scene_description", "")
             if scene:
                 parts.append(f"Сюжет: {scene}")
+            lighting = getattr(idea, "lighting_setup", "")
+            if lighting:
+                parts.append(f"💡 Свет: {lighting}")
+            cam = getattr(idea, "camera_setup", {})
+            if cam:
+                cam_str = "; ".join(f"{k}: {v}" for k, v in cam.items())
+                parts.append(f"📷 Камера: {cam_str}")
+            action = getattr(idea, "shooting_action", "")
+            if action:
+                parts.append(f"👐 Физика съёмки: {action}")
+            gear = getattr(idea, "gear_recipe", {})
+            if gear:
+                gear_str = "; ".join(f"{k}: {v}" for k, v in gear.items())
+                parts.append(f"🎒 Арсенал: {gear_str}")
             steps = getattr(idea, "shooting_steps", [])
             if steps:
                 parts.append(f"Шаги: {'; '.join(steps)}")
-            lines.append("\n".join(parts))
+            deepened = getattr(idea, "deepened_analysis", "")
+            if deepened:
+                parts.append(f"🔍 Режиссёрское углубление:\n{deepened}")
+            mj = getattr(idea, "midjourney_prompt", "")
+            if mj:
+                parts.append(f"🎨 Промпт Midjourney:\n{mj}")
+            fuji = getattr(idea, "fuji_recipe", "")
+            if fuji:
+                parts.append(f"🎛 Рецепт Fujifilm:\n{fuji}")
+            lines.append("\n\n".join(parts))
         elif isinstance(idea, dict):
             block = f"{i}. {idea.get('title', 'Без названия')}"
             if idea.get("reason"):

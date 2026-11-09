@@ -42,6 +42,16 @@ class TestGetSmartPrompt:
         result = get_smart_prompt(query="посмотри это фото", has_images=True)
         assert FOCUS_PHOTO_ART in result
 
+    def test_creative_photo_art_autumn_leaves(self):
+        result = get_smart_prompt(query="Осенние листья")
+        assert FOCUS_PHOTO_ART in result
+        assert "арт-директор" in result
+
+    def test_creative_photo_gear_context(self):
+        result = get_smart_prompt(query="как снять на pentacon")
+        assert FOCUS_PHOTO_ART in result
+        assert "Fujifilm X-T4" in result
+
     def test_dream_plus_photo(self):
         result = get_smart_prompt(query="мне приснился сон", has_images=True)
         assert FOCUS_DREAMS_JUNG in result

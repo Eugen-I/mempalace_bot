@@ -11,7 +11,9 @@ from handlers.photographer import (
     _mech_waiting,
     _pending_mechanic,
     cb_gear_add,
+    cb_gear_add_list,
     cb_gear_cancel_input,
+    cb_gear_category,
     cb_gear_close,
     cb_gear_reset_default,
     cb_gear_to_mechanics,
@@ -26,11 +28,12 @@ from handlers.photographer import (
     handle_gear_text_input,
     handle_mech_photo_input,
     handle_mech_text_input,
+    process_bulk_gear_input,
 )
 from services.photo_mechanics import VisualMechanic
 from services.photographer_gear import GearItem
 
-TEST_UIDS = {12345, 999, 888, 123, 555, 777, 111}
+TEST_UIDS = {12345, 999, 888, 123, 555, 777, 111, 54321}
 
 
 @pytest.fixture(autouse=True)
@@ -50,6 +53,8 @@ def make_mock_message(text: str = "", user_id: int = 12345):
     msg.text = text
     msg.from_user = MagicMock()
     msg.from_user.id = user_id
+    msg.chat = MagicMock()
+    msg.chat.id = user_id
     msg.answer = AsyncMock()
     msg.photo = None
     msg.document = None
@@ -106,16 +111,28 @@ async def test_gear_navigation_and_cancel():
 @pytest.mark.asyncio
 async def test_gear_reset_default():
     cb = make_mock_callback("gear_reset_default")
-    await cb_gear_reset_default(cb)
+    with patch("handlers.photographer.save_gear_profile") as mock_save:
+        await cb_gear_reset_default(cb)
+        mock_save.assert_called_once()
     cb.answer.assert_called_once_with("Сброшено к базовому набору")
     cb.message.edit_text.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_gear_close():
-    cb = make_mock_callback("gear_close")
+    cb = make_mock_callback("gear_close", user_id=999)
     await cb_gear_close(cb)
-    cb.message.delete.assert_called_once()
+    cb.message.edit_text.assert_called_once()
+    assert "Штурм" in cb.message.edit_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_gear_category_navigation():
+    cb = make_mock_callback("gear_cat_lens", user_id=999)
+    await cb_gear_category(cb)
+    cb.message.edit_text.assert_called_once()
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Объективы" in text
 
 
 @pytest.mark.asyncio
@@ -133,9 +150,10 @@ async def test_mech_navigation_and_cancel():
 
 @pytest.mark.asyncio
 async def test_mech_close():
-    cb = make_mock_callback("mech_close")
+    cb = make_mock_callback("mech_close", user_id=999)
     await cb_mech_close(cb)
-    cb.message.delete.assert_called_once()
+    cb.message.edit_text.assert_called_once()
+    assert "Штурм" in cb.message.edit_text.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -165,9 +183,11 @@ async def test_handle_gear_text_input():
         best_styles=["Пиктореализм"],
     )
 
-    with patch("handlers.photographer.enrich_gear_item", new_callable=AsyncMock) as mock_enrich:
+    with patch("handlers.photographer.enrich_gear_item", new_callable=AsyncMock) as mock_enrich, \
+         patch("handlers.photographer.save_gear_profile") as mock_save:
         mock_enrich.return_value = fake_item
         await handle_gear_text_input(msg)
+        mock_save.assert_called_once()
 
     assert 123 not in _gear_waiting
     status_msg.edit_text.assert_called_once()
@@ -256,3 +276,65 @@ async def test_cb_mech_cancel():
     await cb_mech_cancel(cb)
     assert 111 not in _pending_mechanic
     cb.message.edit_text.assert_called_once_with("❌ Сохранение приёма отменено.")
+
+
+@pytest.mark.asyncio
+async def test_cb_gear_add_list():
+    cb = make_mock_callback("gear_add_list", user_id=777)
+    await cb_gear_add_list(cb)
+    assert _gear_waiting[777] == "list"
+    cb.message.answer.assert_called_once()
+    assert "списком" in cb.message.answer.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_handle_gear_bulk_text_input(tmp_path):
+    _gear_waiting[123] = "list"
+    raw = (
+        "Фотокамера Fujifilm X-T4. Объективы: 1. Pentacon 2.8/29, 2. Kamlan 50mm F1.1.\n"
+        "Свотофильтр: K&F ND-Filtr 2-400nd.\n"
+        "Фотовспышка Godox V1F."
+    )
+    msg = make_mock_message(raw, user_id=123)
+    status_msg = AsyncMock()
+    msg.answer.return_value = status_msg
+
+    with patch("handlers.photographer.enrich_gear_profile") as mock_enrich:
+        from services.photographer_gear import GearItem, GearProfile
+        fake_prof = GearProfile()
+        fake_prof.add_item(GearItem(name="Fujifilm X-T4", category="camera"))
+        fake_prof.add_item(GearItem(name="Pentacon 2.8/29", category="lens"))
+        fake_prof.add_item(GearItem(name="Kamlan 50mm F1.1", category="lens"))
+        fake_prof.add_item(GearItem(name="K&F ND-Filtr 2-400nd", category="filter"))
+        fake_prof.add_item(GearItem(name="Godox V1F", category="lighting"))
+        mock_enrich.return_value = fake_prof
+
+        with patch("handlers.photographer.save_gear_profile") as mock_save:
+            await handle_gear_text_input(msg)
+            assert mock_save.called
+
+    assert 123 not in _gear_waiting
+    assert status_msg.edit_text.called
+    final_text = status_msg.edit_text.call_args[0][0]
+    assert "Арсенал успешно сформирован" in final_text
+
+
+@pytest.mark.asyncio
+async def test_messages_interception_for_gear_in_storm_waiting():
+    from handlers.brainstorm import _storm_waiting
+    from handlers.messages import process_user_message
+    from services.copilot_session import get_copilot_manager
+
+    uid = 54321
+    get_copilot_manager().clear_session(uid)
+    _storm_waiting[uid] = True
+    gear_text = (
+        "Фотокамера Fujifilm X-T4. Объективы: 1. Pentacon 2.8/29, 2. Kamlan 50mm F1.1.\n"
+        "Свотофильтр: K&F ND-Filtr 2-400nd."
+    )
+    msg = make_mock_message(gear_text, user_id=uid)
+
+    with patch("handlers.photographer.process_bulk_gear_input", new_callable=AsyncMock) as mock_bulk:
+        await process_user_message(msg)
+        assert mock_bulk.called
+        assert uid not in _storm_waiting

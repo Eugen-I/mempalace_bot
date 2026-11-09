@@ -289,6 +289,12 @@ async def process_user_message(message: types.Message):
 
     # 0cc. Ожидание темы штурма
     if uid in _storm_waiting:
+        from services.photographer_gear import is_gear_description
+        if is_gear_description(text):
+            _storm_waiting.pop(uid, None)
+            from handlers.photographer import process_bulk_gear_input
+            return await process_bulk_gear_input(message, text)
+
         from handlers.brainstorm import run_storm
 
         wait_val = _storm_waiting.pop(uid, None)

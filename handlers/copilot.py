@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
@@ -21,6 +22,7 @@ from services.copilot_engine import (
     append_styles_to_summary,
     consult_tech_parameters,
     export_copilot_project_to_apple_notes,
+    format_copilot_recipe_card,
     format_manifesto_card,
     format_single_variant_card,
     format_styles_selection_card,
@@ -30,6 +32,7 @@ from services.copilot_engine import (
     generate_initial_manifesto,
     generate_midjourney_prompt,
     generate_socratic_reply,
+    get_or_create_fuji_recipe,
     get_random_style_synergy,
     init_tech_preferences,
     refine_active_variant,
@@ -37,6 +40,11 @@ from services.copilot_engine import (
     start_copilot_discussion,
     summarize_creative_dialogue,
     update_tech_preference,
+)
+from services.fuji_recipes import (
+    export_fuji_recipe_to_apple_notes,
+    format_fuji_recipe_card,
+    generate_surreal_stochastic_recipe,
 )
 from services.copilot_session import CopilotSession, get_copilot_manager
 from services.text_formatter import safe_html_format
@@ -287,9 +295,15 @@ def build_variants_kb(
 
 
 def build_field_assistant_kb(session: CopilotSession) -> types.InlineKeyboardMarkup:
-    """Клавиатура полевого ассистента: промпт, экспорт в Apple Notes, завершение."""
+    """Клавиатура полевого ассистента: рецепт камеры, промпт, экспорт в Apple Notes, завершение."""
     builder = InlineKeyboardBuilder()
 
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🎛 Внутрикамерный рецепт (слот C1)",
+            callback_data="cp_recipe_view:C1",
+        ),
+    )
     builder.row(
         types.InlineKeyboardButton(
             text="🎨 Промпт для Midjourney / Flux",
@@ -310,6 +324,67 @@ def build_field_assistant_kb(session: CopilotSession) -> types.InlineKeyboardMar
             text="🏁 Завершить сессию", callback_data="cp_finish",
         ),
     )
+    return builder.as_markup()
+
+
+def build_fuji_recipe_kb(slot_name: str = "C1") -> types.InlineKeyboardMarkup:
+    """Клавиатура рецепта камеры: слоты C1-C7, Cadavre Exquis, сброс, экспорт."""
+    builder = InlineKeyboardBuilder()
+
+    clean_slot = slot_name.upper().strip() if slot_name else "C1"
+    if clean_slot not in ("C1", "C2", "C3", "C4", "C5", "C6", "C7"):
+        clean_slot = "C1"
+
+    # Ряд 1: Слоты C1 - C4
+    slot_btns_1 = []
+    for s in ("C1", "C2", "C3", "C4"):
+        label = f"• {s} •" if s == clean_slot else s
+        slot_btns_1.append(
+            types.InlineKeyboardButton(text=label, callback_data=f"cp_recipe_slot:{s}")
+        )
+    builder.row(*slot_btns_1)
+
+    # Ряд 2: Слоты C5 - C7
+    slot_btns_2 = []
+    for s in ("C5", "C6", "C7"):
+        label = f"• {s} •" if s == clean_slot else s
+        slot_btns_2.append(
+            types.InlineKeyboardButton(text=label, callback_data=f"cp_recipe_slot:{s}")
+        )
+    builder.row(*slot_btns_2)
+
+    # Ряд 3: Роллер сюрреализма Cadavre Exquis
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🎲 Сюрреалистический Cadavre Exquis",
+            callback_data=f"cp_recipe_stochastic:{clean_slot}",
+        ),
+    )
+
+    # Ряд 4: Рецепт проекта, Сохранение в книгу, Экспорт в Apple Notes
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🎯 Рецепт проекта",
+            callback_data=f"cp_recipe_reset:{clean_slot}",
+        ),
+        types.InlineKeyboardButton(
+            text="💾 В книгу",
+            callback_data=f"cp_recipe_save_book:{clean_slot}",
+        ),
+        types.InlineKeyboardButton(
+            text="🍏 В Apple Notes",
+            callback_data=f"cp_recipe_export:{clean_slot}",
+        ),
+    )
+
+    # Ряд 5: Возврат к полевому чек-листу
+    builder.row(
+        types.InlineKeyboardButton(
+            text="📋 К полевому чек-листу",
+            callback_data="cp_to_field_assistant",
+        ),
+    )
+
     return builder.as_markup()
 
 
@@ -1108,6 +1183,435 @@ async def cb_copilot_finish(cb: types.CallbackQuery):
         await cb.message.edit_text(farewell, parse_mode="HTML", reply_markup=builder.as_markup())
     except Exception as e:
         logger.debug("[COPILOT] finish edit failed: %s", e)
+
+
+@router.callback_query(F.data.startswith("cp_recipe_view:"), allowed_callback)
+async def cb_copilot_recipe_view(cb: types.CallbackQuery):
+    """Отображение карточки внутрикамерного рецепта камеры в выбранном слоте C1-C7."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    slot = (cb.data or "").split(":")[1] if ":" in (cb.data or "") else "C1"
+    text = format_copilot_recipe_card(session, slot_name=slot)
+    kb = build_fuji_recipe_kb(slot_name=slot)
+
+    await cb.answer()
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] recipe view edit failed: %s", e)
+
+
+@router.callback_query(F.data.startswith("cp_recipe_slot:"), allowed_callback)
+async def cb_copilot_recipe_slot(cb: types.CallbackQuery):
+    """Переключение целевого пользовательского слота камеры (C1–C7)."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    slot = (cb.data or "").split(":")[1] if ":" in (cb.data or "") else "C1"
+    text = format_copilot_recipe_card(session, slot_name=slot)
+    kb = build_fuji_recipe_kb(slot_name=slot)
+
+    await cb.answer(f"Слот {slot}")
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] recipe slot edit failed: %s", e)
+
+
+@router.callback_query(F.data.startswith("cp_recipe_stochastic:"), allowed_callback)
+async def cb_copilot_recipe_stochastic(cb: types.CallbackQuery):
+    """Генерация стохастического сюрреалистического рецепта Cadavre Exquis."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    slot = (cb.data or "").split(":")[1] if ":" in (cb.data or "") else "C1"
+    recipe = get_or_create_fuji_recipe(session, stochastic=True, intensity="wild")
+    text = format_fuji_recipe_card(recipe, slot_name=slot)
+    kb = build_fuji_recipe_kb(slot_name=slot)
+
+    await cb.answer(f"🎲 Cadavre Exquis: {recipe.recipe_name[:30]}")
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] recipe stochastic edit failed: %s", e)
+
+
+@router.callback_query(F.data.startswith("cp_recipe_reset:"), allowed_callback)
+async def cb_copilot_recipe_reset(cb: types.CallbackQuery):
+    """Сброс к каноническому рецепту под выбранную стилистику проекта."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    slot = (cb.data or "").split(":")[1] if ":" in (cb.data or "") else "C1"
+    tech = session.tech_preferences or {}
+    tech.pop("fuji_recipe", None)
+    session.tech_preferences = tech
+    manager.save_session(session)
+
+    recipe = get_or_create_fuji_recipe(session, stochastic=False)
+    text = format_fuji_recipe_card(recipe, slot_name=slot)
+    kb = build_fuji_recipe_kb(slot_name=slot)
+
+    await cb.answer("🎯 Рецепт сброшен к стилистике проекта")
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] recipe reset edit failed: %s", e)
+
+
+@router.callback_query(F.data.startswith("cp_recipe_export:"), allowed_callback)
+async def cb_copilot_recipe_export(cb: types.CallbackQuery):
+    """Экспорт рецепта камеры в Apple Notes в папку «Фотопроекты»."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    slot = (cb.data or "").split(":")[1] if ":" in (cb.data or "") else "C1"
+    recipe = get_or_create_fuji_recipe(session)
+
+    try:
+        note_id = export_fuji_recipe_to_apple_notes(
+            recipe, slot_name=slot, project_title=session.topic, folder="Фотопроекты",
+        )
+        logger.info("[COPILOT] Рецепт экспортирован в заметку: %s", note_id)
+        await cb.answer(
+            f"✅ Рецепт для слота {slot} успешно сохранен в Apple Notes (папка «Фотопроекты»)!",
+            show_alert=True,
+        )
+    except Exception as exc:
+        logger.error("[COPILOT] Ошибка экспорта рецепта в Apple Notes: %s", exc)
+        await cb.answer(
+            "⚠️ Не удалось создать заметку с рецептом в Apple Notes.",
+            show_alert=True,
+        )
+
+
+@router.callback_query(F.data.startswith("cp_recipe_save_book:"), allowed_callback)
+async def cb_copilot_recipe_save_book(cb: types.CallbackQuery):
+    """Сохраняет текущий активный рецепт сессии в персистентную книгу рецептов."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session:
+        await cb.answer("Сессия не найдена", show_alert=True)
+        return
+
+    slot = (cb.data or "").split(":")[1] if ":" in (cb.data or "") else "C1"
+    recipe = get_or_create_fuji_recipe(session)
+    from services.fuji_recipes import save_recipe_to_book
+
+    ok = save_recipe_to_book(recipe, user_id=uid, slot_hint=slot)
+    if ok:
+        await cb.answer(
+            f"✅ Рецепт «{recipe.recipe_name}» сохранён в книгу рецептов!",
+            show_alert=True,
+        )
+    else:
+        await cb.answer("❌ Не удалось сохранить рецепт в книгу.", show_alert=True)
+
+
+def _format_recipe_book_list(
+    entries: list[dict[str, Any]],
+) -> tuple[str, types.InlineKeyboardMarkup]:
+    """Форматирует список сохранённых рецептов книги с интерактивной клавиатурой."""
+    builder = InlineKeyboardBuilder()
+
+    if not entries:
+        text = (
+            "📖 <b>Книга рецептов Fujifilm X-T4 пуста.</b>\n\n"
+            "Вы можете сохранять рецепты прямо из «Штурма» или диалогового "
+            "копайлота по кнопке «💾 В книгу», а также генерировать "
+            "новые сюрреалистические формулы через /cadavre."
+        )
+        builder.row(
+            types.InlineKeyboardButton(
+                text="🎲 Сгенерировать Cadavre Exquis",
+                callback_data="cp_recipe_standalone_roll:C1",
+            ),
+        )
+        builder.row(
+            types.InlineKeyboardButton(
+                text="🎙 Начать арт-проект (/copilot)",
+                callback_data="copilot_start",
+            ),
+        )
+        return text, builder.as_markup()
+
+    lines = [
+        f"📖 <b>Книга рецептов Fujifilm X-T4</b> (сохранено: {len(entries)}):\n"
+    ]
+
+    choice_btns: list[types.InlineKeyboardButton] = []
+    for idx, entry in enumerate(entries, start=1):
+        name = safe_html_format(str(entry.get("recipe_name", f"Рецепт {idx}")))
+        film = safe_html_format(str(entry.get("film_simulation", "Classic Chrome")))
+        dr = str(entry.get("dynamic_range", "DR200"))
+        slot = str(entry.get("slot_hint", "C1"))
+        lines.append(f"{idx}. <b>{name}</b> [<code>{slot}</code>]")
+        lines.append(f"   <i>{film} | {dr}</i>\n")
+
+        btn_title = f"{idx}. {str(entry.get('recipe_name', f'#{idx}'))[:18]}"
+        choice_btns.append(
+            types.InlineKeyboardButton(
+                text=btn_title,
+                callback_data=f"fbook_view:{idx}",
+            )
+        )
+
+    for i in range(0, len(choice_btns), 2):
+        builder.row(*choice_btns[i : i + 2])
+
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🍏 Экспорт всей книги в Apple Notes",
+            callback_data="fbook_export_all",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🎲 Сгенерировать Cadavre Exquis",
+            callback_data="cp_recipe_standalone_roll:C1",
+        ),
+    )
+    return "\n".join(lines), builder.as_markup()
+
+
+@router.message(Command("myrecipes", "книга_рецептов", "recipes"))
+@allowed_only
+async def cmd_myrecipes(message: types.Message):
+    """Точка входа в постоянную «Книгу рецептов фотографа»."""
+    uid = message.from_user.id
+    from services.fuji_recipes import load_saved_recipe_entries
+
+    entries = load_saved_recipe_entries(user_id=uid)
+    text, kb = _format_recipe_book_list(entries)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("fbook_view:"), allowed_callback)
+async def cb_fbook_view(cb: types.CallbackQuery):
+    """Отображение карточки конкретного рецепта из книги."""
+    if not cb.message:
+        return
+    uid = cb.from_user.id
+    idx_str = (cb.data or "").split(":")[1] if ":" in (cb.data or "") else ""
+    try:
+        idx = int(idx_str)
+    except ValueError:
+        return
+
+    from services.fuji_recipes import format_fuji_recipe_card, load_saved_recipes
+
+    recipes = load_saved_recipes(user_id=uid)
+    if idx < 1 or idx > len(recipes):
+        await cb.answer("Рецепт не найден", show_alert=True)
+        return
+
+    recipe = recipes[idx - 1]
+    slot = f"C{idx}" if idx <= 7 else "C1"
+    text = format_fuji_recipe_card(recipe, slot_name=slot)
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🍏 В Apple Notes",
+            callback_data=f"fbook_export_one:{idx}",
+        ),
+        types.InlineKeyboardButton(
+            text="🗑 Удалить из книги",
+            callback_data=f"fbook_del:{idx}",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="◀️ К списку рецептов",
+            callback_data="fbook_list",
+        ),
+    )
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("fbook_del:"), allowed_callback)
+async def cb_fbook_del(cb: types.CallbackQuery):
+    """Удаление рецепта из книги фотографа."""
+    if not cb.message:
+        return
+    uid = cb.from_user.id
+    idx_str = (cb.data or "").split(":")[1] if ":" in (cb.data or "") else ""
+    try:
+        idx = int(idx_str)
+    except ValueError:
+        return
+
+    from services.fuji_recipes import (
+        delete_saved_recipe,
+        load_saved_recipe_entries,
+        load_saved_recipes,
+    )
+
+    recipes = load_saved_recipes(user_id=uid)
+    if idx < 1 or idx > len(recipes):
+        await cb.answer("Рецепт не найден", show_alert=True)
+        return
+
+    recipe = recipes[idx - 1]
+    ok = delete_saved_recipe(recipe.recipe_name, user_id=uid)
+    if ok:
+        await cb.answer(f"🗑 Рецепт «{recipe.recipe_name}» удалён!", show_alert=True)
+    else:
+        await cb.answer("❌ Ошибка при удалении", show_alert=True)
+
+    entries = load_saved_recipe_entries(user_id=uid)
+    text, kb = _format_recipe_book_list(entries)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("fbook_export_one:"), allowed_callback)
+async def cb_fbook_export_one(cb: types.CallbackQuery):
+    """Экспорт одного рецепта из книги в Apple Notes."""
+    uid = cb.from_user.id
+    idx_str = (cb.data or "").split(":")[1] if ":" in (cb.data or "") else ""
+    try:
+        idx = int(idx_str)
+    except ValueError:
+        return
+
+    from services.fuji_recipes import export_fuji_recipe_to_apple_notes, load_saved_recipes
+
+    recipes = load_saved_recipes(user_id=uid)
+    if idx < 1 or idx > len(recipes):
+        await cb.answer("Рецепт не найден", show_alert=True)
+        return
+
+    recipe = recipes[idx - 1]
+    try:
+        export_fuji_recipe_to_apple_notes(
+            recipe,
+            slot_name=f"C{idx}" if idx <= 7 else "C1",
+            project_title=recipe.recipe_name,
+            folder="Фотопроекты",
+        )
+        await cb.answer(
+            f"✅ Рецепт «{recipe.recipe_name}» экспортирован в Apple Notes (папка «Фотопроекты»)!",
+            show_alert=True,
+        )
+    except Exception as exc:
+        logger.warning("[FUJI] Book single export failed: %s", exc)
+        await cb.answer("❌ Ошибка экспорта в Apple Notes", show_alert=True)
+
+
+@router.callback_query(F.data == "fbook_export_all", allowed_callback)
+async def cb_fbook_export_all(cb: types.CallbackQuery):
+    """Экспорт всей книги рецептов фотографа в Apple Notes."""
+    uid = cb.from_user.id
+    from services.fuji_recipes import export_recipe_book_to_apple_notes
+
+    ok, note_or_err = export_recipe_book_to_apple_notes(
+        user_id=uid, folder="Фотопроекты",
+    )
+    if ok:
+        await cb.answer(
+            "✅ Вся книга рецептов экспортирована в Apple Notes (папка «Фотопроекты»)!",
+            show_alert=True,
+        )
+    else:
+        await cb.answer(f"❌ {note_or_err}", show_alert=True)
+
+
+@router.callback_query(F.data == "fbook_list", allowed_callback)
+async def cb_fbook_list(cb: types.CallbackQuery):
+    """Возврат к полному списку книги рецептов."""
+    if not cb.message:
+        return
+    uid = cb.from_user.id
+    from services.fuji_recipes import load_saved_recipe_entries
+
+    entries = load_saved_recipe_entries(user_id=uid)
+    text, kb = _format_recipe_book_list(entries)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("cp_recipe_standalone_roll:"), allowed_callback)
+async def cb_copilot_recipe_standalone_roll(cb: types.CallbackQuery):
+    """Повторный стохастический бросок кубиков Cadavre Exquis вне сессии копайлота."""
+    if not cb.message:
+        return
+
+    slot = (cb.data or "").split(":")[1] if ":" in (cb.data or "") else "C1"
+    recipe = generate_surreal_stochastic_recipe(intensity="wild")
+    text = format_fuji_recipe_card(recipe, slot_name=slot)
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🎲 Еще сюрреалистический рецепт",
+            callback_data=f"cp_recipe_standalone_roll:{slot}",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="🎙 Начать арт-проект (/copilot)", callback_data="copilot_start",
+        ),
+    )
+
+    await cb.answer(f"🎲 {recipe.recipe_name[:30]}...")
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+    except Exception as e:
+        logger.debug("[COPILOT] standalone roll edit failed: %s", e)
+
+
+@router.message(Command("recipe", "рецепт", "fuji", "cadavre"))
+@allowed_only
+async def cmd_recipe(message: types.Message):
+    """Точка входа в рецепты Fujifilm X-T4: вывод рецепта проекта или роллер сюрреализма."""
+    uid = message.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+
+    if session:
+        slot = "C1"
+        text = format_copilot_recipe_card(session, slot_name=slot)
+        kb = build_fuji_recipe_kb(slot_name=slot)
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        slot = "C1"
+        recipe = generate_surreal_stochastic_recipe(intensity="wild")
+        text = format_fuji_recipe_card(recipe, slot_name=slot)
+
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            types.InlineKeyboardButton(
+                text="🎲 Еще сюрреалистический рецепт",
+                callback_data=f"cp_recipe_standalone_roll:{slot}",
+            ),
+        )
+        builder.row(
+            types.InlineKeyboardButton(
+                text="🎙 Начать арт-проект (/copilot)", callback_data="copilot_start",
+            ),
+        )
+        await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
 
 async def handle_copilot_text_message(message: types.Message) -> bool:

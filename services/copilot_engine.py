@@ -16,6 +16,12 @@ from typing import Any
 
 from services.ai_engine import get_ai_response_async, get_current_ai
 from services.copilot_session import CopilotSession, get_copilot_manager
+from services.fuji_recipes import (
+    FujiRecipe,
+    build_fuji_recipe_for_project,
+    format_fuji_recipe_card,
+    generate_surreal_stochastic_recipe,
+)
 from services.json_parser import extract_json_from_text, extract_partial_json_array
 from services.text_formatter import safe_html_format
 
@@ -1035,6 +1041,40 @@ def generate_midjourney_prompt(session: CopilotSession) -> str:
     )
 
 
+def get_or_create_fuji_recipe(
+    session: CopilotSession,
+    stochastic: bool = False,
+    intensity: str = "wild",
+) -> FujiRecipe:
+    """Возвращает сохраненный или генерирует внутрикамерный рецепт Fujifilm X-T4 для сессии."""
+    tech = session.tech_preferences or {}
+    saved_recipe_dict = tech.get("fuji_recipe")
+
+    if not stochastic and isinstance(saved_recipe_dict, dict):
+        return FujiRecipe.from_dict(saved_recipe_dict)
+
+    if stochastic:
+        recipe = generate_surreal_stochastic_recipe(session, intensity=intensity)
+    else:
+        recipe = build_fuji_recipe_for_project(session)
+
+    tech["fuji_recipe"] = recipe.to_dict()
+    tech["film_sim"] = recipe.film_simulation
+    session.tech_preferences = tech
+    get_copilot_manager().save_session(session)
+    return recipe
+
+
+def format_copilot_recipe_card(
+    session: CopilotSession,
+    slot_name: str = "C1",
+    stochastic: bool = False,
+) -> str:
+    """Форматирует визуальную карточку внутрикамерного рецепта для вывода в Telegram."""
+    recipe = get_or_create_fuji_recipe(session, stochastic=stochastic)
+    return format_fuji_recipe_card(recipe, slot_name=slot_name)
+
+
 def generate_field_assistant_checklist(session: CopilotSession) -> str:
     """Форматирует карманную шпаргалку / чек-лист перед съемкой для Telegram."""
     project = session.get_active_project()
@@ -1066,6 +1106,7 @@ def generate_field_assistant_checklist(session: CopilotSession) -> str:
     ]
 
     hook = project.get("visual_hook", "")
+    recipe = get_or_create_fuji_recipe(session)
 
     lines = [
         f"🎒 <b>Полевой ассистент съемки: «{safe_html_format(title)}»</b>\n",
@@ -1097,6 +1138,10 @@ def generate_field_assistant_checklist(session: CopilotSession) -> str:
     lines.extend([
         "",
         "⚙️ <b>Параметры Fujifilm X-T4:</b>",
+        (
+            f"   ▫️ Рецепт: <code>{safe_html_format(recipe.recipe_name)} "
+            f"({recipe.film_simulation})</code>"
+        ),
         f"   ▫️ Настройки: <code>{safe_html_format(cam_setup)}</code>",
         f"   ▫️ Метод стабилизации: <i>{safe_html_format(supp)}</i>",
         "",
@@ -1157,6 +1202,15 @@ def format_copilot_project_for_notes(
     manifesto = session.manifesto or "Художественное кредо проекта."
     summary = session.summary or "Обсуждение темы зафиксировано автором."
     mj_prompt = build_raw_midjourney_prompt(session)
+    recipe = get_or_create_fuji_recipe(session)
+    r_hl = f"{recipe.highlight_tone:+.1f}" if recipe.highlight_tone != 0 else "0.0"
+    r_sh = f"{recipe.shadow_tone:+.1f}" if recipe.shadow_tone != 0 else "0.0"
+    r_col = f"+{recipe.color}" if recipe.color > 0 else str(recipe.color)
+    r_sharp = f"+{recipe.sharpness}" if recipe.sharpness > 0 else str(recipe.sharpness)
+    r_nr = f"+{recipe.high_iso_nr}" if recipe.high_iso_nr > 0 else str(recipe.high_iso_nr)
+    r_clar = f"+{recipe.clarity}" if recipe.clarity > 0 else str(recipe.clarity)
+    r_wbr = f"+{recipe.wb_shift_r}" if recipe.wb_shift_r > 0 else str(recipe.wb_shift_r)
+    r_wbb = f"+{recipe.wb_shift_b}" if recipe.wb_shift_b > 0 else str(recipe.wb_shift_b)
 
     supp_item = (
         "- [ ] Штатив и устойчивая площадка"
@@ -1189,6 +1243,19 @@ def format_copilot_project_for_notes(
         f"- **Фильтр / Насадка:** {filt}",
         f"- **Метод стабилизации:** {supp}",
         f"- **Экспопараметры:** `{cam_setup}`",
+        "",
+        "## 🎛 Внутрикамерный рецепт (слот C1)",
+        f"- **Рецепт:** {recipe.recipe_name}",
+        f"- **Имитация плёнки:** {recipe.film_simulation}",
+        f"- **Динамический диапазон:** {recipe.dynamic_range}",
+        f"- **Тоновая кривая:** Подсветка {r_hl} / Тень {r_sh}",
+        f"- **Цвет:** {r_col} | **Резкость:** {r_sharp} | **Шумоподавление:** {r_nr}",
+        f"- **Clarity (Прозрачность):** {r_clar}",
+        f"- **Эффект зерна:** {recipe.grain_effect}",
+        f"- **Цветной хром:** {recipe.color_chrome_effect} | "
+        f"**Хром FX Синий:** {recipe.color_chrome_fx_blue}",
+        f"- **Баланс белого:** {recipe.white_balance} (R{r_wbr} / B{r_wbb})",
+        f"- **Экспокоррекция:** {recipe.exposure_compensation}",
         "",
         "## 👐 Физика съёмки (действие фотографа)",
         action,

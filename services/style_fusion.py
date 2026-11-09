@@ -84,8 +84,9 @@ STYLE_ROLE_TRAITS: dict[str, dict[str, str]] = {
             "сияние солнечных бликов"
         ),
         "optics": (
-            "Мультиэкспозиция (2–4 кадра) в режиме «Тёмный» (лессировка), естественный "
-            "микро-тремор рук (микро-ICM) на 1/6 с, боке-пуантилизм (Гелиос 44-2 f/2)"
+            "Светосильное вихревое боке (перевёрнутая линза или Kamlan f/1.1), ND-фильтр "
+            "с пластичным смазом ветра, оптическая линза с отверстием или "
+            "мультиэкспозиция в режиме «Тёмный» (лессировка)"
         ),
     },
 }
@@ -156,6 +157,9 @@ class FusedPhotoConcept:
     shooting_action: str = ""
     gear_recipe: dict[str, Any] = field(default_factory=dict)
     shooting_steps: list[str] = field(default_factory=list)
+    deepened_analysis: str = ""
+    midjourney_prompt: str = ""
+    fuji_recipe: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         res = asdict(self)
@@ -189,6 +193,9 @@ class FusedPhotoConcept:
                 if isinstance(data.get("gear_recipe"), dict) else {}
             ),
             shooting_steps=steps,
+            deepened_analysis=str(data.get("deepened_analysis", "")).strip(),
+            midjourney_prompt=str(data.get("midjourney_prompt", "")).strip(),
+            fuji_recipe=str(data.get("fuji_recipe", "")).strip(),
         )
 
 
@@ -294,6 +301,18 @@ def build_fusion_system_prompt() -> str:
         "1. Сюжет и метафора (narrative)\n"
         "2. Свет и драматургия (lighting)\n"
         "3. Оптика и фактура (optics)\n\n"
+        "ПРАВИЛО РАЗНООБРАЗИЯ МЕХАНИК И ОПТИКИ (КРИТИЧЕСКИ ВАЖНО):\n"
+        "Каждый проект ОБЯЗАН использовать РАЗНЫЕ приёмы съёмки и оптику из арсенала!\n"
+        "СТРОГО ЗАПРЕЩЕНО делать мультиэкспозицию первым или одинаковым приёмом во всех проектах.\n"
+        "Используй богатый арсенал техник:\n"
+        "• Линза с отверстием в центре (резкий фокус в отверстии + оптическая воронка по краям)\n"
+        "• Pentacon 29mm с перевёрнутой передней линзой (экстремальное вихревое боке)\n"
+        "• Монокль 35mm (сфумато, светящийся ореол, мягкий фокус)\n"
+        "• Kamlan 50mm f/1.1 (сверхмалая ГРИП, кремовое размытие, масляный рисунок)\n"
+        "• K&F ND-фильтр 2-400 на штативе (длинная выдержка 1/2–5 с, пластичный смаз ветра/воды)\n"
+        "• Набор прозрачных тканей (воздушный вейл перед объективом, текстурная дымка)\n"
+        "• Вспышка Godox V1F (синхронизация по второй шторке / заморозка капель)\n"
+        "• Мультиэкспозиция или микро-ICM (только как альтернатива, не дефолт для всех!)\n\n"
         "СТРОГАЯ СХЕМА JSON ОТВЕТА:\n"
         "{\n"
         '  "projects": [\n'
@@ -309,20 +328,18 @@ def build_fusion_system_prompt() -> str:
         '      "scene_description": "Локация, сюжет, предметы, акценты (конкретно и образно)",\n'
         '      "lighting_setup": "Схема света: источники, направление, жесткость, тени",\n'
         '      "camera_setup": {\n'
-        '        "Приём съёмки": "Мультиэкспозиция / Монокль / Голландский угол / Призма",\n'
-        '        "Выдержка": "1/6 с / 1/125 с / ...",\n'
-        '        "Диафрагма": "f/2 / f/5.6 / ...",\n'
+        '        "Приём съёмки": "Линза с отверстием / Перевёрнутая линза / ND-фильтр / f/1.1",\n'
+        '        "Выдержка": "1/2 с / 1/125 с / 1/4000 с / ...",\n'
+        '        "Диафрагма": "f/1.1 / f/2.8 / f/8 / ...",\n'
         '        "Компенсация экспозиции (EV)": "-1.0 / ...",\n'
-        '        "Имитация плёнки": "Velvia / Classic Chrome / ACROS+R / ...",\n'
-        '        "Тоновая кривая": "Подсветка ... / Тень ...",\n'
-        '        "Режим мультиэкспозиции": "Тёмный (если мультиэкспозиция)",\n'
-        '        "Количество кадров": "2-4 (если мультиэкспозиция)"\n'
+        '        "Имитация плёнки": "Classic Chrome / Velvia / ACROS+R / ...",\n'
+        '        "Тоновая кривая": "Подсветка ... / Тень ..."\n'
         "      },\n"
-        '      "shooting_action": "Физическое действие фотографа (микро-ICM, призма, поворот)",\n'
+        '      "shooting_action": "Действие фотографа (удержание ткани, поворот линзы, штатив)",\n'
         '      "gear_recipe": {\n'
         '        "camera": "Fujifilm X-T4",\n'
-        '        "lens": "Гелиос 44-2 58mm f/2",\n'
-        '        "filter_or_accessory": "Black Pro-Mist 1/4 или Треугольная призма"\n'
+        '        "lens": "Название объектива из арсенала",\n'
+        '        "filter_or_accessory": "Насадка или аксессуар из арсенала"\n'
         "      },\n"
         '      "shooting_steps": [\n'
         '        "Шаг 1: ...",\n'
@@ -479,7 +496,7 @@ def format_concept_for_apple_notes(concept: FusedPhotoConcept) -> tuple[str, str
 
     Возвращает (title, body):
     - title: [В планах] {concept.title}
-    - body: Полный markdown-лонгрид со всеми разделами проекта.
+    - body: Полный HTML-лонгрид со всеми разделами проекта без сырого маркдауна.
     """
     clean_title = concept.title.strip()
     if clean_title.startswith("[В планах]"):
@@ -487,78 +504,143 @@ def format_concept_for_apple_notes(concept: FusedPhotoConcept) -> tuple[str, str
     else:
         note_title = f"[В планах] {clean_title}"
 
-    body_lines = [
-        f"# {note_title}\n",
-        "**Статус:** `[В планах]`\n",
-        "## 🎭 Триада стилистического синтеза",
-        f"- **Сюжет (Narrative):** {concept.triad.narrative.style} — "
-        f"{concept.triad.narrative.traits}",
-        f"- **Свет и атмосфера (Lighting):** {concept.triad.lighting.style} — "
-        f"{concept.triad.lighting.traits}",
-        f"- **Оптика и фактура (Optics):** {concept.triad.optics.style} — "
-        f"{concept.triad.optics.traits}",
-        f"- **Обоснование синергии:** {concept.triad.rationale}\n",
+    html_parts = [
+        f"<div><h1>{html.escape(note_title)}</h1></div>",
+        "<div><p><b>Статус:</b> <code>[В планах]</code></p></div>",
+        "<hr>",
+        "<div><h2>🎭 Триада стилистического синтеза</h2></div>",
+        "<ul>",
+        f"  <li><b>Сюжет (Narrative):</b> {html.escape(concept.triad.narrative.style)} — "
+        f"{html.escape(concept.triad.narrative.traits)}</li>",
+        f"  <li><b>Свет и атмосфера (Lighting):</b> {html.escape(concept.triad.lighting.style)} — "
+        f"{html.escape(concept.triad.lighting.traits)}</li>",
+        f"  <li><b>Оптика и фактура (Optics):</b> {html.escape(concept.triad.optics.style)} — "
+        f"{html.escape(concept.triad.optics.traits)}</li>",
+        "</ul>",
+        f"<p><b>Обоснование синергии:</b> {html.escape(concept.triad.rationale)}</p>",
     ]
 
     if concept.manifesto:
-        body_lines.extend([
-            "## 📜 Художественный манифест",
-            concept.manifesto.strip(),
-            "",
+        html_parts.extend([
+            "<div><h2>📜 Художественный манифест</h2></div>",
+            f"<div><p>{html.escape(concept.manifesto.strip())}</p></div>",
         ])
 
     if concept.scene_description:
-        body_lines.extend([
-            "## 🖼 Визуальная сцена и композиция",
-            concept.scene_description.strip(),
-            "",
+        html_parts.extend([
+            "<div><h2>🖼 Визуальная сцена и композиция</h2></div>",
+            f"<div><p>{html.escape(concept.scene_description.strip())}</p></div>",
         ])
 
     if concept.lighting_setup:
-        body_lines.extend([
-            "## 💡 Схема освещения",
-            concept.lighting_setup.strip(),
-            "",
+        html_parts.extend([
+            "<div><h2>💡 Схема освещения</h2></div>",
+            f"<div><p>{html.escape(concept.lighting_setup.strip())}</p></div>",
         ])
 
     if concept.camera_setup:
-        body_lines.append("## 📷 Параметры камеры (Fujifilm X-T4)")
+        html_parts.append("<div><h2>📷 Параметры камеры (Fujifilm X-T4)</h2></div>")
+        html_parts.append("<ul>")
         for param, val in concept.camera_setup.items():
-            body_lines.append(f"- **{param}:** `{val}`")
-        body_lines.append("")
+            html_parts.append(
+                f"  <li><b>{html.escape(str(param))}:</b> <code>{html.escape(str(val))}</code></li>"
+            )
+        html_parts.append("</ul>")
 
     if concept.shooting_action:
-        body_lines.extend([
-            "## 👐 Физика съёмки (действие рук)",
-            concept.shooting_action.strip(),
-            "",
+        html_parts.extend([
+            "<div><h2>👐 Физика съёмки (действие рук)</h2></div>",
+            f"<div><p>{html.escape(concept.shooting_action.strip())}</p></div>",
         ])
 
     if concept.gear_recipe:
-        body_lines.append("## 🎒 Рецепт оборудования")
+        html_parts.append("<div><h2>🎒 Рецепт оборудования</h2></div>")
+        html_parts.append("<ul>")
         for k, v in concept.gear_recipe.items():
-            body_lines.append(f"- **{k}:** {v}")
-        body_lines.append("")
+            html_parts.append(
+                f"  <li><b>{html.escape(str(k))}:</b> {html.escape(str(v))}</li>"
+            )
+        html_parts.append("</ul>")
 
     if concept.shooting_steps:
-        body_lines.append("## 📋 Пошаговый план съёмки")
-        for i, step in enumerate(concept.shooting_steps, start=1):
-            body_lines.append(f"{i}. {step}")
-        body_lines.append("")
+        html_parts.append("<div><h2>📋 Пошаговый план съёмки</h2></div>")
+        html_parts.append("<ol>")
+        for step in concept.shooting_steps:
+            html_parts.append(f"  <li>{html.escape(step)}</li>")
+        html_parts.append("</ol>")
+
+    # Внутрикамерный рецепт Fujifilm X-T4 под проект
+    try:
+        from services.fuji_recipes import build_fuji_recipe_for_concept
+        fuji_rec = build_fuji_recipe_for_concept(concept)
+        hl = f"{fuji_rec.highlight_tone:+.1f}" if fuji_rec.highlight_tone != 0 else "0.0"
+        sh = f"{fuji_rec.shadow_tone:+.1f}" if fuji_rec.shadow_tone != 0 else "0.0"
+        wbr = f"{fuji_rec.wb_shift_r:+d}" if fuji_rec.wb_shift_r != 0 else "0"
+        wbb = f"{fuji_rec.wb_shift_b:+d}" if fuji_rec.wb_shift_b != 0 else "0"
+        fuji_sim = html.escape(fuji_rec.film_simulation)
+        fuji_wb = html.escape(fuji_rec.white_balance)
+        fuji_gr = html.escape(fuji_rec.grain_effect)
+        html_parts.extend([
+            "<div><h2>🎛 Внутрикамерный рецепт Fujifilm X-T4 (слот C1)</h2></div>",
+            "<ul>",
+            f"  <li><b>Имитация плёнки:</b> {fuji_sim} ({fuji_rec.dynamic_range})</li>",
+            f"  <li><b>Тоновая кривая:</b> Подсветка {hl} / Тень {sh}</li>",
+            f"  <li><b>Баланс белого:</b> {fuji_wb} (R{wbr} / B{wbb})</li>",
+            f"  <li><b>Эффект зерна:</b> {fuji_gr} | "
+            f"<b>Чёткость:</b> {fuji_rec.clarity:+d}</li>",
+            f"  <li><b>Цвет:</b> {fuji_rec.color:+d} | "
+            f"<b>Резкость:</b> {fuji_rec.sharpness:+d}</li>",
+            "</ul>",
+        ])
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[FUSION] Fuji recipe export note skip: %s", exc)
+
+    # Режиссёрское углубление образа (если производилось)
+    if concept.deepened_analysis:
+        from services.text_formatter import safe_html_format
+        html_parts.extend([
+            "<div><h2>🔍 Режиссёрское углубление художественного образа</h2></div>",
+            f"<div>{safe_html_format(concept.deepened_analysis.strip())}</div>",
+        ])
+
+    # Промпт Midjourney / Flux (если генерировался)
+    if concept.midjourney_prompt:
+        html_parts.extend([
+            "<div><h2>🎨 Промпт Midjourney / Flux.1</h2></div>",
+            f"<pre><code>{html.escape(concept.midjourney_prompt.strip())}</code></pre>",
+        ])
+
+    # Кураторские референсы мастеров
+    refs = get_curated_references(concept)
+    if refs:
+        html_parts.append("<div><h2>🌐 Художественные референсы мастеров</h2></div>")
+        html_parts.append("<ul>")
+        for r in refs[:5]:
+            ref_s = html.escape(r['style'])
+            ref_a = html.escape(r['artist'])
+            ref_t = html.escape(r['technique'])
+            ref_q = html.escape(r['query'])
+            html_parts.append(
+                f"  <li><b>[{ref_s}] {ref_a}</b> — <i>{ref_t}</i> "
+                f"(поиск: <code>{ref_q}</code>)</li>"
+            )
+        html_parts.append("</ul>")
 
     lens_info = concept.gear_recipe.get("lens", "Основной объектив")
     filter_info = concept.gear_recipe.get("filter_or_accessory", "Фильтры/насадки")
-    body_lines.extend([
-        "## ✅ Чек-лист перед выходом",
-        "- [ ] Заряженные аккумуляторы NP-W235 (2 шт.)",
-        "- [ ] Чистая скоростная SD-карта UHS-II",
-        f"- [ ] Камера Fujifilm X-T4 + объектив: {lens_info}",
-        f"- [ ] Насадки: {filter_info}",
-        "- [ ] Проверить баланс белого и режим мультиэкспозиции",
-        "- [ ] Микрофибра и салфетки для оптики",
+    html_parts.extend([
+        "<div><h2>✅ Чек-лист перед выходом</h2></div>",
+        "<ul>",
+        "  <li>Заряженные аккумуляторы NP-W235 (2 шт.)</li>",
+        "  <li>Чистая скоростная SD-карта UHS-II</li>",
+        f"  <li>Камера Fujifilm X-T4 + объектив: {html.escape(str(lens_info))}</li>",
+        f"  <li>Насадки/аксессуары: {html.escape(str(filter_info))}</li>",
+        "  <li>Проверить баланс белого и профиль камеры</li>",
+        "  <li>Микрофибра и салфетки для оптики</li>",
+        "</ul>",
     ])
 
-    return note_title, "\n".join(body_lines)
+    return note_title, "\n".join(html_parts)
 
 
 def export_concept_to_apple_notes(
@@ -691,8 +773,9 @@ def format_concept_page(
     triad_summary = html.escape(concept.triad.summary())
 
     if page == 1:
+        deepened_badge = " ✨ <i>[Образ углублён]</i>" if concept.deepened_analysis else ""
         lines = [
-            f"🎨 <b>Проект: «{title_esc}»</b> <i>[Стр. 1/{total_pages}]</i>",
+            f"🎨 <b>Проект: «{title_esc}»</b>{deepened_badge} <i>[Стр. 1/{total_pages}]</i>",
             f"🎭 <b>Триада синтеза:</b> <i>{triad_summary}</i>\n",
             f"• <b>Сюжет:</b> {html.escape(concept.triad.narrative.style)} — "
             f"{html.escape(concept.triad.narrative.traits)}",
@@ -736,6 +819,22 @@ def format_concept_page(
             lines.append("\n🎒 <b>Рецепт техники:</b>")
             for k, v in concept.gear_recipe.items():
                 lines.append(f"   • {html.escape(str(k))}: {html.escape(str(v))}")
+
+        # Интеграция внутрикамерного рецепта Fujifilm X-T4 под триаду стилей
+        from services.fuji_recipes import build_fuji_recipe_for_concept
+        recipe = build_fuji_recipe_for_concept(concept)
+        hl = f"{recipe.highlight_tone:+.1f}" if recipe.highlight_tone != 0 else "0.0"
+        sh = f"{recipe.shadow_tone:+.1f}" if recipe.shadow_tone != 0 else "0.0"
+        wbr = f"{recipe.wb_shift_r:+d}" if recipe.wb_shift_r != 0 else "0"
+        wbb = f"{recipe.wb_shift_b:+d}" if recipe.wb_shift_b != 0 else "0"
+        lines.extend([
+            "\n🎛 <b>Рецепт камеры (слот C1):</b>",
+            f"   • Имитация плёнки: <code>{html.escape(recipe.film_simulation)}</code> "
+            f"({recipe.dynamic_range})",
+            f"   • Кривая: Подсветка {hl} / Тень {sh}",
+            f"   • ББ: <code>{html.escape(recipe.white_balance)}</code> (R{wbr} / B{wbb})",
+            f"   • Зерно: {html.escape(recipe.grain_effect)} | Четкость: {recipe.clarity:+d}",
+        ])
         return "\n".join(lines)
 
     if page == 4:
@@ -804,11 +903,23 @@ def build_concept_navigation_kb(
     if nav_row:
         kb.row(*nav_row)
 
-    # Ряд 2: Микро-действия (Углубление и Референсы)
+    # Ряд 2: Внутрикамерный рецепт X-T4 и Углубление образа
     kb.row(
+        types.InlineKeyboardButton(
+            text="🎛 Рецепт X-T4",
+            callback_data=f"bs_fuji_recipe:{concept_idx}",
+        ),
         types.InlineKeyboardButton(
             text="🔍 Углубить образ",
             callback_data=f"bs_deepen:{concept_idx}",
+        ),
+    )
+
+    # Ряд 3: Генерация промпта и Референсы
+    kb.row(
+        types.InlineKeyboardButton(
+            text="🎨 Промпт Midjourney",
+            callback_data=f"bs_prompt:{concept_idx}",
         ),
         types.InlineKeyboardButton(
             text="🌐 Референсы",
@@ -816,24 +927,20 @@ def build_concept_navigation_kb(
         ),
     )
 
-    # Ряд 3: Генерация промпта и Экспорт в Apple Notes
+    # Ряд 4: Экспорт в Apple Notes и Сохранение во Дворец
     kb.row(
-        types.InlineKeyboardButton(
-            text="🎨 Промпт Midjourney",
-            callback_data=f"bs_prompt:{concept_idx}",
-        ),
         types.InlineKeyboardButton(
             text="📝 В Apple Notes [В планах]",
             callback_data=f"bs_export_concept:{concept_idx}",
         ),
-    )
-
-    # Ряд 4: Сохранение во Дворец и Назад к списку
-    kb.row(
         types.InlineKeyboardButton(
             text="🏛 Во Дворец",
             callback_data=f"bs_save_concept:{concept_idx}",
         ),
+    )
+
+    # Ряд 5: Назад к списку проектов
+    kb.row(
         types.InlineKeyboardButton(
             text="◀️ К списку проектов",
             callback_data="bs_back",
@@ -922,10 +1029,12 @@ def build_deepen_user_prompt(concept: FusedPhotoConcept) -> str:
 
 def format_deepen_card(concept: FusedPhotoConcept, analysis_text: str) -> str:
     """Форматирует карточку режиссёрского углубления образа (HTML-safe)."""
+    from services.text_formatter import safe_html_format
+
     title_esc = html.escape(concept.title)
     return (
         f"🔍 <b>Режиссёрское углубление: «{title_esc}»</b>\n\n"
-        f"{html.escape(analysis_text.strip())}"
+        f"{safe_html_format(analysis_text.strip())}"
     )
 
 

@@ -1804,3 +1804,36 @@ def test_sync_stream_parity_error_before_first_token(monkeypatch):
 def test_openai_client_unknown_engine_raises():
     with pytest.raises(ValueError, match="Неизвестный движок"):
         ai_engine._openai_client("tpu", "m")
+
+
+def test_sync_call_uses_explicit_system_message(monkeypatch):
+    """Когда messages содержат system-сообщение, _build_system_prompt не вызывается."""
+    build_called = False
+
+    def mock_build_system_prompt(context, query, has_images):
+        nonlocal build_called
+        build_called = True
+        return "FALLBACK GENERAL PROMPT"
+
+    monkeypatch.setattr(ai_engine, "_build_system_prompt", mock_build_system_prompt)
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.chat = self
+            self.completions = self
+
+        def create(self, **kwargs):
+            msgs = kwargs.get("messages", [])
+            assert msgs[0]["role"] == "system"
+            assert msgs[0]["content"] == "CUSTOM TASK PROMPT"
+            return FakeSyncResponse("ok")
+
+    monkeypatch.setattr(ai_engine, "OpenAI", FakeClient)
+
+    messages = [
+        {"role": "system", "content": "CUSTOM TASK PROMPT"},
+        {"role": "user", "content": "User input"},
+    ]
+    res = ai_engine._sync_ai_call("qwen", "qwen2.5:7b", messages)
+    assert res == "ok"
+    assert build_called is False
