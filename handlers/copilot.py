@@ -46,6 +46,11 @@ from services.fuji_recipes import (
     format_fuji_recipe_card,
     generate_surreal_stochastic_recipe,
 )
+from services.copilot_kg_linker import (
+    format_kg_link_card,
+    link_project_to_palace_kg,
+    save_project_to_kg,
+)
 from services.copilot_session import CopilotSession, get_copilot_manager
 from services.text_formatter import safe_html_format
 
@@ -328,10 +333,42 @@ def build_field_assistant_kb(session: CopilotSession) -> types.InlineKeyboardMar
     )
     builder.row(
         types.InlineKeyboardButton(
+            text="🧠 Привязать к Дворцу и Графу",
+            callback_data="cp_link_palace_kg",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
             text="↩️ К вариантам проектов", callback_data="cp_to_variants",
         ),
         types.InlineKeyboardButton(
             text="🏁 Завершить сессию", callback_data="cp_finish",
+        ),
+    )
+    return builder.as_markup()
+
+
+def build_kg_linker_kb(saved: bool = False) -> types.InlineKeyboardMarkup:
+    """Клавиатура управления привязкой проекта к Графу Знаний."""
+    builder = InlineKeyboardBuilder()
+    if not saved:
+        builder.row(
+            types.InlineKeyboardButton(
+                text="💾 Записать в Граф Знаний",
+                callback_data="cp_save_kg",
+            ),
+        )
+    else:
+        builder.row(
+            types.InlineKeyboardButton(
+                text="✅ Факты сохранены в Графе",
+                callback_data="cp_noop",
+            ),
+        )
+    builder.row(
+        types.InlineKeyboardButton(
+            text="↩️ Назад к ассистенту",
+            callback_data="cp_to_field_assistant",
         ),
     )
     return builder.as_markup()
@@ -1209,6 +1246,66 @@ async def cb_copilot_export_apple_notes(cb: types.CallbackQuery):
             "Убедитесь, что приложение запущено на macOS.",
             show_alert=True,
         )
+
+
+@router.callback_query(F.data == "cp_link_palace_kg", allowed_callback)
+async def cb_copilot_link_palace_kg(cb: types.CallbackQuery):
+    """Экран привязки проекта к Графу Знаний и Дворцу Памяти."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    await cb.answer()
+    link_data = link_project_to_palace_kg(session)
+    session.tech_preferences["kg_link_data"] = link_data
+    manager.save_session(session)
+
+    text = format_kg_link_card(link_data)
+    kb = build_kg_linker_kb(saved=False)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.debug("[COPILOT] link kg edit failed: %s", e)
+
+
+@router.callback_query(F.data == "cp_save_kg", allowed_callback)
+async def cb_copilot_save_kg(cb: types.CallbackQuery):
+    """Сохранение фактов проекта в Граф Знаний через MemPalace MCP."""
+    uid = cb.from_user.id
+    manager = get_copilot_manager()
+    session = manager.get_session(uid)
+    if not session or not cb.message:
+        await cb.answer("Сессия не найдена")
+        return
+
+    saved_count, errors = await save_project_to_kg(session)
+    if saved_count > 0:
+        link_data = (
+            session.tech_preferences.get("kg_link_data")
+            or link_project_to_palace_kg(session)
+        )
+        text = (
+            format_kg_link_card(link_data)
+            + f"\n\n✅ <b>Успешно сохранено триплетов: {saved_count}</b>"
+        )
+        kb = build_kg_linker_kb(saved=True)
+        await cb.answer(f"✅ В Граф Знаний добавлено {saved_count} фактов!", show_alert=True)
+        try:
+            await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception as e:
+            logger.debug("[COPILOT] save kg edit failed: %s", e)
+    else:
+        err_msg = errors[0] if errors else "Неизвестная ошибка"
+        await cb.answer(f"⚠️ Ошибка записи в Граф: {err_msg[:60]}", show_alert=True)
+
+
+@router.callback_query(F.data == "cp_noop", allowed_callback)
+async def cb_copilot_noop(cb: types.CallbackQuery):
+    """Пустой обработчик для статичных статусных кнопок."""
+    await cb.answer("Факты уже зафиксированы в графе знаний.")
 
 
 @router.callback_query(F.data == "cp_finish", allowed_callback)
