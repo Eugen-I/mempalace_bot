@@ -1,4 +1,6 @@
 import json
+import logging
+import os
 import re
 import time
 import uuid
@@ -6,17 +8,18 @@ from pathlib import Path
 
 from config import DATA_DIR
 
+logger = logging.getLogger("WebSearchCache")
 
 SEARCH_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{8,32}$")
 
 
 def validate_search_id(search_id: str) -> bool:
-    """Валидация search_id: только alphanumeric, _, -; длина 8-32; без path traversal."""
-    if not SEARCH_ID_PATTERN.match(search_id):
-        return False
-    if ".." in search_id or "/" in search_id or "\\" in search_id:
-        return False
-    return True
+    """Валидация search_id: только alphanumeric, _, -; длина 8-32.
+
+    Полностью заякоренный паттерн исключает ``.``, ``/`` и ``\\``, поэтому
+    path traversal невозможен без отдельной проверки.
+    """
+    return bool(SEARCH_ID_PATTERN.match(search_id))
 
 
 # Временная папка для сохранения результатов поиска
@@ -27,12 +30,10 @@ WEB_SEARCH_CACHE_DIR.mkdir(exist_ok=True)
 CACHE_TTL = 24 * 60 * 60
 
 
-def save_web_search(query: str, sources: list[dict], ai_summary: str = "") -> str:
-    """Сохранить результаты поиска во временный файл."""
-    search_id = uuid.uuid4().hex[:12]
-    cache_file = WEB_SEARCH_CACHE_DIR / f"{search_id}.json"
-
-    data = {
+def _cache_data(
+    search_id: str, query: str, sources: list[dict], ai_summary: str,
+) -> dict:
+    return {
         "id": search_id,
         "query": query,
         "sources": [
@@ -43,7 +44,24 @@ def save_web_search(query: str, sources: list[dict], ai_summary: str = "") -> st
         "timestamp": time.time(),
     }
 
-    cache_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def _write_cache(cache_file: Path, data: dict) -> None:
+    """Атомарно записывает JSON: читатель видит старый или новый файл целиком."""
+    tmp_file = cache_file.with_name(f"{cache_file.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp_file.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+        os.replace(tmp_file, cache_file)
+    finally:
+        tmp_file.unlink(missing_ok=True)
+
+
+def save_web_search(query: str, sources: list[dict], ai_summary: str = "") -> str:
+    """Сохранить результаты поиска во временный файл."""
+    search_id = uuid.uuid4().hex[:12]
+    cache_file = WEB_SEARCH_CACHE_DIR / f"{search_id}.json"
+    _write_cache(cache_file, _cache_data(search_id, query, sources, ai_summary))
     return search_id
 
 
@@ -54,19 +72,7 @@ def save_web_search_with_id(
     if not validate_search_id(search_id):
         raise ValueError("Invalid search_id")
     cache_file = WEB_SEARCH_CACHE_DIR / f"{search_id}.json"
-
-    data = {
-        "id": search_id,
-        "query": query,
-        "sources": [
-            {"text": s["text"], "url": s["url"], "title": s.get("title", "")}
-            for s in sources
-        ],
-        "ai_summary": ai_summary,
-        "timestamp": time.time(),
-    }
-
-    cache_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_cache(cache_file, _cache_data(search_id, query, sources, ai_summary))
     return search_id
 
 
@@ -79,7 +85,8 @@ def load_web_search(search_id: str) -> dict | None:
         return None
     try:
         return json.loads(cache_file.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        logger.warning("Не удалось прочитать кэш поиска %s: %s", cache_file, e)
         return None
 
 
@@ -90,8 +97,8 @@ def cleanup_old_cache():
         try:
             if now - f.stat().st_mtime > CACHE_TTL:
                 f.unlink()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Не удалось очистить кэш поиска %s: %s", f, e)
 
 
 def list_cached_searches() -> list[dict]:
@@ -106,6 +113,6 @@ def list_cached_searches() -> list[dict]:
                 "source_count": len(data.get("sources", [])),
                 "timestamp": data.get("timestamp"),
             })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Не удалось прочитать кэш поиска %s: %s", f, e)
     return sorted(searches, key=lambda x: x.get("timestamp", 0), reverse=True)

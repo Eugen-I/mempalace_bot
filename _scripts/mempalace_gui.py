@@ -81,6 +81,7 @@ BUILTINS = [
     (
         "🚀  Запуск",
         [
+            ("PalaceMaster", True),
             ("Ollama_Start", False),
             ("start_bot", False),
             ("classify_and_mine", True),
@@ -125,7 +126,12 @@ BUILTINS = [
 
 # ── helpers ─────────────────────────────────────────────
 def script_path(name):
-    for d in (SCRIPTS_DIR, FALLBACK_DIR):
+    for d in (
+        SCRIPTS_DIR,
+        os.path.join(SCRIPTS_DIR, "_archive"),
+        FALLBACK_DIR,
+        os.path.join(FALLBACK_DIR, "_archive"),
+    ):
         p = os.path.join(d, name + ".command")
         if os.path.exists(p):
             return p

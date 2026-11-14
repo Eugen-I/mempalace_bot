@@ -21,7 +21,9 @@
 
 import logging
 import re
+from typing import Literal, overload
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InaccessibleMessage, Message
 
 logger = logging.getLogger("PalaceUtils")
@@ -55,6 +57,25 @@ def _log_error(context: str, error: Exception) -> None:
         logger.error("[PALACE_UTILS] Ошибка в %s: %s", context, error, exc_info=True)
 
 
+async def _fallback_send_new(
+    message: Message,
+    text: str,
+    **kwargs,
+) -> bool:
+    """Очищает кнопки на медиа-сообщении и отправляет новое текстовое сообщение."""
+    try:
+        if hasattr(message, "edit_reply_markup"):
+            try:
+                await message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+        await message.answer(text, **kwargs)
+        return True
+    except Exception as answer_err:
+        _log_error("safe_edit_text_fallback", answer_err)
+        return False
+
+
 async def safe_edit_text(
     message: Message | InaccessibleMessage | None,
     text: str,
@@ -64,6 +85,9 @@ async def safe_edit_text(
 
     Проверяет, что message не None и не InaccessibleMessage перед вызовом
     edit_text(). Если сообщение недоступно — молча возвращает False.
+    Если сообщение не содержит текста (например, документ/медиа с кнопками),
+    отправляет новый ответ через answer().
+    Ошибку "message is not modified" считает успешным завершением.
     При неожиданной ошибке логирует её и возвращает False.
 
     Args:
@@ -72,74 +96,28 @@ async def safe_edit_text(
         **kwargs: Дополнительные аргументы (parse_mode, reply_markup и т.д.).
 
     Returns:
-        True, если сообщение было успешно отредактировано, False иначе.
+        True, если сообщение было успешно отредактировано или отправлено заново, False иначе.
     """
     if message is None or isinstance(message, InaccessibleMessage):
         return False
+
+    if hasattr(message, "text") and message.text is None:
+        return await _fallback_send_new(message, text, **kwargs)
+
     try:
         await message.edit_text(text, **kwargs)
         return True
+    except TelegramBadRequest as e:
+        err_msg = str(e).lower()
+        if "message is not modified" in err_msg:
+            return True
+        if "there is no text in the message to edit" in err_msg:
+            return await _fallback_send_new(message, text, **kwargs)
+        _log_error("safe_edit_text", e)
+        return False
     except Exception as e:
         _log_error("safe_edit_text", e)
         return False
-
-
-async def safe_answer(
-    message: Message | InaccessibleMessage | None,
-    text: str,
-    **kwargs,
-) -> bool:
-    """Безопасно отправляет ответ на сообщение.
-
-    Проверяет, что message не None и не InaccessibleMessage перед вызовом
-    answer(). Если сообщение недоступно — молча возвращает False.
-    При неожиданной ошибке логирует её и возвращает False.
-
-    Args:
-        message: Сообщение, на которое нужно ответить.
-        text: Текст ответа.
-        **kwargs: Дополнительные аргументы (parse_mode, reply_markup и т.д.).
-
-    Returns:
-        True, если ответ был успешно отправлен, False иначе.
-    """
-    if message is None or isinstance(message, InaccessibleMessage):
-        return False
-    try:
-        await message.answer(text, **kwargs)
-        return True
-    except Exception as e:
-        _log_error("safe_answer", e)
-        return False
-
-
-async def safe_answer_returning_message(
-    message: Message | InaccessibleMessage | None,
-    text: str,
-    **kwargs,
-) -> Message | None:
-    """Безопасно отправляет ответ на сообщение и возвращает отправленное сообщение.
-
-    Проверяет, что message не None и не InaccessibleMessage перед вызовом
-    answer(). Если сообщение недоступно — возвращает None.
-    При неожиданной ошибке логирует её и возвращает None.
-
-    Args:
-        message: Сообщение, на которое нужно ответить.
-        text: Текст ответа.
-        **kwargs: Дополнительные аргументы (parse_mode, reply_markup и т.д.).
-
-    Returns:
-        Отправленное сообщение, или None если отправка не удалась.
-    """
-    if message is None or isinstance(message, InaccessibleMessage):
-        return None
-    try:
-        sent_message = await message.answer(text, **kwargs)
-        return sent_message
-    except Exception as e:
-        _log_error("safe_answer_returning_message", e)
-        return None
 
 
 async def safe_delete(
@@ -198,32 +176,56 @@ async def safe_answer_voice(
         return False
 
 
+@overload
 async def safe_send(
     message: Message | InaccessibleMessage | None,
     text: str,
+    *,
+    return_message: Literal[False] = False,
     **kwargs,
-) -> bool:
-    """Безопасно отправляет новое сообщение (answer).
+) -> bool: ...
 
-    Аналог safe_answer, но семантически для отправки нового сообщения
-    в чат (не ответ на конкретное сообщение).
+
+@overload
+async def safe_send(
+    message: Message | InaccessibleMessage | None,
+    text: str,
+    *,
+    return_message: Literal[True],
+    **kwargs,
+) -> Message | None: ...
+
+
+async def safe_send(
+    message: Message | InaccessibleMessage | None,
+    text: str,
+    *,
+    return_message: bool = False,
+    **kwargs,
+) -> Message | bool | None:
+    """Безопасно отправляет сообщение через ``answer``.
+
+    Единый helper для двух вариантов:
+    - по умолчанию возвращает ``True``/``False``;
+    - ``return_message=True`` возвращает отправленное сообщение или ``None``.
 
     Args:
         message: Сообщение, через которое отправить ответ.
         text: Текст сообщения.
-        **kwargs: Дополнительные аргументы.
+        return_message: Вернуть отправленное сообщение вместо bool.
+        **kwargs: Дополнительные аргументы (parse_mode, reply_markup и т.д.).
 
     Returns:
-        True, если сообщение было успешно отправлено, False иначе.
+        bool или Message | None в зависимости от ``return_message``.
     """
     if message is None or isinstance(message, InaccessibleMessage):
-        return False
+        return None if return_message else False
     try:
-        await message.answer(text, **kwargs)
-        return True
+        sent_message = await message.answer(text, **kwargs)
+        return sent_message if return_message else True
     except Exception as e:
         _log_error("safe_send", e)
-        return False
+        return None if return_message else False
 
 
 WING_NAME_PATTERN = re.compile(r"^[a-z0-9_-]{1,64}$")

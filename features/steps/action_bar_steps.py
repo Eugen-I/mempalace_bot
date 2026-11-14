@@ -224,8 +224,9 @@ def step_press_nav(context, button):
 
 
 def _press_back(context):
-    import handlers.palace.navigation as navigation
     import json
+
+    import handlers.palace.navigation as navigation
 
     class FakeMCP:
         async def call_tool(self, name, args=None):

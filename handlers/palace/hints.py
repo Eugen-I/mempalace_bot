@@ -7,14 +7,14 @@ import sqlite3
 from aiogram import F, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+import config
 from config import allowed_callback
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
-
 from services.ttl_dict import TtlDict
-from .shared import router
-from .navigation import _show_drawers_page
 
+from .navigation import _show_drawers_page
+from .shared import router
 
 # ─── TUNNEL HINTS ───
 
@@ -122,7 +122,9 @@ async def cb_hint_dismiss(cb: types.CallbackQuery):
 def _get_full_text_from_chroma(source: str, wing: str = "", room: str = "") -> str:
     if not source:
         return ""
-    db_path = os.path.expanduser("~/.mempalace/palace/chroma.sqlite3")
+    db_path = getattr(config, "CHROMA_DB_PATH", None) or "~/.mempalace/palace/chroma.sqlite3"
+    if hasattr(os.path, "expanduser"):
+        db_path = os.path.expanduser(db_path)
     if not os.path.exists(db_path):
         return ""
     try:

@@ -1,5 +1,7 @@
 """handlers/messages.py — Main message handler extracted from main.py"""
 import asyncio
+import hashlib
+import json
 import os
 import re
 import secrets
@@ -9,59 +11,83 @@ from datetime import datetime
 from aiogram import types
 
 from config import (
-    ADMIN_ID, CHATS_DIR, DATA_DIR,
-    INSIGHTS_DIR, NOTES_DIR, PHOTOS_DIR, RESEARCH_DIR,
+    ADMIN_ID,
     AUTO_ATTACH_PHOTOS,
+    CHATS_DIR,
+    DATA_DIR,
+    INSIGHTS_DIR,
+    NOTES_DIR,
+    PHOTOS_DIR,
+    RESEARCH_DIR,
 )
+from handlers.brainstorm import _reflection_waiting, _storm_waiting
 from handlers.chat import load_chat, save_chat, user_sessions, waiting_for_name
 from handlers.palace import process_mcp_text_input, suggest_tunnel_hint
 from handlers.palace.shared import _user_context
-from services.palace_mcp import get_mcp as _get_mcp
-import json
 from handlers.personal_note import (
-    _waiting_for_note, process_note_input, _quote_waiting, _save_quote_to_palace,
+    _quote_waiting,
+    _save_quote_to_palace,
+    _waiting_for_note,
+    process_note_input,
 )
-from handlers.brainstorm import _storm_waiting  # noqa: F401 — используется в 0cc
-from handlers.brainstorm import _reflection_waiting  # noqa: F401 — используется в 0ccb
-from handlers.transkript import _tr_ai_waiting, handle_tr_ai_question
 from handlers.reminder import handle_reminder_text
 from handlers.search import search_result_cache as _search_result_cache
+from handlers.transkript import _tr_ai_waiting, handle_tr_ai_question
+from services import ai_engine
 from services.ai_cache import cache_ai_response
-from services.ai_engine import get_current_ai, stream_ai_response_async, _sync_ai_call
+from services.ai_engine import (
+    AIStreamEvent,
+    get_current_ai,
+    stream_ai_events_async,
+)
 from services.auto_sync import auto_sync_chat
-from services.bot_setup import (
-    bot,
-    pending_wing_search as _pending_wing_search,
-    pending_web_search as _pending_web_search,
-    sync_counter as _sync_counter,
-    sync_in_progress as _sync_in_progress,
-    yt_audio_cache as _yt_audio_cache,
-    yt_quality_url as _yt_quality_url,
-    yt_waiting_url as _yt_waiting_url,
-)
+from services.bot_setup import bot
+from services.bot_setup import pending_room_filter as _pending_room_filter
+from services.bot_setup import pending_web_search as _pending_web_search
+from services.bot_setup import pending_wing_search as _pending_wing_search
+from services.bot_setup import sync_counter as _sync_counter
+from services.bot_setup import sync_in_progress as _sync_in_progress
+from services.bot_setup import yt_audio_cache as _yt_audio_cache
+from services.bot_setup import yt_quality_url as _yt_quality_url
+from services.bot_setup import yt_waiting_url as _yt_waiting_url
+from services.chat_store import list_chat_files
 from services.code_mode import (
-    ensure_project_dir, is_coding_context, load_coding_prompt, read_project_files,
+    ensure_project_dir,
+    is_coding_context,
+    load_coding_prompt,
+    read_project_files,
 )
+from services.error_formatter import format_user_error
 from services.event_bus import Event, get_bus
-from services.graceful_degradation import get_degradation_manager, report_failure, report_success
+from services.graceful_degradation import (
+    get_degradation_manager,
+    report_failure,
+    report_success,
+)
+from services.logging_setup import setup_logging
 from services.memory import extract_and_store_facts, get_memory_context
 from services.multimodal import check_capability, encode_image_to_base64, list_photos
 from services.note_linker import schedule_linking
-from services.palace_bridge import search_with_kg
+from services.palace_bridge import search_with_kg_status
+from services.palace_mcp import get_mcp as _get_mcp
 from services.prompts import get_smart_prompt
+from services.query_rewriter import rewrite_query_for_search
 from services.semantic_cache import get_cache
 from services.sender import send_response_with_mode
+from services.summary_service import SummaryMode, generate_summary
 from services.text_formatter import safe_html_format
 from services.tts_processor import get_voice_settings
 from services.wing_classifier import classify_wing
+from services.wing_registry import get_wing_display_name, normalize_wing
 from services.youtube import download_audio
-
-from services.logging_setup import setup_logging
-from services.error_formatter import format_user_error
 
 logger = setup_logging(DATA_DIR)
 
 FILE_LIMIT = 50 * 1024 * 1024
+
+# Базовая версия промпта для semantic cache. Меняйте при изменении
+# системных правил; к ней добавляется отпечаток фактического промпта.
+SEMANTIC_CACHE_PROMPT_VERSION = "smart-prompt-v1"
 
 _last_user_query: dict[int, str] = {}
 
@@ -76,6 +102,27 @@ async def _on_ai_complete(**kwargs):
         asyncio.create_task(extract_and_store_facts(uid, clean_q, answer))
 
 
+def _stream_error_text(event: AIStreamEvent) -> str:
+    """Безопасное пользовательское сообщение для ошибки стрима."""
+    if event.error_code == "ollama_unavailable":
+        return (
+            "🧠 Не удалось подключиться к Ollama. "
+            "Запустите Ollama или переключите модель в /settings."
+        )
+    if event.error_code == "empty_stream":
+        return "❌ Пустой ответ от ИИ."
+    return "❌ Не удалось получить ответ ИИ. Попробуйте ещё раз."
+
+
+def _is_internal_error_text(text: str) -> bool:
+    """Отличает старые строки-ошибки от нормального ответа модели."""
+    stripped = text.lstrip()
+    return (
+        stripped.startswith("❌")
+        or stripped.startswith("🧠 Не удалось подключиться к Ollama")
+    )
+
+
 async def _on_ai_sent(**kwargs):
     sent_msg = kwargs.get("sent_msg")
     answer = kwargs.get("answer", "")
@@ -86,7 +133,7 @@ async def _on_ai_sent(**kwargs):
     message = kwargs.get("message")
     clean_q = kwargs.get("clean_q", "")
 
-    if answer.startswith("❌"):
+    if not answer or _is_internal_error_text(answer):
         return
 
     if sent_msg and hasattr(sent_msg, "message_id"):
@@ -125,7 +172,11 @@ async def process_user_message(message: types.Message):
 
     text = message.text.strip()
     uid = message.from_user.id
+    chat_id = getattr(message.chat, "id", None)
     logger.info(f"[USER_MSG] User {uid}: {text[:50]}...")
+
+    if text.lower() in {"/cancel", "отмена", "❌ отмена"}:
+        return await message.answer("❌ Действие отменено.")
 
     # 0a. Ожидание ссылки для YouTube
     if uid in _yt_waiting_url:
@@ -178,8 +229,10 @@ async def process_user_message(message: types.Message):
                 for p in parts:
                     try:
                         os.remove(p)
-                    except OSError:
-                        pass
+                    except OSError as e:
+                        logger.debug(
+                            "[YOUTUBE] Не удалось удалить временный файл %s: %s", p, e,
+                        )
                 return None
 
             await st.edit_text("✅ Аудио готово. Отправляю...")
@@ -200,6 +253,7 @@ async def process_user_message(message: types.Message):
                 reply_markup=kb.as_markup(),
             )
         except Exception as e:
+            logger.warning("[YOUTUBE] Ошибка обработки: %s", e, exc_info=True)
             await st.edit_text(format_user_error(e, "youtube_download"))
         return None
 
@@ -226,13 +280,67 @@ async def process_user_message(message: types.Message):
     if uid in _waiting_for_note:
         return await process_note_input(uid, text, lambda t: message.answer(t))
 
+    # 0cca. Активный диалог с арт-копайлотом (Creative Co-Pilot)
+    from services.copilot_session import get_copilot_manager
+    if get_copilot_manager().is_in_copilot(uid):
+        from handlers.copilot import handle_copilot_text_message
+        if await handle_copilot_text_message(message):
+            return None
+
+    # 0cc_copilot_wait. Ожидание темы для Арт-Копайлота
+    from handlers.copilot import _copilot_waiting_topic, cmd_copilot, launch_copilot_session
+    if uid in _copilot_waiting_topic:
+        _copilot_waiting_topic.pop(uid, None)
+        _storm_waiting.pop(uid, None)
+        clean_topic = text.strip()
+        if clean_topic.lower().startswith(("/copilot", "/копайлот")):
+            parts = clean_topic.split(maxsplit=1)
+            clean_topic = parts[1].strip() if len(parts) > 1 else ""
+        if clean_topic:
+            return await launch_copilot_session(message, clean_topic)
+        else:
+            return await cmd_copilot(message)
+
+    # 0cc_copilot_direct. Прямой перехват команд арт-копайлота (защита от утечки в общий чат)
+    if text.lower().startswith(("/copilot", "/копайлот")):
+        _storm_waiting.pop(uid, None)
+        _copilot_waiting_topic.pop(uid, None)
+        parts = text.split(maxsplit=1)
+        copilot_topic = parts[1].strip() if len(parts) > 1 else ""
+        if copilot_topic:
+            return await launch_copilot_session(message, copilot_topic)
+        else:
+            return await cmd_copilot(message)
+
+    # 0cc_storm_direct. Прямой перехват команд штурма и синтеза (защита от утечки в общий чат)
+    if text.lower().startswith(("/штурм", "/storm")):
+        _storm_waiting.pop(uid, None)
+        _copilot_waiting_topic.pop(uid, None)
+        from handlers.brainstorm import cmd_storm
+        return await cmd_storm(message)
+
+    if text.lower().startswith(("/синтез", "/fusion", "/лаборатория")):
+        _storm_waiting.pop(uid, None)
+        _copilot_waiting_topic.pop(uid, None)
+        from handlers.brainstorm import cmd_fusion_storm
+        return await cmd_fusion_storm(message)
+
     # 0cc. Ожидание темы штурма
     if uid in _storm_waiting:
+        from services.photographer_gear import is_gear_description
+        if is_gear_description(text):
+            _storm_waiting.pop(uid, None)
+            from handlers.photographer import process_bulk_gear_input
+            return await process_bulk_gear_input(message, text)
+
         from handlers.brainstorm import run_storm
 
-        _storm_waiting.pop(uid, None)
-        status = await message.answer("🧠 Запускаю штурм…")
-        return await run_storm(uid, status, text)
+        wait_val = _storm_waiting.pop(uid, None)
+        mode = "fusion" if wait_val == "fusion" else "standard"
+        clean_storm_topic = text.strip()
+        status_msg = "🎨 Запускаю лабораторию синтеза…" if mode == "fusion" else "🧠 Запускаю штурм…"
+        status = await message.answer(status_msg)
+        return await run_storm(uid, status, clean_storm_topic, mode=mode)
 
     # 0ccb. Ожидание ответа на рефлексию после штурма
     if uid in _reflection_waiting:
@@ -244,6 +352,69 @@ async def process_user_message(message: types.Message):
             get_kv_store(), uid, (data or {}).get("theme", ""), text,
         )
         return await message.answer(reply)
+
+    # 0c2. Ожидание текста для фильтрации комнат в крыле
+    if uid in _pending_room_filter:
+        wing = _pending_room_filter.pop(uid)
+        st = await message.answer(f"🔎 Ищу комнаты в крыле {wing}...")
+        try:
+            from services.palace_mcp import get_mcp
+            from handlers.palace.navigation import (
+                _build_room_callback_data,
+                _build_wing_callback_data,
+                format_room_label,
+                render_breadcrumbs,
+            )
+            mcp = get_mcp()
+            raw = await mcp.call_tool("mempalace_list_rooms", {"wing": wing})
+            parsed = json.loads(raw) if raw else {}
+            rooms = parsed.get("rooms", {})
+            query_lower = text.strip().lower()
+            matched = {
+                r: cnt for r, cnt in rooms.items()
+                if query_lower in r.lower() or query_lower in format_room_label(r).lower()
+            }
+
+            kb = InlineKeyboardBuilder()
+            if not matched:
+                kb.row(types.InlineKeyboardButton(
+                    text="🔎 Попробовать снова", callback_data=f"p_rmsrch:{wing}",
+                ))
+                kb.row(types.InlineKeyboardButton(
+                    text=f"◀️ К комнатам {wing}", callback_data=_build_wing_callback_data(wing),
+                ))
+                await st.edit_text(
+                    f"❌ В крыле «<b>{wing}</b>» не найдено комнат, "
+                    f"содержащих «<code>{text.strip()}</code>».",
+                    parse_mode="HTML",
+                    reply_markup=kb.as_markup(),
+                )
+                return None
+
+            lines = [
+                render_breadcrumbs(wing=wing),
+                f"🔎 <b>Найдено комнат ({len(matched)}) по запросу «{text.strip()}»:</b>\n",
+            ]
+            sorted_matched = sorted(matched.items(), key=lambda x: x[1], reverse=True)
+            for i, (r, cnt) in enumerate(sorted_matched[:25], 1):
+                lines.append(f"  {i}. <b>{safe_html_format(r)}</b> — {cnt} записей")
+                kb.row(types.InlineKeyboardButton(
+                    text=f"📖 {r}", callback_data=_build_room_callback_data(wing, r),
+                ))
+            kb.row(types.InlineKeyboardButton(
+                text="🔎 Другой фильтр", callback_data=f"p_rmsrch:{wing}",
+            ))
+            kb.row(types.InlineKeyboardButton(
+                text=f"◀️ Все комнаты {wing}", callback_data=_build_wing_callback_data(wing),
+            ))
+
+            await st.edit_text(
+                "\n".join(lines), parse_mode="HTML", reply_markup=kb.as_markup(),
+            )
+        except Exception as e:
+            logger.warning("[ROOM_FILTER] Ошибка фильтрации комнат: %s", e, exc_info=True)
+            await st.edit_text(format_user_error(e, "room_filter"))
+        return None
 
     # 0d. Ожидание текста для поиска по крылу
     if uid in _pending_wing_search:
@@ -261,29 +432,60 @@ async def process_user_message(message: types.Message):
 
             kb = InlineKeyboardBuilder()
             for s in sources:
-                loc = f"{s['wing']}/{s['room']}"
-                kb.row(types.InlineKeyboardButton(
-                    text=f"📄 [{s['id']}] {loc}",
-                    callback_data=f"p_src:{s['id']}",
-                ))
+                stype = s.get("source_type", "palace")
+                sid = str(s.get("id", ""))
+                if stype == "notes":
+                    title = s.get("title") or s.get("location") or "Заметка"
+                    kb.row(types.InlineKeyboardButton(
+                        text=f"📝 [{sid}] {title[:28]}",
+                        callback_data=f"p_notesrc:{sid}",
+                    ))
+                elif stype == "files":
+                    title = s.get("title") or s.get("location") or "Файл"
+                    kb.row(types.InlineKeyboardButton(
+                        text=f"📁 [{sid}] {title[:28]}",
+                        callback_data=f"p_filesrc:{sid}",
+                    ))
+                else:
+                    loc = (
+                        f"{s.get('wing', '')}/{s.get('room', '')}"
+                        if s.get("wing") or s.get("room")
+                        else s.get("file", "")
+                    )
+                    kb.row(types.InlineKeyboardButton(
+                        text=f"📄 [{sid}] {loc}",
+                        callback_data=f"p_src:{sid}",
+                    ))
             kb.row(types.InlineKeyboardButton(
                 text="🔍 Новый поиск", callback_data="search:wing",
             ))
 
-            await st.edit_text(
-                result_text, parse_mode="HTML",
-                reply_markup=kb.as_markup(),
-            )
+            from services.text_formatter import split_message
+            parts = split_message(result_text)
+            first_part = parts[0] if parts else result_text
+            try:
+                await st.edit_text(
+                    first_part, parse_mode="HTML",
+                    reply_markup=kb.as_markup(),
+                )
+            except Exception:
+                await st.edit_text(
+                    first_part,
+                    reply_markup=kb.as_markup(),
+                )
+            for p in parts[1:]:
+                await message.answer(p)
         except Exception as e:
+            logger.warning("[WING_SEARCH] Ошибка поиска: %s", e, exc_info=True)
             await st.edit_text(format_user_error(e, "wing_search"))
         return None
 
 # 0e. Ожидание текста для поиска в интернете
     if uid in _pending_web_search:
         _pending_web_search.pop(uid, None)
-        from services.web_search import deep_search_web
         from services.sender import send_text_only
         from services.text_formatter import split_message
+        from services.web_search import deep_search_web
         st = await message.answer("🌐 Глубокий поиск в интернете...")
         try:
             result = await deep_search_web(text)
@@ -323,6 +525,7 @@ async def process_user_message(message: types.Message):
             else:
                 await message.answer("❌ Ошибка: неожиданный формат ответа поиска")
         except Exception as e:
+            logger.warning("[WEB_SEARCH] Ошибка глубокого поиска: %s", e, exc_info=True)
             await st.edit_text(format_user_error(e, "deep_web_search"))
         return None
 
@@ -348,7 +551,8 @@ async def process_user_message(message: types.Message):
                     check=False,
                 )
             await message.answer("✅ Выполнено.")
-        except Exception:
+        except Exception as e:
+            logger.warning("[MAC] Ошибка выполнения команды: %s", e, exc_info=True)
             await message.answer("❌ Ошибка выполнения команды.")
         return None
 
@@ -381,6 +585,7 @@ async def process_user_message(message: types.Message):
                         "💾 Сохранено в my_notes.", reply_markup=kb.as_markup(),
                     )
             except Exception as e:
+                logger.warning("[NOTE] Ошибка сохранения заметки: %s", e, exc_info=True)
                 return await message.answer(f"❌ Ошибка: {e}")
 
     # 4. 🆕 Ввод имени чата
@@ -394,21 +599,24 @@ async def process_user_message(message: types.Message):
         user_sessions[uid] = fname
         waiting_for_name[uid] = False
         try:
-            save_chat(os.path.join(CHATS_DIR, fname), {"summary": "", "messages": []})
-            return await message.answer(
-                f"✅ Чат создан: <code>{fname}</code>", parse_mode="HTML",
+            saved = save_chat(
+                os.path.join(CHATS_DIR, fname), {"summary": "", "messages": []},
             )
         except Exception:
-            pass
-        return await message.answer("❌ Ошибка создания чата.")
+            logger.exception("Не удалось создать чат %s", fname)
+            saved = False
+        if not saved:
+            user_sessions.pop(uid, None)
+            return await message.answer(
+                "❌ Ошибка создания чата. Проверьте доступ к диску.",
+            )
+        return await message.answer(
+            f"✅ Чат создан: <code>{fname}</code>", parse_mode="HTML",
+        )
 
     # 5. Проверка/Авто-создание чата
     if uid not in user_sessions:
-        files = sorted(
-            [f for f in os.listdir(CHATS_DIR) if f.endswith(".json")],
-            key=lambda x: os.path.getmtime(os.path.join(CHATS_DIR, x)),
-            reverse=True,
-        )
+        files = list_chat_files(CHATS_DIR, limit=1)
         if files:
             user_sessions[uid] = files[0]
             await message.answer(
@@ -417,7 +625,19 @@ async def process_user_message(message: types.Message):
         else:
             fname = f"ch_auto_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
             user_sessions[uid] = fname
-            save_chat(os.path.join(CHATS_DIR, fname), {"summary": "", "messages": []})
+            try:
+                saved = save_chat(
+                    os.path.join(CHATS_DIR, fname),
+                    {"summary": "", "messages": []},
+                )
+            except Exception:
+                logger.exception("Не удалось создать чат %s", fname)
+                saved = False
+            if not saved:
+                user_sessions.pop(uid, None)
+                return await message.answer(
+                    "❌ Ошибка создания чата. Проверьте доступ к диску.",
+                )
             await message.answer(
                 f"🆕 Создан чат: <code>{fname}</code>", parse_mode="HTML",
             )
@@ -426,7 +646,8 @@ async def process_user_message(message: types.Message):
     fpath = os.path.join(CHATS_DIR, fname)
     try:
         data = load_chat(fpath)
-    except Exception:
+    except Exception as e:
+        logger.warning("[CHAT] Ошибка загрузки %s: %s", fpath, e, exc_info=True)
         return await message.answer("❌ Ошибка загрузки чата.")
 
     msgs = data.get("messages", [])
@@ -445,12 +666,11 @@ async def process_user_message(message: types.Message):
         content = last_bot_msg["content"] if last_bot_msg else "Нет ответа"
 
         try:
-            summary = await asyncio.to_thread(
-                lambda: get_ai_response_sync_wrapper(
-                    engine,
-                    model,
-                    [{"role": "user", "content": f"Суммаризируй: {content}"}],
-                ),
+            summary = await generate_summary(
+                SummaryMode.INSIGHT,
+                engine=engine,
+                model=model,
+                text=content,
             )
             target = RESEARCH_DIR if "?" in prefix else INSIGHTS_DIR
             fn = f"ext_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
@@ -469,6 +689,7 @@ async def process_user_message(message: types.Message):
             if not clean_q:
                 return None
         except Exception as e:
+            logger.warning("[INSIGHT] Ошибка сохранения: %s", e, exc_info=True)
             await st.edit_text(format_user_error(e, "insight_save"))
             return None
 
@@ -477,14 +698,15 @@ async def process_user_message(message: types.Message):
         query = clean_q[4:].strip()
         if not query:
             return await message.answer("Использование: /web <запрос>")
-        from services.web_search import search_web
         from services.sender import send_text_only
+        from services.web_search import search_web
         st = await message.answer("🔍 Ищу в интернете...")
         try:
             results = await search_web(query)
             await st.delete()
             await send_text_only(message, results)
         except Exception as e:
+            logger.warning("[WEB_SEARCH] Ошибка поиска: %s", e, exc_info=True)
             await st.edit_text(f"❌ Ошибка: {e}")
         return None
 
@@ -519,7 +741,11 @@ async def process_user_message(message: types.Message):
             )
 
     if agent_on:
-        from handlers.agent import AGENT_SYSTEM_PROMPT, _build_scope_prompt, _run_agent_reply
+        from handlers.agent import (
+            AGENT_SYSTEM_PROMPT,
+            _build_scope_prompt,
+            _run_agent_reply,
+        )
         from services.agent_context import get_agent_context_store
 
         status = await message.answer("🤖 Запускаю агента…")
@@ -532,7 +758,13 @@ async def process_user_message(message: types.Message):
         ctx_store = get_agent_context_store()
         history = ctx_store.get_always_on_context(uid)
 
-        await _run_agent_reply(uid, status, prompt, clean_q, ctx=ctx, conversation_history=history)
+        agent_result = await _run_agent_reply(
+            uid, status, prompt, clean_q, ctx=ctx, conversation_history=history,
+        )
+        # Сохраняем только успешный непустой ответ. Ошибки и пустые ответы
+        # не должны попадать в always-on историю.
+        if agent_result is not None and agent_result.ok and agent_result.final_answer:
+            ctx_store.append_always_on(uid, "assistant", agent_result.final_answer)
         return None
 
     # === 🧠 ЯДРО ИИ (со стримингом) ===
@@ -544,8 +776,8 @@ async def process_user_message(message: types.Message):
         target_wing = ""
         explicit_wing_match = re.match(r"^/(\w+):\s*(.+)", clean_q)
         if explicit_wing_match:
-            possible_wing = explicit_wing_match.group(1).lower()
-            if possible_wing in ["dreams", "projects", "philosophy", "creative"]:
+            possible_wing = normalize_wing(explicit_wing_match.group(1))
+            if possible_wing:
                 target_wing = possible_wing
                 clean_q = explicit_wing_match.group(2)
                 logger.info(f"[WING] Явно указано крыло: {target_wing}")
@@ -562,22 +794,15 @@ async def process_user_message(message: types.Message):
 
         wing_info = ""
         if target_wing:
-            wing_names = {
-                "dreams": "🌙 Сны",
-                "projects": "💻 Проекты",
-                "philosophy": "🏛 Философия",
-                "creative": "🎨 Творчество",
-                "psychology": "🧠 Психология",
-            }
-            wing_display = wing_names.get(target_wing, target_wing)
+            wing_display = get_wing_display_name(target_wing)
             wing_info = f" | 🔍 Крыло: {wing_display}"
             try:
                 await status.edit_text(
                     f"⏳ <code>{get_current_ai()[1]}</code> думает{wing_info}...",
                     parse_mode="HTML",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("[MSG] Не удалось обновить статус: %s", e)
 
         palace_context = ""
         deg = get_degradation_manager()
@@ -630,8 +855,21 @@ async def process_user_message(message: types.Message):
             logger.info("[USER_CONTEXT] No user context, using regular search")
 
         if not palace_context and deg.should_use_palace():
-            palace_context = await search_with_kg(clean_q, limit=5, wing=target_wing)
-            if not palace_context:
+            search_q = clean_q
+            if msgs and stream_ai_events_async is ai_engine.stream_ai_events_async:
+                try:
+                    search_q = await rewrite_query_for_search(
+                        clean_q,
+                        recent_messages=msgs[-4:],
+                    )
+                except Exception as rw_exc:
+                    logger.debug("[QUERY_REWRITE] rewrite skipped: %s", rw_exc)
+
+            palace_context, palace_available = await search_with_kg_status(
+                search_q, limit=5, wing=target_wing,
+            )
+            if not palace_available:
+                # Пустой ответ при available=True — это «нет данных», не отказ.
                 report_failure("palace_search")
             else:
                 report_success("palace_search")
@@ -647,7 +885,8 @@ async def process_user_message(message: types.Message):
         if is_code and not data.get("is_coding_mode"):
             data["is_coding_mode"] = True
             data["project_dir"] = ensure_project_dir(fname)
-            save_chat(fpath, data)
+            if not save_chat(fpath, data):
+                logger.error("Не удалось сохранить режим кодинга в %s", fpath)
 
         _engine, _model = get_current_ai()
 
@@ -707,8 +946,8 @@ async def process_user_message(message: types.Message):
                 memory_ctx = get_memory_context(clean_q, uid)
                 if memory_ctx:
                     system_instruction += "\n" + memory_ctx
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("[DEGRADE] Ошибка memory context: %s", e)
         else:
             logger.info("[DEGRADE] Memory context skipped")
 
@@ -732,23 +971,57 @@ async def process_user_message(message: types.Message):
             model=_model,
         )
 
+        cache_wing_parts = [target_wing or "global"]
+        if ctx and ctx.get("wing"):
+            user_scope = str(ctx["wing"])
+            if ctx.get("room"):
+                user_scope += f"/{ctx['room']}"
+            if ctx.get("drawer"):
+                user_scope += f"/{ctx['drawer']}"
+            if user_scope not in cache_wing_parts:
+                cache_wing_parts.append(user_scope)
+        cache_wing = "|".join(cache_wing_parts)
+
+        cache_mode = "coding" if data.get("is_coding_mode") else "chat"
+        if has_images_in_query:
+            image_hasher = hashlib.sha256()
+            for image in images_b64:
+                image_hasher.update(image.encode("utf-8"))
+            cache_mode += f"+images:{image_hasher.hexdigest()[:12]}"
+
+        cache_prompt_version = (
+            f"{SEMANTIC_CACHE_PROMPT_VERSION}:"
+            f"{hashlib.sha256(system_instruction.encode('utf-8')).hexdigest()[:16]}"
+        )
+
         _sem_cache = get_cache()
-        cached_answer = _sem_cache.get(clean_q)
+        cached_answer = _sem_cache.get(
+            clean_q,
+            chat_id=chat_id,
+            wing=cache_wing,
+            model=_model,
+            prompt_version=cache_prompt_version,
+            mode=cache_mode,
+        )
+        if cached_answer is not None and _is_internal_error_text(cached_answer):
+            # Старые версии могли положить в кэш текст внутренней ошибки.
+            cached_answer = None
 
         answer = ""
+        stream_error: AIStreamEvent | None = None
         stream_buffer = ""
         last_update = time.time()
         stream_msg = None
 
         if cached_answer is not None:
             answer = cached_answer
-            status_text = f"💾 <code>{get_current_ai()[1]}</code> (из кэша)"
+            status_text = f"💾 <code>{_model}</code> (из кэша)"
             try:
                 await status.edit_text(status_text, parse_mode="HTML")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("[MSG] Не удалось обновить статус кэша: %s", e)
         else:
-            async for chunk in stream_ai_response_async(
+            async for event in stream_ai_events_async(
                 _engine,
                 _model,
                 context_msgs,
@@ -757,6 +1030,13 @@ async def process_user_message(message: types.Message):
                 has_images=has_images_in_query,
                 images=images_b64,
             ):
+                if not event.ok:
+                    stream_error = event
+                    continue
+                if stream_error is not None or not event.text:
+                    continue
+
+                chunk = event.text
                 answer += chunk
                 stream_buffer += chunk
 
@@ -775,17 +1055,16 @@ async def process_user_message(message: types.Message):
                             await stream_msg.edit_text(preview)
                         last_update = time.time()
                         stream_buffer = ""
-                    except Exception:
-                        pass
-
-            if answer and not answer.startswith("❌"):
-                _sem_cache.set(clean_q, answer)
+                    except Exception as e:
+                        logger.debug("[MSG] Не удалось обновить streaming preview: %s", e)
 
         # 🌐 SEARCH pattern: если ИИ запросил поиск
-        search_match = re.search(
-            r"(?:SEARCH|ПОИСК|SEARCH_WEB):\s*(.+)", answer, re.IGNORECASE,
-        )
-        if search_match and not answer.startswith("❌"):
+        search_match = None
+        if answer and stream_error is None:
+            search_match = re.search(
+                r"(?:SEARCH|ПОИСК|SEARCH_WEB):\s*(.+)", answer, re.IGNORECASE,
+            )
+        if search_match:
             search_query = search_match.group(1).strip()
             logger.info(f"[WEB_SEARCH] AI requested search: {search_query}")
             try:
@@ -803,16 +1082,22 @@ async def process_user_message(message: types.Message):
                 if stream_msg is not None:
                     try:
                         await bot.delete_message(message.chat.id, stream_msg.message_id)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("[MSG] Не удалось удалить stream message: %s", e)
                 answer = ""
-                async for chunk in stream_ai_response_async(
+                async for event in stream_ai_events_async(
                     _engine, _model, context_msgs,
                     context=palace_context, user_query=clean_q,
                     has_images=has_images_in_query, images=images_b64,
                 ):
-                    answer += chunk
-                if not answer.startswith("❌"):
+                    if not event.ok:
+                        stream_error = event
+                        continue
+                    if stream_error is not None:
+                        continue
+                    if event.text:
+                        answer += event.text
+                if stream_error is None and answer:
                     msg_text = answer[:200] if len(answer) > 200 else answer
                     await status.edit_text(
                         f"🌐 <code>{get_current_ai()[1]}</code> (с поиском): "
@@ -825,56 +1110,113 @@ async def process_user_message(message: types.Message):
         if stream_msg is not None:
             try:
                 await bot.delete_message(message.chat.id, stream_msg.message_id)
+            except Exception as e:
+                logger.debug("[MSG] Не удалось удалить stream message: %s", e)
+
+        if not answer and stream_error is None:
+            stream_error = AIStreamEvent(
+                ok=False,
+                error_code="empty_stream",
+                error_message="Модель не вернула текст.",
+            )
+
+        if stream_error is not None:
+            logger.warning(
+                "[AI_STREAM] error_code=%s: %s",
+                stream_error.error_code,
+                stream_error.error_message,
+            )
+        elif answer and cached_answer is None:
+            # Кэшируем только финальный успешный ответ после всех стримов,
+            # но не частично полученный текст.
+            _sem_cache.set(
+                clean_q,
+                answer,
+                chat_id=chat_id,
+                wing=cache_wing,
+                model=_model,
+                prompt_version=cache_prompt_version,
+                mode=cache_mode,
+            )
+
+        # В историю попадает только реальный текст; сообщение об ошибке — нет.
+        history_saved = True
+        if answer:
+            msgs.append({"role": "user", "content": clean_q})
+            msgs.append({"role": "assistant", "content": answer})
+            data["messages"] = msgs[-50:]
+            try:
+                history_saved = save_chat(fpath, data)
             except Exception:
-                pass
+                logger.exception("Не удалось сохранить чат %s", fpath)
+                history_saved = False
+            if not history_saved:
+                logger.error(
+                    "История чата не сохранена: %s (данные остались в памяти)",
+                    fpath,
+                )
 
-        if not answer or answer.startswith("❌"):
-            answer = answer or "❌ Пустой ответ от ИИ."
-
-        msgs.append({"role": "user", "content": clean_q})
-        msgs.append({"role": "assistant", "content": answer})
-        data["messages"] = msgs[-50:]
-        try:
-            save_chat(fpath, data)
-        except Exception as e:
-            logger.warning(f"Не удалось сохранить чат: {e}")
-
-        await bus.publish(
-            Event.AI_RESPONSE_COMPLETE,
-            answer=answer,
-            clean_q=clean_q,
-            uid=uid,
-            fname=fname,
-            fpath=fpath,
-            data=data,
-        )
+        if stream_error is None:
+            await bus.publish(
+                Event.AI_RESPONSE_COMPLETE,
+                answer=answer,
+                clean_q=clean_q,
+                uid=uid,
+                fname=fname,
+                fpath=fpath,
+                data=data,
+            )
 
         vs = get_voice_settings(uid)
         sent_msg = None
 
-        try:
-            if answer.startswith("❌"):
+        if stream_error is not None and not answer:
+            try:
                 sent_msg = await message.answer(
-                    safe_html_format(f"❌ ИИ вернул ошибку: {answer[:200]}"),
-                    parse_mode="HTML",
+                    _stream_error_text(stream_error), parse_mode="HTML",
                 )
-            else:
+            except Exception as e:
+                logger.error(f"Ошибка отправки ошибки стрима: {e}", exc_info=True)
+                sent_msg = await message.answer("❌ Не удалось доставить ответ ИИ.")
+        else:
+            try:
                 sent_msg = await send_response_with_mode(message, answer, vs["mode"])
-        except Exception as e:
-            logger.error(f"Ошибка отправки ответа: {e}", exc_info=True)
-            sent_msg = await message.answer("❌ Не удалось доставить ответ ИИ.")
+            except Exception as e:
+                logger.error(f"Ошибка отправки ответа: {e}", exc_info=True)
+                sent_msg = await message.answer("❌ Не удалось доставить ответ ИИ.")
 
-        await bus.publish(
-            Event.AI_RESPONSE_SENT,
-            sent_msg=sent_msg,
-            answer=answer,
-            chat_id=message.chat.id,
-            uid=uid,
-            fname=fname,
-            fpath=fpath,
-            message=message,
-            clean_q=clean_q,
-        )
+            if stream_error is not None:
+                try:
+                    await message.answer(
+                        "⚠️ Ответ оборвался — показана только полученная часть.",
+                    )
+                except Exception as e:
+                    logger.debug(f"Не удалось отправить предупреждение: {e}")
+
+        if not history_saved:
+            try:
+                await message.answer(
+                    "⚠️ Не удалось сохранить ответ в историю чата. "
+                    "Данные остались только в текущей сессии.",
+                )
+            except Exception as e:
+                logger.debug(
+                    "Не удалось предупредить о сбое сохранения чата: %s", e,
+                )
+
+        # Частичный ответ не кэшируем и не рассылаем как успешный.
+        if stream_error is None:
+            await bus.publish(
+                Event.AI_RESPONSE_SENT,
+                sent_msg=sent_msg,
+                answer=answer,
+                chat_id=message.chat.id,
+                uid=uid,
+                fname=fname,
+                fpath=fpath,
+                message=message,
+                clean_q=clean_q,
+            )
 
     except Exception as e:
         logger.error("❌ Ошибка процесса ИИ: %s", e, exc_info=True)
@@ -882,19 +1224,5 @@ async def process_user_message(message: types.Message):
     finally:
         try:
             await bot.delete_message(message.chat.id, status.message_id)
-        except Exception:
-            pass
-
-
-def get_ai_response_sync_wrapper(
-    engine: str,
-    model: str,
-    messages: list,
-    context: str = "",
-    user_query: str = "",
-    has_images: bool = False,
-    **kwargs,
-) -> str:
-    return _sync_ai_call(
-        engine, model, messages, context, user_query, has_images, **kwargs,
-    )
+        except Exception as e:
+            logger.debug("[MSG] Не удалось удалить статус: %s", e)

@@ -614,3 +614,42 @@ async def _dispatch(cb):
         await t.cb_follow_tunnels_wing(cb)
     elif d == "p_tc":
         await t.cb_create_tunnel_source_wing(cb)
+
+
+def test_cb_follow_tunnels_result_colon_prefix(monkeypatch):
+    """Регрессия: кнопки p_tor:<room> с двоеточием должны обрабатываться."""
+    _enable(monkeypatch)
+    t._tunnel_state[4242] = {"wing_a": "крыло"}
+    mcp = FakeMCP("туннель найден")
+    monkeypatch.setattr(t, "get_mcp", lambda: mcp)
+    captured = {}
+
+    async def fake_finalize(uid, edit_func, text, is_html=False, ctx=None,
+                            extra_rows=None):
+        captured["text"] = text
+        captured["ctx"] = ctx
+
+    monkeypatch.setattr(
+        "handlers.palace.action_bar.finalize_answer", fake_finalize,
+    )
+    cb = FakeCb(data="p_tor:комната а")
+    asyncio.run(t.cb_follow_tunnels_result(cb))
+    assert captured["text"] == "туннель найден"
+    assert captured["ctx"] == {"wing": "крыло", "room": "комната а", "parent_cb": "p_tun"}
+
+
+def test_cb_cross_room_select(monkeypatch):
+    """Клик по связанной комнате p_crr:<room> открывает её ящики."""
+    _enable(monkeypatch)
+    t._tunnel_state[4242] = {"cross_rooms": {"комната б": "крыло"}}
+    opened = []
+
+    async def fake_drawers_page(edit_func, uid, wing, room, offset=0):
+        opened.append((uid, wing, room, offset))
+
+    monkeypatch.setattr(
+        "handlers.palace.navigation._show_drawers_page", fake_drawers_page,
+    )
+    cb = FakeCb(data="p_crr:комната б")
+    asyncio.run(t.cb_cross_room_select(cb))
+    assert opened == [(4242, "крыло", "комната б", 0)]

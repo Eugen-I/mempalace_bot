@@ -136,7 +136,7 @@ async def test_send_split_long_text(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_send_answer_failure_skips(monkeypatch):
+async def test_send_answer_failure_skips(monkeypatch, caplog):
     class FailingMessage(FakeMessage):
         async def answer(self, text, **kwargs):
             raise RuntimeError("telegram error")
@@ -145,6 +145,7 @@ async def test_send_answer_failure_skips(monkeypatch):
     sent = await sender.send_response_with_mode(msg, "текст", "text")
     assert sent is None
     assert len(msg.answers) == 0
+    assert "Не удалось отправить часть ответа" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -177,7 +178,6 @@ async def test_send_voice_generation_error_logged(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_send_voice_audio_fail_removes_file(monkeypatch):
-    msg = FakeMessage()
     monkeypatch.setattr(sender, "prepare_tts_text", lambda text: "текст")
     monkeypatch.setattr(
         sender, "split_tts_text", lambda text, max_chars=1800: ["текст"],

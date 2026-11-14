@@ -3,28 +3,114 @@
 ИСПРАВЛЕНО: Убран импорт set_current_ai, используется прямая запись в конфиг.
 """
 
+import html
 import json
 import logging
 import os
+from datetime import datetime
 
 from aiogram import F, Router, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import CONFIG_AI_FILE, MODELS_CONFIG_PATH, allowed_callback, allowed_only
 from services.agent_settings import get_agent_enabled, toggle_agent_enabled
-from services.ai_engine import invalidate_ai_cache
-from services.tts_processor import get_voice_settings, set_voice_setting
+from services.ai_engine import get_current_ai, invalidate_ai_cache
 from services.error_formatter import format_user_error
+from services.semantic_cache import get_cache
+from services.tts_processor import get_voice_settings, set_voice_setting
 
 router = Router()
 logger = logging.getLogger("SettingsHandler")
 
+HISTORY_MESSAGES_LIMIT = 20
+HISTORY_PREVIEW_CHARS = 150
+DIRECTORY_FILES_LIMIT = 10
+
+_ROLE_LABELS = {
+    "user": "👤 Вы",
+    "assistant": "🤖 Бот",
+    "system": "⚙️ Система",
+}
+
+
+def _format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} Б"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} КБ"
+    return f"{size / (1024 * 1024):.1f} МБ"
+
+
+def format_directory_listing(
+    directory: str, title: str, limit: int | None = None,
+) -> str:
+    """Список последних файлов каталога: имя, дата, размер (HTML-safe)."""
+    limit = limit or DIRECTORY_FILES_LIMIT
+    try:
+        entries = []
+        with os.scandir(directory) as it:
+            for entry in it:
+                if entry.name.startswith("."):
+                    continue
+                try:
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    stat = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                entries.append((entry.name, stat.st_mtime, stat.st_size))
+    except FileNotFoundError:
+        return f"{title}\n\n📁 Папка пуста."
+    except OSError:
+        logger.error("Не удалось прочитать каталог %s", directory, exc_info=True)
+        return f"{title}\n\n❌ Не удалось прочитать папку."
+
+    if not entries:
+        return f"{title}\n\n📁 Папка пуста."
+
+    entries.sort(key=lambda item: item[1], reverse=True)
+    lines = [title, ""]
+    for name, mtime, size in entries[:limit]:
+        dt = datetime.fromtimestamp(mtime).strftime("%d.%m.%Y %H:%M")
+        lines.append(
+            f"• <b>{html.escape(name)}</b> — {dt}, {_format_size(size)}",
+        )
+
+    return "\n".join(lines)
+
+
+def format_chat_history(
+    messages: list, limit: int | None = None,
+) -> str:
+    """Форматирует последние сообщения чата для Telegram (HTML-safe)."""
+    limit = limit or HISTORY_MESSAGES_LIMIT
+    recent = messages[-limit:]
+
+    entries = []
+    for msg in recent:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role", "unknown")
+        content = str(msg.get("content", ""))
+        label = _ROLE_LABELS.get(role, f"❔ {html.escape(str(role))}")
+        preview = content[:HISTORY_PREVIEW_CHARS].replace("\n", " ")
+        if len(content) > HISTORY_PREVIEW_CHARS:
+            preview += "…"
+        entries.append(f"{label}: {html.escape(preview)}")
+
+    lines = [f"📜 <b>Последние {len(entries)} сообщений:</b>", ""]
+    lines.extend(entries)
+
+    return "\n\n".join(lines)
+
 
 def build_settings_kb(user_id: int):
     curr = "gemini-flash-latest"
-    if os.path.exists(CONFIG_AI_FILE):
+    try:
         with open(CONFIG_AI_FILE) as f:
             curr = f.read().strip() or curr
+    except OSError as e:
+        logger.warning("Не удалось прочитать текущую модель AI: %s", e)
     vs = get_voice_settings(user_id)
     mode_txt = {"text": "📝 Текст", "voice": "🎤 Голос", "both": "📝+🎤 Вместе"}.get(
         vs["mode"], "📝 Текст",
@@ -33,7 +119,10 @@ def build_settings_kb(user_id: int):
     kb = InlineKeyboardBuilder()
     kb.row(
         types.InlineKeyboardButton(
-            text="✨ Gemini", callback_data="set_ai:gemini-flash-latest",
+            text="✨ Gemini 2.5 Flash", callback_data="set_ai:gemini-2.5-flash",
+        ),
+        types.InlineKeyboardButton(
+            text="⚡ Gemini 3 Flash", callback_data="set_ai:gemini-3-flash-preview",
         ),
     )
     kb.row(
@@ -166,10 +255,9 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
         )
         # Здесь можно вызвать логику анализа, как в handle_photo
         import asyncio
-        import os
 
         from config import PHOTOS_DIR
-        from services.ai_engine import _sync_ai_call, get_current_ai
+        from services.ai_engine import call_ai_sync, get_current_ai
         from services.multimodal import (
             check_capability,
             encode_image_to_base64,
@@ -190,7 +278,7 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
             msgs = [{"role": "user", "content": "Опиши это фото на русском."}]
             try:
                 answer = await asyncio.to_thread(
-                    lambda: _sync_ai_call(engine, model, msgs, context="", images=[b64]),
+                    call_ai_sync, engine, model, msgs, images=[b64],
                 )
 
                 # ✅ Безопасная отправка: экранируем ответ и разбиваем на части
@@ -203,60 +291,112 @@ async def cmd_callback_handler(callback: types.CallbackQuery):
                         try:
                             # Пробуем отправить с форматированием
                             await callback.message.answer(part, parse_mode="HTML")
-                        except Exception:
+                        except Exception as e:
                             # Fallback: отправляем как простой текст, если парсер сломался
+                            logger.warning(
+                                "HTML-отправка анализа фото не удалась, fallback: %s", e,
+                            )
                             await callback.message.answer(part, parse_mode=None)
 
             except Exception as e:
+                logger.warning("Ошибка анализа фото: %s", e, exc_info=True)
                 await status_msg.edit_text(format_user_error(e, "settings_photo_analysis"))
         else:
             await status_msg.edit_text("❌ Ошибка кодирования фото.")
 
     elif command == "history":
-        await callback.message.answer("📜 Загружаю историю текущего чата...")
-        # Здесь можно вызвать логику показа истории из chat.py
-
-    elif command == "export":
-        await callback.message.answer("📤 Экспортирую чат в Markdown...")
-        # Здесь можно вызвать export_chat_to_md()
-
-    elif command in ["insights", "research"]:
-        target = "research" if command == "research" else "insights"
-        await callback.message.answer(f"📌 Показываю последние записи из {target}/...")
-        # Здесь можно показать последние файлы из папки
-
-    elif command == "sync":
-        await callback.message.answer("🔄 Синхронизирую с MemPalace...")
-        import os
-
         from config import CHATS_DIR
-        from handlers.chat import user_sessions
-        from services.palace_bridge import export_chat_verbatim, sync_to_palace
+        from handlers.chat import load_chat, user_sessions
 
         fname = user_sessions.get(callback.from_user.id)
         if not fname:
             return await callback.message.answer(
-                "⚠️ Нет активного чата для синхронизации.",
+                "⚠️ Нет активного чата. Создайте новый командой /new.",
             )
-        fpath = os.path.join(CHATS_DIR, fname)
-        exported = export_chat_verbatim(fpath, fname)
-        if not exported:
-            return await callback.message.answer("ℹ️ Чат пуст или не найден.")
-        result = await sync_to_palace(exported)
-        await callback.message.answer(result)
+
+        data = load_chat(os.path.join(CHATS_DIR, fname))
+        messages = data.get("messages", [])
+        if not isinstance(messages, list) or not messages:
+            return await callback.message.answer("📁 Чат пуст или ещё не начат.")
+
+        text = format_chat_history(messages)
+        try:
+            await callback.message.answer(text, parse_mode="HTML")
+        except Exception:
+            logger.warning("HTML-разметка истории не принята Telegram", exc_info=True)
+            await callback.message.answer(text, parse_mode=None)
+
+    elif command == "export":
+        from config import CHATS_DIR
+        from handlers.chat import export_chat_to_md, user_sessions
+
+        fname = user_sessions.get(callback.from_user.id)
+        if not fname:
+            return await callback.message.answer(
+                "⚠️ Нет активного чата для экспорта.",
+            )
+
+        chat_path = os.path.join(CHATS_DIR, fname)
+        try:
+            md_path = export_chat_to_md(chat_path)
+        except Exception:
+            logger.error("Не удалось экспортировать чат %s", chat_path, exc_info=True)
+            return await callback.message.answer(
+                "❌ Не удалось экспортировать чат. Подробности в логе.",
+            )
+
+        if not md_path or not os.path.exists(md_path):
+            return await callback.message.answer("📁 Чат пуст или файл не найден.")
+
+        try:
+            await callback.message.answer_document(
+                document=types.FSInputFile(md_path),
+                caption=f"✅ Чат экспортирован в Markdown: {os.path.basename(md_path)}",
+            )
+        except Exception:
+            logger.error("Не удалось отправить экспорт %s", md_path, exc_info=True)
+            await callback.message.answer("❌ Не удалось отправить файл экспорта.")
+
+    elif command == "insights":
+        from config import INSIGHTS_DIR
+
+        text = format_directory_listing(
+            INSIGHTS_DIR, "📌 <b>Последние инсайты:</b>",
+        )
+        await callback.message.answer(text, parse_mode="HTML")
+
+    elif command == "research":
+        from config import RESEARCH_DIR
+
+        text = format_directory_listing(
+            RESEARCH_DIR, "📌 <b>Последние исследования:</b>",
+        )
+        await callback.message.answer(text, parse_mode="HTML")
+
+    elif command == "sync":
+        await callback.message.answer("🔄 Синхронизирую с MemPalace...")
+
+        from handlers.chat import user_sessions
+        from services.chat_sync import sync_active_chat
+
+        result = await sync_active_chat(callback.from_user.id, user_sessions)
+        await callback.message.answer(result.message)
 
 
 async def render_ollama_list(cb: types.CallbackQuery):
     """Отрисовывает список Ollama моделей с подсветкой активной."""
     current_tag = "gemini-flash-latest"
-    if os.path.exists(CONFIG_AI_FILE):
+    try:
         with open(CONFIG_AI_FILE) as f:
             current_tag = f.read().strip() or current_tag
+    except OSError as e:
+        logger.warning("Не удалось прочитать текущую модель AI: %s", e)
 
     try:
         with open(MODELS_CONFIG_PATH, encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:
+    except Exception as e:
+        logger.warning("Не удалось прочитать конфиг моделей %s: %s", MODELS_CONFIG_PATH, e)
         data = {"ollama": []}
 
     kb = InlineKeyboardBuilder()
@@ -340,10 +480,18 @@ async def cb_list_ollama(cb: types.CallbackQuery):
 async def cb_set_ai(cb: types.CallbackQuery):
     # 🔧 Прямая запись тега модели в файл конфигурации
     tag = cb.data.split(":", 1)[1]
+    previous_model = ""
+    try:
+        _, previous_model = get_current_ai()
+    except Exception as e:
+        logger.warning(f"Не удалось определить предыдущую модель AI: {e}")
+
     try:
         with open(CONFIG_AI_FILE, "w", encoding="utf-8") as f:
             f.write(tag)
         invalidate_ai_cache()
+        if previous_model:
+            get_cache().invalidate_model(previous_model)
     except Exception as e:
         logger.error(f"Ошибка сохранения модели AI: {e}")
 

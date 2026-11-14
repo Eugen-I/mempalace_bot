@@ -1,6 +1,7 @@
 """CLI Menu - chat selection, creation, deletion"""
-import os
 import json
+import os
+
 from config import CHATS_DIR
 
 

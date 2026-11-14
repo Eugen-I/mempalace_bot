@@ -1,7 +1,7 @@
-import sys
 import json as json_mod
 import logging.handlers
 import os
+import sys
 
 
 class JSONFormatter(logging.Formatter):

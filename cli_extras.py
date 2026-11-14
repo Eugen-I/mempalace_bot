@@ -2,11 +2,16 @@ import logging
 import os
 
 from services.kv_store import get_kv_store
-from services.palace_bridge import palace_status, palace_compress, palace_repair
-from services.palace_bridge import palace_compact, palace_wake_up
+from services.palace_bridge import (
+    palace_compact,
+    palace_compress,
+    palace_repair,
+    palace_status,
+    palace_wake_up,
+)
 from services.palace_mcp import get_mcp
 from services.pdf_engine import extract_pdf_async, list_archived_pdfs
-from services.youtube import download_video, download_audio, transcribe_audio
+from services.youtube import download_audio, download_video, transcribe_audio
 
 logger = logging.getLogger("CLIExtras")
 

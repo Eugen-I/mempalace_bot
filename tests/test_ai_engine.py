@@ -10,6 +10,7 @@ import builtins
 import importlib
 import json
 import sys
+import time
 
 import pytest
 
@@ -95,8 +96,14 @@ class FakeStream:
 
 
 class FakePart:
-    def __init__(self, text):
+    def __init__(self, text=None, data=None, mime_type=None):
         self.text = text
+        self.data = data
+        self.mime_type = mime_type
+
+    @classmethod
+    def from_bytes(cls, data, mime_type):
+        return cls(data=data, mime_type=mime_type)
 
 
 class FakeContent:
@@ -115,6 +122,8 @@ class FakeGenAI:
         self.response_text = response_text
 
     class Client:
+        last_call = None
+
         def __init__(self, api_key=None):
             self.api_key = api_key
             self.calls = []
@@ -125,6 +134,11 @@ class FakeGenAI:
                 self.owner = owner
 
             def generate_content(self, model, contents, config=None):
+                type(self.owner).last_call = {
+                    "model": model,
+                    "contents": contents,
+                    "config": config,
+                }
                 self.owner.response_text = "gemini answer"
                 return _FakeResponse(self.owner.response_text)
 
@@ -153,9 +167,8 @@ class _FakeChunkText:
 
 
 class FakeGenAITypes:
-    @staticmethod
-    def Part(text):
-        return FakePart(text)
+    class Part(FakePart):
+        pass
 
     @staticmethod
     def Content(role, parts):
@@ -266,6 +279,260 @@ def test_invalidate_ai_cache_clears_cached_config(
     monkeypatch.setattr(ai_engine, "MODELS_CONFIG_PATH", str(cfg2))
     ai_engine.invalidate_ai_cache()
     assert _load()["ollama"] == [{"tag": "b"}]
+
+
+# ---------- message/response helpers ----------
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("ollama", "qwen"),
+    (" qwen ", "qwen"),
+    ("OpenAI", "openai"),
+    ("GEMINI", "gemini"),
+])
+def test_normalize_engine(raw, expected):
+    assert ai_engine._normalize_engine(raw) == expected
+
+
+def test_find_system_message_returns_first():
+    first = {"role": "system", "content": "first"}
+    messages = [
+        {"role": "user", "content": "u"},
+        first,
+        {"role": "system", "content": "second"},
+    ]
+    assert ai_engine._find_system_message(messages) is first
+    assert ai_engine._find_system_message([{"role": "user", "content": "u"}]) is None
+
+
+def test_system_instruction_prefers_message_then_fallback():
+    messages = [
+        {"role": "user", "content": "u"},
+        {"role": "system", "content": "CUSTOM"},
+    ]
+    assert ai_engine._system_instruction(messages, "fallback") == "CUSTOM"
+    assert ai_engine._system_instruction(
+        [{"role": "system", "content": ""}], "fallback",
+    ) == "fallback"
+    assert ai_engine._system_instruction(
+        [{"role": "user", "content": "u"}], "fallback",
+    ) == "fallback"
+
+
+def test_content_with_images_builds_data_urls():
+    assert ai_engine._content_with_images("текст", ["aW1n"]) == [
+        {"type": "text", "text": "текст"},
+        {
+            "type": "image_url",
+            "image_url": {"url": "data:image/jpeg;base64,aW1n"},
+        },
+    ]
+
+
+def test_prepare_chat_messages_sync_uses_first_system_and_skips_rest():
+    custom = {"role": "system", "content": "CUSTOM"}
+    messages = [
+        {"role": "user", "content": "u"},
+        custom,
+        {"role": "system", "content": "SECOND"},
+        {"role": "assistant", "content": "a"},
+    ]
+    prepared = ai_engine._prepare_chat_messages(
+        messages, "fallback", [],
+        use_message_system=True, images_for_all_users=False,
+    )
+    assert prepared == [
+        custom,
+        {"role": "user", "content": "u"},
+        {"role": "assistant", "content": "a"},
+    ]
+
+
+def test_prepare_chat_messages_sync_images_only_first_user():
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "look"},
+        {"role": "user", "content": "second"},
+    ]
+    prepared = ai_engine._prepare_chat_messages(
+        messages, "fallback", ["img1", "img2"],
+        use_message_system=True, images_for_all_users=False,
+    )
+    assert prepared[1]["content"] == [
+        {"type": "text", "text": "look"},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,img1"}},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,img2"}},
+    ]
+    assert prepared[2] == {"role": "user", "content": "second"}
+
+
+def test_prepare_chat_messages_stream_keeps_system_and_images_every_user():
+    original_system = {"role": "system", "content": "ORIGINAL"}
+    messages = [
+        original_system,
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "a"},
+        {"role": "user", "content": "two"},
+    ]
+    prepared = ai_engine._prepare_chat_messages(
+        messages, "generated", ["img"],
+        use_message_system=False, images_for_all_users=True,
+    )
+    assert prepared[0] == {"role": "system", "content": "generated\n\nORIGINAL"}
+    assert [m["role"] for m in prepared] == ["system", "user", "assistant", "user"]
+    assert prepared[1]["content"][1]["image_url"]["url"].endswith("img")
+    assert prepared[3]["content"][1]["image_url"]["url"].endswith("img")
+
+
+def test_prepare_chat_messages_stream_deduplicates_system_prefix():
+    messages = [
+        {"role": "system", "content": "generated\n\nEXTRA_RULES"},
+        {"role": "user", "content": "one"},
+        {"role": "system", "content": "LATE_SYSTEM"},
+    ]
+    prepared = ai_engine._prepare_chat_messages(
+        messages, "generated", [],
+        use_message_system=False, images_for_all_users=True,
+    )
+    assert [m["role"] for m in prepared] == ["system", "user"]
+    assert prepared[0]["content"] == "generated\n\nEXTRA_RULES\n\nLATE_SYSTEM"
+
+
+def test_prepare_chat_messages_empty_history():
+    prepared = ai_engine._prepare_chat_messages(
+        [], "sys", [],
+        use_message_system=True, images_for_all_users=False,
+    )
+    assert prepared == [{"role": "system", "content": "sys"}]
+
+
+def test_prepare_chat_messages_preserves_tool_calls_and_tool_role():
+    assistant = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "now", "arguments": "{}"},
+        }],
+    }
+    tool_result = {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": "result",
+    }
+    prepared = ai_engine._prepare_chat_messages(
+        [assistant, tool_result], "sys", [],
+        use_message_system=True, images_for_all_users=False,
+    )
+    assert prepared[1] is assistant
+    assert prepared[2] is tool_result
+
+
+def test_build_gemini_contents_sync_skips_system_and_adds_images(monkeypatch):
+    monkeypatch.setattr(ai_engine, "genai_types", FakeGenAITypes)
+    messages = [
+        {"role": "system", "content": "CUSTOM"},
+        {"role": "user", "content": "look"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "second"},
+    ]
+    contents = ai_engine._build_gemini_contents(
+        messages, ["YmluYXJ5"],
+        include_images=True, skip_system=True,
+    )
+    assert [c.role for c in contents] == ["user", "model", "user"]
+    assert contents[0].parts[0].text == "look"
+    assert contents[0].parts[1].data == b"binary"
+    assert contents[0].parts[1].mime_type == "image/jpeg"
+    assert len(contents[2].parts) == 1
+
+
+def test_build_gemini_contents_stream_includes_system_without_images(monkeypatch):
+    monkeypatch.setattr(ai_engine, "genai_types", FakeGenAITypes)
+    messages = [
+        {"role": "system", "content": "ORIGINAL"},
+        {"role": "user", "content": "u"},
+    ]
+    contents = ai_engine._build_gemini_contents(
+        messages, ["ignored"],
+        include_images=False, skip_system=False,
+    )
+    assert [c.role for c in contents] == ["model", "user"]
+    assert contents[0].parts[0].text == "ORIGINAL"
+    assert len(contents[1].parts) == 1
+
+
+def test_extract_openai_text_handles_empty_choices_and_content():
+    class NoChoices:
+        choices = []
+
+    assert ai_engine._extract_openai_text(FakeSyncResponse("hi")) == "hi"
+    assert ai_engine._extract_openai_text(FakeSyncResponse(None)) == ""
+    assert ai_engine._extract_openai_text(NoChoices()) == ""
+
+
+def test_extract_delta_text_handles_empty_and_missing_delta():
+    assert ai_engine._extract_delta_text(
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("x"))]),
+    ) == "x"
+    assert ai_engine._extract_delta_text(FakeStreamChunk([])) == ""
+    assert ai_engine._extract_delta_text(
+        FakeStreamChunk([FakeStreamChoice(delta=None)]),
+    ) == ""
+
+
+def test_extract_gemini_text_handles_none_and_missing():
+    assert ai_engine._extract_gemini_text(_FakeResponse("x")) == "x"
+    assert ai_engine._extract_gemini_text(_FakeResponse(None)) == ""
+    assert ai_engine._extract_gemini_text(object()) == ""
+
+
+def test_extract_gemini_text_max_tokens_warning():
+    class Candidate:
+        finish_reason = "MAX_TOKENS"
+
+    class Response:
+        text = "Hello world"
+        candidates = [Candidate()]
+
+    res = ai_engine._extract_gemini_text(Response())
+    assert "Hello world" in res
+    assert "⚠️" in res
+    assert "лимита токенов" in res
+
+
+def test_strip_thinking_tags_removes_deepseek_and_service_tokens():
+    assert ai_engine._strip_thinking_tags("a<think>x</think>b") == "ab"
+    assert ai_engine._strip_thinking_tags(
+        "a<｜begin▁of▁sentence｜>x<｜end▁of▁sentence｜>b",
+    ) == "ab"
+
+
+def test_sync_and_stream_use_shared_message_helper(monkeypatch):
+    calls = []
+    real_prepare = ai_engine._prepare_chat_messages
+
+    def spy(messages, system_prompt, images, **kwargs):
+        calls.append(kwargs)
+        return real_prepare(messages, system_prompt, images, **kwargs)
+
+    monkeypatch.setattr(ai_engine, "_prepare_chat_messages", spy)
+
+    sync_fake = FakeOpenAI(FakeSyncResponse("ok"))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: sync_fake)
+    ai_engine._sync_ai_call("qwen", "m", [{"role": "user", "content": "hi"}])
+
+    stream_fake = FakeOpenAI(FakeStream([
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("ok"))]),
+    ]))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: stream_fake)
+    _collect_stream_events("qwen", "m", [{"role": "user", "content": "hi"}])
+
+    assert calls == [
+        {"use_message_system": True, "images_for_all_users": False},
+        {"use_message_system": False, "images_for_all_users": True},
+    ]
 
 
 # ---------- _sync_ai_call: qwen ----------
@@ -404,7 +671,17 @@ def test_sync_qwen_no_choices_field(monkeypatch):
     fake = FakeOpenAI(NoChoicesResponse())
     monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
     out = ai_engine._sync_ai_call("qwen", "m", [{"role": "user", "content": "hi"}])
-    assert "Ошибка ИИ" in out
+    assert out == "❌ Пустой ответ от Ollama."
+
+
+def test_sync_qwen_empty_choices_list(monkeypatch):
+    class EmptyChoicesResponse:
+        choices = []
+
+    fake = FakeOpenAI(EmptyChoicesResponse())
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+    out = ai_engine._sync_ai_call("qwen", "m", [{"role": "user", "content": "hi"}])
+    assert out == "❌ Пустой ответ от Ollama."
 
 
 def test_sync_qwen_truncated_by_length(monkeypatch):
@@ -525,6 +802,25 @@ def test_sync_qwen_apiconnection_error_friendly_message(monkeypatch):
     assert "Запустите Ollama" in out
 
 
+def test_sync_qwen_timeout_friendly_message(monkeypatch):
+    class APITimeoutError(Exception):
+        pass
+
+    class BoomCompletions:
+        def create(self, **kwargs):
+            raise APITimeoutError("Request timed out.")
+
+    class BoomOpenAI(FakeOpenAI):
+        def __init__(self, *args, **kwargs):
+            super().__init__(None)
+            self.chat.completions = BoomCompletions()
+
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: BoomOpenAI(**kwargs))
+    out = ai_engine._sync_ai_call("qwen", "m", [{"role": "user", "content": "hi"}])
+    assert "таймаут" in out
+    assert "num_ctx" in out
+
+
 def test_sync_gemini_does_not_ensure_ollama(monkeypatch):
     def fake_ensure(model="qwen2.5:7b"):
         raise AssertionError("ensure_ollama_running вызван для gemini")
@@ -640,6 +936,48 @@ def test_sync_gemini_success(monkeypatch):
     assert out == "gemini answer"
 
 
+def test_sync_gemini_none_text_returns_controlled_error(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "rk-test")
+    monkeypatch.setattr(ai_engine, "genai", FakeGenAI)
+    monkeypatch.setattr(ai_engine, "genai_types", FakeGenAITypes)
+
+    def fake_generate(self, model, contents, config=None):
+        return _FakeResponse(None)
+
+    monkeypatch.setattr(
+        FakeGenAI.Client._Models, "generate_content", fake_generate,
+    )
+    out = ai_engine._sync_ai_call(
+        "gemini", "gemini-pro", [{"role": "user", "content": "hi"}],
+    )
+    assert out == "❌ Пустой ответ от Gemini."
+
+
+def test_sync_gemini_uses_system_message_and_images(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "rk-test")
+    monkeypatch.setattr(ai_engine, "genai", FakeGenAI)
+    monkeypatch.setattr(ai_engine, "genai_types", FakeGenAITypes)
+    FakeGenAI.Client.last_call = None
+
+    messages = [
+        {"role": "system", "content": "CUSTOM_SYSTEM"},
+        {"role": "user", "content": "look"},
+    ]
+    out = ai_engine._sync_ai_call(
+        "gemini", "gemini-pro", messages, images=["YmluYXJ5=="],
+    )
+
+    assert out == "gemini answer"
+    call = FakeGenAI.Client.last_call
+    assert call["config"].system_instruction == "CUSTOM_SYSTEM"
+    assert call["config"].max_output_tokens == 8192
+    assert [c.role for c in call["contents"]] == ["user"]
+    parts = call["contents"][0].parts
+    assert parts[0].text == "look"
+    assert parts[1].data == b"binary"
+    assert parts[1].mime_type == "image/jpeg"
+
+
 def test_sync_gemini_import_error(monkeypatch):
     monkeypatch.setattr(ai_engine, "genai", None)
     out = ai_engine._sync_ai_call(
@@ -680,7 +1018,300 @@ def test_get_ai_response_async_executor_failure(monkeypatch):
     assert "executor exploded" in out
 
 
-# ---------- stream_ai_response_async ----------
+# ---------- call_ai_sync ----------
+
+
+def test_call_ai_sync_forwards_to_sync_call(monkeypatch):
+    captured = {}
+
+    def fake_sync(engine, model, messages, context="", user_query="", has_images=False, **kwargs):
+        captured.update({
+            "engine": engine,
+            "model": model,
+            "messages": messages,
+            "context": context,
+            "user_query": user_query,
+            "has_images": has_images,
+            "kwargs": kwargs,
+        })
+        return "sync result"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", fake_sync)
+
+    out = ai_engine.call_ai_sync(
+        "qwen",
+        "m",
+        [{"role": "user", "content": "hi"}],
+        context="ctx",
+        user_query="q",
+        has_images=True,
+        extra=1,
+    )
+
+    assert out == "sync result"
+    assert captured["engine"] == "qwen"
+    assert captured["model"] == "m"
+    assert captured["context"] == "ctx"
+    assert captured["user_query"] == "q"
+    assert captured["has_images"] is True
+    assert captured["kwargs"] == {"extra": 1}
+
+
+# ---------- call_ai_async ----------
+
+
+def test_call_ai_async_returns_sync_result_and_forwards_args(monkeypatch):
+    captured = {}
+
+    def fake_sync(engine, model, messages, context="", user_query="", has_images=False, **kwargs):
+        captured.update({
+            "engine": engine,
+            "model": model,
+            "messages": messages,
+            "context": context,
+            "user_query": user_query,
+            "has_images": has_images,
+            "kwargs": kwargs,
+        })
+        return "sync result"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", fake_sync)
+    out = asyncio.run(
+        ai_engine.call_ai_async(
+            "qwen",
+            "m",
+            [{"role": "user", "content": "hi"}],
+            context="ctx",
+            user_query="q",
+            has_images=True,
+            sampling={"temperature": 0.2},
+        ),
+    )
+    assert out == "sync result"
+    assert captured["engine"] == "qwen"
+    assert captured["model"] == "m"
+    assert captured["context"] == "ctx"
+    assert captured["user_query"] == "q"
+    assert captured["has_images"] is True
+    assert captured["kwargs"] == {"sampling": {"temperature": 0.2}}
+
+
+def test_call_ai_async_resolves_current_engine_when_omitted(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("openai", "gpt-test"))
+
+    def fake_sync(engine, model, *a, **k):
+        captured.update({"engine": engine, "model": model})
+        return "ok"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", fake_sync)
+    out = asyncio.run(
+        ai_engine.call_ai_async(None, None, [{"role": "user", "content": "hi"}]),
+    )
+    assert out == "ok"
+    assert captured == {"engine": "openai", "model": "gpt-test"}
+
+
+def test_call_ai_async_omits_default_optional_args(monkeypatch):
+    captured = {}
+
+    def fake_sync(engine, model, messages):
+        captured.update({"engine": engine, "model": model, "messages": messages})
+        return "ok"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", fake_sync)
+    out = asyncio.run(
+        ai_engine.call_ai_async("qwen", "m", [{"role": "user", "content": "hi"}]),
+    )
+    assert out == "ok"
+    assert captured == {
+        "engine": "qwen",
+        "model": "m",
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+
+def test_call_ai_async_timeout_raises_domain_error(monkeypatch):
+    def slow_sync(*a, **k):
+        time.sleep(0.05)
+        return "late"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", slow_sync)
+    with pytest.raises(ai_engine.AITimeoutError, match="timed out"):
+        asyncio.run(
+            ai_engine.call_ai_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}], timeout=0.01,
+            ),
+        )
+
+
+def test_call_ai_async_uses_default_timeout(monkeypatch):
+    monkeypatch.setattr(ai_engine, "DEFAULT_AI_TIMEOUT", 0.01)
+
+    def slow_sync(*a, **k):
+        time.sleep(0.05)
+        return "late"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", slow_sync)
+    with pytest.raises(ai_engine.AITimeoutError, match="0.01s"):
+        asyncio.run(
+            ai_engine.call_ai_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}],
+            ),
+        )
+
+
+def test_call_ai_async_rejects_non_positive_timeout():
+    with pytest.raises(ValueError, match="positive"):
+        asyncio.run(
+            ai_engine.call_ai_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}], timeout=0,
+            ),
+        )
+
+
+def test_call_ai_async_propagates_sync_exception(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("sync exploded")
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", boom)
+    with pytest.raises(RuntimeError, match="sync exploded"):
+        asyncio.run(
+            ai_engine.call_ai_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}],
+            ),
+        )
+
+
+def test_call_ai_async_keeps_event_loop_responsive(monkeypatch, heartbeat):
+    def slow_sync(*a, **k):
+        time.sleep(0.05)
+        return "sync result"
+
+    monkeypatch.setattr(ai_engine, "_sync_ai_call", slow_sync)
+
+    async def scenario():
+        async with heartbeat(interval=0.005) as hb:
+            result = await ai_engine.call_ai_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}],
+            )
+        return result, hb.ticks
+
+    result, ticks = asyncio.run(scenario())
+    assert result == "sync result"
+    assert ticks >= 1
+
+
+# ---------- stream_ai_events_async ----------
+
+
+def _collect_stream_events(engine, model, messages, **kwargs):
+    events = []
+
+    async def collect():
+        async for event in ai_engine.stream_ai_events_async(
+            engine, model, messages, **kwargs,
+        ):
+            events.append(event)
+
+    asyncio.run(collect())
+    return events
+
+
+def test_stream_events_success_qwen(monkeypatch):
+    stream = FakeStream(
+        [
+            FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("Привет "))]),
+            FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("мир"))]),
+            FakeStreamChunk([]),
+        ],
+    )
+    fake = FakeOpenAI(stream)
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert [(e.ok, e.text) for e in events] == [
+        (True, "Привет "),
+        (True, "мир"),
+    ]
+    assert all(e.error_code is None for e in events)
+
+
+def test_stream_events_error_before_first_token(monkeypatch):
+    monkeypatch.setattr(ai_engine, "OpenAI", None)
+
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.ok is False
+    assert event.error_code == "stream_error"
+    assert event.text == ""
+    assert "Библиотека openai" in (event.error_message or "")
+
+
+def test_stream_events_error_midstream_preserves_partial_text(monkeypatch):
+    class PartialBoomStream(FakeStream):
+        def __iter__(self):
+            yield FakeStreamChunk(
+                [FakeStreamChoice(delta=FakeDelta("частичный "))],
+            )
+            raise RuntimeError("stream broke")
+
+    fake = FakeOpenAI(PartialBoomStream([]))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert len(events) == 2
+    assert events[0].ok is True
+    assert events[0].text == "частичный "
+    assert events[1].ok is False
+    assert events[1].error_code == "stream_error"
+    assert events[1].text == ""
+    assert "stream broke" in (events[1].error_message or "")
+
+
+def test_stream_events_empty_stream(monkeypatch):
+    fake = FakeOpenAI(FakeStream([]))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: fake)
+
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert len(events) == 1
+    assert events[0].ok is False
+    assert events[0].error_code == "empty_stream"
+    assert events[0].text == ""
+
+
+def test_stream_events_ollama_unavailable_code(monkeypatch):
+    def boom(model="qwen2.5:7b"):
+        raise RuntimeError("Ollama server did not start in time")
+
+    monkeypatch.setattr("services.ollama_process.ensure_ollama_running", boom)
+
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert len(events) == 1
+    assert events[0].ok is False
+    assert events[0].error_code == "ollama_unavailable"
+    assert "Не удалось подключиться к Ollama" in (
+        events[0].error_message or ""
+    )
+
+
+# ---------- stream_ai_response_async (deprecated adapter) ----------
 
 
 def _collect_stream_kwargs(monkeypatch, engine, model, messages, **kwargs):
@@ -694,6 +1325,24 @@ def _collect_stream_kwargs(monkeypatch, engine, model, messages, **kwargs):
 
     asyncio.run(collect())
     return chunks
+
+
+def test_stream_legacy_adapter_skips_empty_ok_event(monkeypatch):
+    async def fake_events(*args, **kwargs):
+        yield ai_engine.AIStreamEvent(ok=True, text="")
+        yield ai_engine.AIStreamEvent(ok=True, text="ok")
+
+    monkeypatch.setattr(ai_engine, "stream_ai_events_async", fake_events)
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in ai_engine.stream_ai_response_async(
+                "qwen", "m", [{"role": "user", "content": "hi"}],
+            )
+        ]
+
+    assert asyncio.run(collect()) == ["ok"]
 
 
 def test_stream_qwen_yields_cleaned_chunks(monkeypatch):
@@ -1025,3 +1674,166 @@ def test_stream_gemini_yields_multiple_chunks(monkeypatch):
         monkeypatch, "gemini", "gemini-pro", [{"role": "user", "content": "hi"}],
     )
     assert out == ["раз", "два"]
+
+
+# ---------- sync/stream parity ----------
+
+
+def test_sync_and_stream_use_same_chunk_pipeline(monkeypatch):
+    calls = []
+
+    def fake_pipeline(engine, model, messages, system_prompt, images, *,
+                      sampling=None, stream):
+        calls.append({
+            "engine": engine,
+            "sampling": sampling,
+            "stream": stream,
+            "images": images,
+        })
+        yield "ok"
+
+    monkeypatch.setattr(ai_engine, "_iter_ai_chunks", fake_pipeline)
+
+    assert ai_engine._sync_ai_call(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    ) == "ok"
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert [e.text for e in events] == ["ok"]
+    assert calls == [
+        {"engine": "qwen", "sampling": None, "stream": False, "images": []},
+        {"engine": "qwen", "sampling": None, "stream": True, "images": []},
+    ]
+
+
+def test_sync_stream_parity_qwen(monkeypatch):
+    sync_fake = FakeOpenAI(FakeSyncResponse("Привет мир"))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: sync_fake)
+    sync_text = ai_engine._sync_ai_call(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    stream_fake = FakeOpenAI(FakeStream([
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("Привет "))]),
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("мир"))]),
+    ]))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: stream_fake)
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert sync_text == "".join(e.text for e in events) == "Привет мир"
+
+
+def test_sync_stream_parity_openai(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    sync_fake = FakeOpenAI(FakeSyncResponse("ответ"))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: sync_fake)
+    sync_text = ai_engine._sync_ai_call(
+        "openai", "gpt-4o", [{"role": "user", "content": "hi"}],
+    )
+
+    stream_fake = FakeOpenAI(FakeStream([
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("от"))]),
+        FakeStreamChunk([FakeStreamChoice(delta=FakeDelta("вет"))]),
+    ]))
+    monkeypatch.setattr(ai_engine, "OpenAI", lambda **kwargs: stream_fake)
+    events = _collect_stream_events(
+        "openai", "gpt-4o", [{"role": "user", "content": "hi"}],
+    )
+
+    assert sync_text == "".join(e.text for e in events) == "ответ"
+
+
+def test_sync_stream_parity_gemini(monkeypatch):
+    class FakeGenAI:
+        class Client:
+            def __init__(self, api_key=None):
+                self.api_key = api_key
+
+            class _Models:
+                def __init__(self, owner):
+                    self.owner = owner
+
+                def generate_content(self, model, contents, config=None):
+                    return _FakeResponse("gemini answer")
+
+                def generate_content_stream(self, model, contents, config=None):
+                    return iter([
+                        _FakeChunkText("gemini "),
+                        _FakeChunkText("answer"),
+                    ])
+
+            @property
+            def models(self):
+                return self._Models(self)
+
+    monkeypatch.setenv("GEMINI_API_KEY", "rk-test")
+    monkeypatch.setattr(ai_engine, "genai", FakeGenAI)
+    monkeypatch.setattr(ai_engine, "genai_types", FakeGenAITypes)
+
+    sync_text = ai_engine._sync_ai_call(
+        "gemini", "gemini-pro", [{"role": "user", "content": "hi"}],
+    )
+    events = _collect_stream_events(
+        "gemini", "gemini-pro", [{"role": "user", "content": "hi"}],
+    )
+
+    assert sync_text == "".join(e.text for e in events) == "gemini answer"
+
+
+def test_sync_stream_parity_error_before_first_token(monkeypatch):
+    monkeypatch.setattr(ai_engine, "OpenAI", None)
+
+    sync_text = ai_engine._sync_ai_call(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+    events = _collect_stream_events(
+        "qwen", "m", [{"role": "user", "content": "hi"}],
+    )
+
+    assert "Библиотека openai" in sync_text
+    assert len(events) == 1
+    assert events[0].ok is False
+    assert "Библиотека openai" in (events[0].error_message or "")
+
+
+def test_openai_client_unknown_engine_raises():
+    with pytest.raises(ValueError, match="Неизвестный движок"):
+        ai_engine._openai_client("tpu", "m")
+
+
+def test_sync_call_uses_explicit_system_message(monkeypatch):
+    """Когда messages содержат system-сообщение, _build_system_prompt не вызывается."""
+    build_called = False
+
+    def mock_build_system_prompt(context, query, has_images):
+        nonlocal build_called
+        build_called = True
+        return "FALLBACK GENERAL PROMPT"
+
+    monkeypatch.setattr(ai_engine, "_build_system_prompt", mock_build_system_prompt)
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.chat = self
+            self.completions = self
+
+        def create(self, **kwargs):
+            msgs = kwargs.get("messages", [])
+            assert msgs[0]["role"] == "system"
+            assert msgs[0]["content"] == "CUSTOM TASK PROMPT"
+            return FakeSyncResponse("ok")
+
+    monkeypatch.setattr(ai_engine, "OpenAI", FakeClient)
+
+    messages = [
+        {"role": "system", "content": "CUSTOM TASK PROMPT"},
+        {"role": "user", "content": "User input"},
+    ]
+    res = ai_engine._sync_ai_call("qwen", "qwen2.5:7b", messages)
+    assert res == "ok"
+    assert build_called is False

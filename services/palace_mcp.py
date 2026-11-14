@@ -10,6 +10,11 @@ logger = logging.getLogger("PalaceMCP")
 
 
 class PalaceMCPClient:
+    _HANDSHAKE_TIMEOUT = 30.0
+    _READY_TIMEOUT = 10.0
+    _STOP_TIMEOUT = 5.0
+    _BUFFER_LIMIT = 32 * 1024 * 1024  # 32 MiB buffer for large JSON-RPC lines
+
     def __init__(self):
         self._proc = None
         self._seq = 0
@@ -17,10 +22,13 @@ class PalaceMCPClient:
         self._ready = asyncio.Event()
         self._pending = {}
         self._reader_task = None
+        self._stderr_task = None
 
     async def start(self):
-        if self._proc:
-            return
+        if self._proc is not None:
+            if getattr(self._proc, "returncode", None) is None:
+                return
+            await self.stop()
         venv_dir = os.path.join(DATA_DIR, "venv")
         env = os.environ.copy()
         env["VIRTUAL_ENV"] = venv_dir
@@ -34,23 +42,43 @@ class PalaceMCPClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=self._BUFFER_LIMIT,
             env=env,
         )
 
-        self._reader_task = asyncio.create_task(self._reader())
+        # stderr нельзя оставлять непрочитанным: при переполнении pipe
+        # сервер блокируется на записи и handshake зависает.
+        if getattr(self._proc, "stdout", None) is not None:
+            self._reader_task = asyncio.create_task(self._reader())
+        if getattr(self._proc, "stderr", None) is not None:
+            self._stderr_task = asyncio.create_task(self._read_stderr())
 
-        init_resp = await self._rpc(
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "mempalace-bot", "version": "1.0"},
-            },
-        )
-        if "result" not in init_resp:
-            raise RuntimeError(f"MCP handshake failed: {init_resp}")
+        try:
+            init_resp = await self._rpc(
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "mempalace-bot", "version": "1.0"},
+                },
+                timeout=self._HANDSHAKE_TIMEOUT,
+            )
+            if "result" not in init_resp:
+                raise RuntimeError(f"MCP handshake failed: {init_resp}")
 
-        await self._notify("notifications/initialized")
+            await asyncio.wait_for(
+                self._notify("notifications/initialized"),
+                timeout=self._HANDSHAKE_TIMEOUT,
+            )
+        except asyncio.TimeoutError as exc:
+            await self.stop()
+            raise RuntimeError(
+                f"MCP handshake timed out after {self._HANDSHAKE_TIMEOUT:g}s",
+            ) from exc
+        except BaseException:
+            await self.stop()
+            raise
+
         self._ready.set()
         logger.info("MCP client ready")
 
@@ -77,14 +105,42 @@ class PalaceMCPClient:
                         self._pending[req_id].set_result(resp)
                 except json.JSONDecodeError:
                     logger.warning(f"Invalid MCP JSON: {line[:200]}")
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"MCP reader error: {e}")
         finally:
             self._ready.clear()
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(RuntimeError("MCP connection lost"))
-            self._pending.clear()
+            self._fail_pending("MCP connection lost")
+
+    async def _read_stderr(self):
+        """Постоянно вычитывает stderr, чтобы не переполнить pipe."""
+        proc = self._proc
+        stderr = getattr(proc, "stderr", None)
+        if stderr is None:
+            return
+        try:
+            while True:
+                line = await stderr.readline()
+                if not line:
+                    break
+                if isinstance(line, bytes):
+                    text = line.decode("utf-8", errors="replace")
+                else:
+                    text = str(line)
+                text = text.rstrip()
+                if text:
+                    logger.warning("MCP stderr: %s", text[:500])
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"MCP stderr reader error: {e}")
+
+    def _fail_pending(self, message: str):
+        for fut in list(self._pending.values()):
+            if not fut.done():
+                fut.set_exception(RuntimeError(message))
+        self._pending.clear()
 
     async def _rpc(
         self, method: str, params: dict | None = None, timeout: float = 30.0,
@@ -105,13 +161,22 @@ class PalaceMCPClient:
                 self._pending.pop(seq, None)
 
     async def _ensure_alive(self):
-        if self._proc is None or self._proc.returncode is not None:
+        if self._proc is None or getattr(self._proc, "returncode", None) is not None:
             logger.warning("MCP process dead, restarting...")
             await self.stop()
             await self.start()
             return
         if not self._ready.is_set():
-            await self._ready.wait()
+            try:
+                await asyncio.wait_for(
+                    self._ready.wait(), timeout=self._READY_TIMEOUT,
+                )
+            except asyncio.TimeoutError as exc:
+                await self.stop()
+                raise RuntimeError(
+                    "MCP server did not become ready within "
+                    f"{self._READY_TIMEOUT:g}s",
+                ) from exc
 
     async def call_tool(self, name: str, arguments: dict | None = None) -> str:
         await self._ensure_alive()
@@ -124,18 +189,61 @@ class PalaceMCPClient:
         texts = [c["text"] for c in content if c.get("type") == "text"]
         return "\n".join(texts)
 
+    async def _terminate(self, proc):
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            return
+        except Exception as e:
+            logger.warning(f"Не удалось завершить MCP-процесс: {e}")
+
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=self._STOP_TIMEOUT)
+            return
+        except asyncio.TimeoutError:
+            logger.warning(
+                "MCP-процесс не завершился за %.1fs, отправляю kill",
+                self._STOP_TIMEOUT,
+            )
+        except Exception as e:
+            logger.warning(f"Ошибка ожидания MCP-процесса: {e}")
+            return
+
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            return
+        except AttributeError:
+            return
+        except Exception as e:
+            logger.warning(f"Не удалось убить MCP-процесс: {e}")
+            return
+
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=self._STOP_TIMEOUT)
+        except Exception as e:
+            logger.warning(f"MCP-процесс не подтвердил завершение: {e}")
+
     async def stop(self):
-        if self._proc:
-            try:
-                self._proc.terminate()
-                await self._proc.wait()
-            except Exception:
-                pass
-            self._proc = None
-        if self._reader_task:
-            self._reader_task.cancel()
-            self._reader_task = None
+        proc = self._proc
+        self._proc = None
         self._ready.clear()
+
+        if proc is not None:
+            await self._terminate(proc)
+
+        tasks = [
+            task for task in (self._reader_task, self._stderr_task)
+            if task is not None
+        ]
+        self._reader_task = None
+        self._stderr_task = None
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        self._fail_pending("MCP connection lost")
         logger.info("MCP client stopped")
 
 

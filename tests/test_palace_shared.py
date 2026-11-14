@@ -1,6 +1,5 @@
 """Unit tests for handlers.palace.shared."""
 
-from types import SimpleNamespace
 
 import pytest
 

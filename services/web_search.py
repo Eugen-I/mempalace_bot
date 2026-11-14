@@ -1,10 +1,6 @@
-import html
-import json
-import logging
-import time
-import uuid
-from pathlib import Path
 import asyncio
+import html
+import logging
 
 import httpx
 
@@ -12,8 +8,8 @@ from config import (
     BING_SEARCH_API_KEY,
     GOOGLE_CSE_API_KEY,
     GOOGLE_CSE_ID,
-    DATA_DIR,
 )
+from services.web_search_cache import save_web_search
 
 logger = logging.getLogger("WebSearch")
 
@@ -26,48 +22,51 @@ BING_SEARCH_URL = "https://api.bing.microsoft.com/v7.0/search"
 YAHOO_SEARCH_URL = "https://search.yahoo.com/search"
 
 
-# --- Кэш результатов поиска ---
-WEB_SEARCH_CACHE_DIR = Path(DATA_DIR) / "web_search_cache"
-WEB_SEARCH_CACHE_DIR.mkdir(exist_ok=True)
-CACHE_TTL = 24 * 60 * 60
-
-
-def save_web_search(query: str, sources: list[dict], ai_summary: str = "") -> str:
-    search_id = uuid.uuid4().hex[:12]
-    cache_file = WEB_SEARCH_CACHE_DIR / f"{search_id}.json"
-    data = {
-        "id": search_id,
-        "query": query,
-        "sources": [{"text": s["text"], "url": s["url"]} for s in sources],
-        "ai_summary": ai_summary,
-        "timestamp": time.time(),
-    }
-    cache_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return search_id
-
-
-def load_web_search(search_id: str) -> dict | None:
-    cache_file = WEB_SEARCH_CACHE_DIR / f"{search_id}.json"
-    if not cache_file.exists():
-        return None
-    try:
-        return json.loads(cache_file.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def cleanup_old_cache():
-    now = time.time()
-    for f in WEB_SEARCH_CACHE_DIR.glob("*.json"):
-        try:
-            if now - f.stat().st_mtime > CACHE_TTL:
-                f.unlink()
-        except Exception:
-            pass
-
-
 # --- Парсинг HTML ---
 _SNIPPET_SELECTORS = ".table-snippet, .result__snippet, .compText"
+
+
+def _extract_href(node) -> str:
+    """Извлекает и очищает URL ссылки из узла или его контекста."""
+    import urllib.parse
+
+    raw = ""
+    if getattr(node, "tag", None) == "a":
+        raw = node.attributes.get("href") or ""
+    if not raw:
+        child_a = node.css_first("a")
+        if child_a:
+            raw = child_a.attributes.get("href") or ""
+    if not raw and getattr(node, "parent", None):
+        if node.parent.tag == "a":
+            raw = node.parent.attributes.get("href") or ""
+        else:
+            parent_a = node.parent.css_first("a")
+            if parent_a:
+                raw = parent_a.attributes.get("href") or ""
+            elif getattr(node.parent, "parent", None):
+                gp_a = node.parent.parent.css_first("a.result__url, a.result-link, a")
+                if gp_a:
+                    raw = gp_a.attributes.get("href") or ""
+
+    if not raw:
+        return ""
+
+    if "uddg=" in raw:
+        try:
+            parsed = urllib.parse.urlparse(raw)
+            qs = urllib.parse.parse_qs(parsed.query)
+            uddg = qs.get("uddg")
+            if uddg and uddg[0]:
+                return uddg[0]
+        except Exception as exc:
+            logger.debug("[WebSearch] Failed to parse uddg redirect: %s", exc)
+
+    if raw.startswith("//"):
+        return "https:" + raw
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return raw
+    return ""
 
 
 def _collect_snippets(html_text: str, selectors: str, min_len: int,
@@ -80,7 +79,8 @@ def _collect_snippets(html_text: str, selectors: str, min_len: int,
     for node in tree.css(selectors):
         text = node.text(strip=True)
         if len(text) > min_len:
-            results.append({"text": text, "url": ""})
+            url = _extract_href(node)
+            results.append({"text": text, "url": url})
             if len(results) >= max_results:
                 break
     return results
@@ -124,7 +124,7 @@ async def _bing_search(client: httpx.AsyncClient, query: str, max_results: int) 
     try:
         headers = {"Ocp-Apim-Subscription-Key": BING_SEARCH_API_KEY}
         resp = await client.get(
-            "https://api.bing.microsoft.com/v7.0/search",
+            BING_SEARCH_URL,
             params={"q": query, "count": max_results, "mkt": "ru-RU", "safeSearch": "Off"},
             headers=headers,
             timeout=15.0,
@@ -159,13 +159,13 @@ async def _yahoo_search(client: httpx.AsyncClient, query: str, max_results: int)
 async def _ddg_search(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict]:
     try:
         resp = await client.get(
-            "https://api.duckduckgo.com/",
+            DDG_API_URL,
             params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
         )
         if resp.status_code == 202:
             await asyncio.sleep(0.5)
             resp = await client.get(
-                "https://api.duckduckgo.com/",
+                DDG_API_URL,
                 params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
                 timeout=15.0,
             )
@@ -217,7 +217,7 @@ async def search_web(query: str, max_results: int = 5) -> str:
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
-                "https://api.duckduckgo.com/",
+                DDG_API_URL,
                 params={
                     "q": query,
                     "format": "json",
@@ -229,7 +229,7 @@ async def search_web(query: str, max_results: int = 5) -> str:
             if resp.status_code == 202:
                 await asyncio.sleep(0.5)
                 resp = await client.get(
-                    "https://api.duckduckgo.com/",
+                    DDG_API_URL,
                     params={
                         "q": query,
                         "format": "json",
@@ -246,9 +246,18 @@ async def search_web(query: str, max_results: int = 5) -> str:
         abstract = data.get("AbstractText", "")
         if abstract:
             source = data.get("AbstractSource", "")
+            abstract_url = data.get("AbstractURL", "")
             line = f"📖 {html.escape(abstract)}"
             if source:
-                line += f"\n   Источник: {source}"
+                if abstract_url:
+                    line += (
+                        f'\n   Источник: <a href="{html.escape(abstract_url)}">'
+                        f'{html.escape(source)}</a>'
+                    )
+                else:
+                    line += f"\n   Источник: {html.escape(source)}"
+            elif abstract_url:
+                line += f'\n   <a href="{html.escape(abstract_url)}">Источник</a>'
             parts.append(line)
             parts.append("")
 
@@ -278,20 +287,22 @@ async def search_web(query: str, max_results: int = 5) -> str:
                 text = r.get("Text", "") or r.get("Result", "")
                 url = r.get("FirstURL", "")
                 if text:
-                    parts.append(f"{i}. {text}")
+                    text_esc = html.escape(text)
                     if url:
-                        parts.append(f"   {url}")
+                        parts.append(f'{i}. <a href="{html.escape(url)}">{text_esc}</a>')
+                    else:
+                        parts.append(f"{i}. {text_esc}")
             parts.append("")
 
-        result = "<br>".join(parts).strip()
+        result = "\n".join(parts).strip()
         if result:
-            return f"🌐 <b>Результаты поиска</b><br><br>{result}"
+            return f"🌐 <b>Результаты поиска</b>\n\n{result}"
 
         # 2. Fallback: Lite
         logger.info(f"[WebSearch] Instant Answer пустой, пробуем Lite для: {query}")
         async with httpx.AsyncClient(timeout=15.0) as client:
             html_resp = await client.post(
-                "https://lite.duckduckgo.com/lite/",
+                DDG_LITE_URL,
                 data={"q": query},
                 headers={"User-Agent": "Mozilla/5.0"},
             )
@@ -301,14 +312,19 @@ async def search_web(query: str, max_results: int = 5) -> str:
         if html_results:
             parts = [f"🔍 Результаты по «{html.escape(query)}» (Lite):"]
             for i, r in enumerate(html_results, 1):
-                parts.append(f"{i}. {r['text']}")
-            return "🌐 <b>Результаты поиска</b><br><br>" + "<br>".join(parts)
+                text_esc = html.escape(r["text"])
+                url = r.get("url", "")
+                if url:
+                    parts.append(f'{i}. <a href="{html.escape(url)}">{text_esc}</a>')
+                else:
+                    parts.append(f"{i}. {text_esc}")
+            return "🌐 <b>Результаты поиска</b>\n\n" + "\n".join(parts)
 
         # 3. Последний fallback: полный HTML
         logger.info(f"[WebSearch] Lite пустой, пробуем полный HTML для: {query}")
         async with httpx.AsyncClient(timeout=15.0) as client:
             html_resp = await client.post(
-                "https://html.duckduckgo.com/html/",
+                DDG_HTML_URL,
                 data={"q": query},
                 headers={"User-Agent": "Mozilla/5.0"},
             )
@@ -318,8 +334,13 @@ async def search_web(query: str, max_results: int = 5) -> str:
         if html_results:
             parts = [f"🔍 Результаты по «{html.escape(query)}» (HTML):"]
             for i, r in enumerate(html_results, 1):
-                parts.append(f"{i}. {r['text']}")
-            return "🌐 <b>Результаты поиска</b><br><br>" + "<br>".join(parts)
+                text_esc = html.escape(r["text"])
+                url = r.get("url", "")
+                if url:
+                    parts.append(f'{i}. <a href="{html.escape(url)}">{text_esc}</a>')
+                else:
+                    parts.append(f"{i}. {text_esc}")
+            return "🌐 <b>Результаты поиска</b>\n\n" + "\n".join(parts)
 
         return f"🤷 Ничего не найдено по запросу «{html.escape(query)}»."
 

@@ -1,8 +1,6 @@
-import tempfile
 from pathlib import Path
 
 from services.note_import_filter import (
-    ImportDecision,
     _contains_meaningful_content,
     _normalize_text,
     _word_count,
@@ -193,8 +191,6 @@ class TestNoteImportFilter:
     def test_filter_folder_unreadable_file(self, tmp_path, monkeypatch):
         note = tmp_path / "bad.md"
         note.write_text("content", encoding="utf-8")
-
-        real_read = Path.read_text
 
         def selective(self, *args, **kwargs):
             # utf-8 → UnicodeDecodeError; latin-1 → также OSError (падает в except Exception)

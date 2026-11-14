@@ -1,8 +1,7 @@
 """Шаги BDD для features/personal_notes_menu.feature."""
-import config
-
 from behave import given, then, when
 
+import config
 from services import menu
 
 config.ALLOWED_IDS = {424242}

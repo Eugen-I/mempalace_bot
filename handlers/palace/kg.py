@@ -1,4 +1,5 @@
 """handlers/palace/kg.py — Knowledge Graph handlers"""
+import asyncio
 import json
 
 from aiogram import F, types
@@ -9,15 +10,18 @@ from services import interpreter
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
+from .hints import _get_full_text_from_chroma
 from .shared import (
-    router,
-    _pending_mcp_input, _kg_page_data, _kg_search_data, _kg_add_state,
-    KG_PAGE_SIZE, KG_PREDICATES,
+    KG_PAGE_SIZE,
+    KG_PREDICATES,
+    _kg_add_state,
+    _kg_page_data,
+    _kg_search_data,
+    _pending_mcp_input,
     _read_state,
     _send_kg_page,
+    router,
 )
-from .hints import _get_full_text_from_chroma
-
 
 # ─── KNOWLEDGE GRAPH ───
 
@@ -60,6 +64,31 @@ async def cb_kg_help(cb: types.CallbackQuery):
     await cb.message.edit_text(help_text, parse_mode="HTML", reply_markup=kb.as_markup())
 
 
+_KG_STAT_LABELS = {
+    "entities": "👤 Сущностей в графе",
+    "triples": "🔗 Всего фактов (триплетов)",
+    "current_facts": "✅ Активных связей",
+    "expired_facts": "⏳ Устаревших (исторических)",
+    "relationship_types": "🏷️ Типы связей",
+    "facts": "📋 Факты",
+    "predicates": "🏷️ Предикаты",
+}
+
+_RELATIONSHIP_TRANSLATIONS = {
+    "author": "автор",
+    "wrote": "автор произведения",
+    "contains_idea": "содержит идею",
+    "contains_quote": "содержит цитату",
+    "related_to": "ассоциация / связь",
+    "topic": "тематика",
+    "part_of": "составная часть",
+    "created": "создал",
+    "influences": "влияет на",
+    "influenced_by": "испытал влияние",
+    "references": "ссылается на",
+}
+
+
 @router.callback_query(F.data == "p_kgst")
 @allowed_callback
 async def cb_kg_stats(cb: types.CallbackQuery):
@@ -72,12 +101,23 @@ async def cb_kg_stats(cb: types.CallbackQuery):
         lines = ["<b>📊 Статистика графа знаний</b>\n"]
         if isinstance(parsed, dict):
             for k, v in parsed.items():
-                if isinstance(v, dict):
-                    lines.append(f"\n<b>{k}:</b>")
+                label = _KG_STAT_LABELS.get(k, k)
+                if k == "relationship_types" and isinstance(v, list):
+                    lines.append(f"\n<b>{label} ({len(v)}):</b>")
+                    for r in v:
+                        trans = _RELATIONSHIP_TRANSLATIONS.get(str(r), "")
+                        trans_str = f" — <i>{trans}</i>" if trans else ""
+                        lines.append(
+                            f"  • <code>{safe_html_format(str(r))}</code>{trans_str}"
+                        )
+                elif isinstance(v, dict):
+                    lines.append(f"\n<b>{label}:</b>")
                     for sk, sv in v.items():
                         lines.append(f"  • {interpreter.display_name(str(sk))}: {sv}")
+                elif isinstance(v, int):
+                    lines.append(f"<b>{label}:</b> <code>{v:,}</code>")
                 else:
-                    lines.append(f"\n<b>{k}:</b> {v}")
+                    lines.append(f"<b>{label}:</b> {safe_html_format(str(v))}")
         else:
             lines.append(str(parsed))
         from .action_bar import finalize_answer
@@ -142,7 +182,7 @@ async def cb_kg_add_predicate_menu(cb: types.CallbackQuery):
     ))
     await cb.message.edit_text(
         f"🧠 Шаг 2/3: выберите <b>тип связи</b>\n\n"
-        f"Субъект: <b>{state.get('subject', '?')}</b>",
+        f"Субъект: <b>{safe_html_format(state.get('subject', '?'))}</b>",
         parse_mode="HTML", reply_markup=kb.as_markup(),
     )
 
@@ -292,16 +332,39 @@ async def cb_kg_back_to_search(cb: types.CallbackQuery):
     await _send_kg_search_page(uid, cb.message.edit_text)
 
 
+def _build_kgrs_callback(entity: str, uid: int | None = None) -> str:
+    """Формирует callback_data для поиска сущности KG с защитой от лимита 64 байта."""
+    raw = f"p_kgrs:{entity}"
+    if len(raw.encode("utf-8")) <= 64:
+        return raw
+    if uid is not None:
+        state = _kg_page_data.get(uid)
+        if isinstance(state, dict):
+            state["entity"] = entity
+        else:
+            _kg_page_data[uid] = {"entity": entity, "facts": [], "page": 0}
+    encoded = entity.encode("utf-8")[:57]
+    return f"p_kgrs:{encoded.decode('utf-8', errors='ignore')}"
+
+
 @router.callback_query(F.data.startswith("p_kgrs:"))
 @allowed_callback
 async def cb_kg_read_search(cb: types.CallbackQuery):
     await cb.answer()
     uid = cb.from_user.id
-    entity = cb.data[len("p_kgrs:"):]
-    await _kg_search_and_show(uid, cb.message.edit_text, entity, cb.message)
+    entity = (cb.data or "")[len("p_kgrs:"):]
+    page_data = _kg_page_data.get(uid)
+    full_entity = page_data.get("entity", "") if isinstance(page_data, dict) else ""
+    if (
+        full_entity
+        and len(f"p_kgrs:{full_entity}".encode("utf-8")) > 64
+        and full_entity.startswith(entity)
+    ):
+        entity = full_entity
+    await _kg_search_and_show(uid, cb.message.edit_text, entity)
 
 
-async def _kg_search_and_show(uid: int, edit_func, entity: str, original_msg):
+async def _kg_search_and_show(uid: int, edit_func, entity: str):
     mcp = get_mcp()
     try:
         search_raw = await mcp.call_tool("mempalace_search", {"query": entity, "limit": 10})
@@ -347,7 +410,7 @@ async def _kg_read_sources(uid: int, edit_func) -> bool:
         kb = InlineKeyboardBuilder()
         kb.row(types.InlineKeyboardButton(
             text="🔍 Поискать в заметках",
-            callback_data=f"p_kgrs:{data.get('entity', '')}",
+            callback_data=_build_kgrs_callback(data.get("entity", ""), uid),
         ))
         await edit_func(
             "📄 Факты об этой сущности не привязаны к файлам в Дворце.\n\n"
@@ -357,7 +420,7 @@ async def _kg_read_sources(uid: int, edit_func) -> bool:
         return False
     results = []
     for src in sources:
-        full_text = _get_full_text_from_chroma(src)
+        full_text = await asyncio.to_thread(_get_full_text_from_chroma, src)
         if not full_text:
             continue
         parts = src.split("/")
@@ -469,7 +532,7 @@ async def cb_kg_read_result(cb: types.CallbackQuery):
     pure_text = content
     _read_state[uid] = {"room": room, "wing": wing, "drawer": source, "source": ""}
     if source:
-        full_text = _get_full_text_from_chroma(source, wing, room)
+        full_text = await asyncio.to_thread(_get_full_text_from_chroma, source, wing, room)
         if full_text and len(full_text) > len(pure_text):
             pure_text = full_text
             _read_state[uid]["source"] = full_text

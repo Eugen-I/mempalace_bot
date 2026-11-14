@@ -1,5 +1,7 @@
 # Секреты и ключи
 .env
+.env.*
+!.env.example
 *.key
 
 # Кеш Python
@@ -19,6 +21,13 @@ venv/
 models.json
 models_V1.json
 mempalace/
+garmin_data/
+garmin/raw/
+garmin/import/
+garmin/reports/
+garmin/quarantine/
+garmin/tmp/
+garmin/charts/
 *.pdf
 *.app
 nohup.out
@@ -32,6 +41,12 @@ nohup.out
 coverage.xml
 bot.pid
 *.py,cover
+
+# Сгенерированные артефакты
+exports/
+mempalace_bot.egg-info/
+palace_graph_data.json
+palace-graph.html
 
 # Логи
 *.log
@@ -51,10 +66,20 @@ GitHub_update.command
 opencode.json
 mutants/
 
-# Локальное руководство для ИИ-разработки (не хранить в репозитории)
+# Локальные инструкции и файлы для ИИ-ассистентов (не хранить в публичном репозитории)
+.claude/
+.cursorrules
+CLAUDE.md
+AGENTS.md
+tests/AGENTS.md
+Agent_guide.md
+AGENT_PLAN.md
+NOTES_AGENT_PLAN.md
+NOTES_AGENT_SURREAL_STORM_TASK.md
+*PLAN*.md
+*PROGRESS*.md
+CHANGELOG_FIXES.md
 telegram-bot-ai-guide-compressed.md
-
-# Локальные ТЗ для ИИ-сессий (не хранить в репозитории)
 TZ_*.md
 
 # Backup-файлы

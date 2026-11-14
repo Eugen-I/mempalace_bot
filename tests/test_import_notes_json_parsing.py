@@ -5,7 +5,9 @@ import pytest
 
 
 def load_import_notes_module():
-    module_path = Path('/Users/evg.pit/Documents/mempalace/import_notes.py')
+    module_path = Path.home() / "Documents/mempalace/import_notes.py"
+    if not module_path.exists():
+        pytest.skip("local MemPalace import_notes.py is not available")
     spec = importlib.util.spec_from_file_location('import_notes', module_path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

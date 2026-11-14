@@ -9,6 +9,13 @@ import pytest
 from handlers.palace import action_bar as ab
 
 
+def _async_ai(fn):
+    async def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 class FakeUser:
     def __init__(self, uid):
         self.id = uid
@@ -264,6 +271,35 @@ def test_finalize_answer_is_html(monkeypatch):
     assert edits[0] == "<b>x</b>"
 
 
+def test_render_page_caps_at_4000(monkeypatch):
+    _enable(monkeypatch)
+    answer = _seed_answer(text="A" * 4500)
+    answer.pages = ["A" * 4500]
+    rendered = ab._render_page(answer, 0)
+    assert len(rendered) <= 4000
+    assert rendered.endswith("...")
+
+
+def test_finalize_answer_html_fallback(monkeypatch):
+    _enable(monkeypatch)
+    attempts = []
+
+    async def edit_func(text, parse_mode=None, reply_markup=None):
+        attempts.append((text, parse_mode))
+        if parse_mode == "HTML":
+            raise RuntimeError("TelegramBadRequest: Can't parse entities")
+
+    answer = asyncio.run(
+        ab.finalize_answer(4242, edit_func, "plain text", title="<b>Title</b>"),
+    )
+    assert answer is not None
+    assert len(attempts) == 2
+    assert attempts[0][1] == "HTML"
+    assert attempts[1][1] is None
+    assert "Title" in attempts[1][0]
+    assert "plain text" in attempts[1][0]
+
+
 def test_finalize_answer_error(monkeypatch):
     _enable(monkeypatch)
 
@@ -457,10 +493,10 @@ def test_cb_ab_ai_success(monkeypatch):
     _seed_answer(text="текст", ctx={"wing": "w", "room": "r"})
     cb = FakeCb(data="ab_ai:abcd")
     asyncio.run(ab.cb_ab_ai(cb))
-    text = cb.message.edits[-1][0]
-    assert text == "🤖 <b>Режим анализа:</b>"
-    assert _kb_data(cb.message.edits[-1][2]) == [
-        "ab_ai_m:a:abcd", "ab_ai_m:c:abcd", "ab_back:abcd",
+    text = cb.message.answers[-1][0]
+    assert "Режим анализа" in text
+    assert _kb_data(cb.message.answers[-1][2]) == [
+        "ab_ai_m:a:abcd", "ab_ai_m:c:abcd", "ab_ai_cancel:abcd",
     ]
 
 
@@ -554,7 +590,7 @@ def test_cb_ab_ai_run_mode_a(monkeypatch):
         return "результат анализа"
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("ollama", "qwen"))
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
 
     async def fake_finalize(uid, edit_func, text, **kwargs):
         captured["text"] = text
@@ -567,7 +603,7 @@ def test_cb_ab_ai_run_mode_a(monkeypatch):
     assert "результат анализа" in captured["text"]
     assert "текст ответа" in captured["prompt"]
     assert captured["ctx"]["_origin_sid"] == "abcd"
-    assert cb.message.answers[0][0] == "🧠 Анализирую..."
+    assert cb.message.edits[0][0] == "🧠 Анализирую..."
 
 
 def test_cb_ab_ai_run_mode_a_error(monkeypatch):
@@ -578,7 +614,7 @@ def test_cb_ab_ai_run_mode_a_error(monkeypatch):
         raise RuntimeError("ai fail")
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("ollama", "qwen"))
-    monkeypatch.setattr(ab, "_sync_ai_call", boom)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(boom))
     cb = FakeCb(data="ab_ai_m:a:abcd")
     asyncio.run(ab.cb_ab_ai_run(cb))
     # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
@@ -595,7 +631,7 @@ def test_cb_ab_ai_run_mode_c(monkeypatch):
         captured["prompt"] = messages[1]["content"]
         return "результат"
 
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
 
     async def fake_context(answer, uid):
         return "дворцовый контекст"
@@ -628,8 +664,9 @@ def test_cb_ab_web_success(monkeypatch):
     _enable(monkeypatch)
     answer = _seed_answer(text="текст")
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("ollama", "qwen"))
-    monkeypatch.setattr(ab, "_sync_ai_call",
-                        lambda *a, **k: '"поисковой запрос"')
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: '"поисковой запрос"'),
+    )
     cb = FakeCb(data="ab_web:abcd")
     asyncio.run(ab.cb_ab_web(cb))
     text = cb.message.edits[-1][0]
@@ -644,7 +681,9 @@ def test_cb_ab_web_empty_query_error(monkeypatch):
     _enable(monkeypatch)
     _seed_answer(text="текст")
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("ollama", "qwen"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "  «»  ")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "  «»  "),
+    )
     cb = FakeCb(data="ab_web:abcd")
     asyncio.run(ab.cb_ab_web(cb))
     # format_user_error для ValueError возвращает "❌ Некорректные данные"
@@ -659,7 +698,7 @@ def test_cb_ab_web_error(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("ai fail")
 
-    monkeypatch.setattr(ab, "_sync_ai_call", boom)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(boom))
     cb = FakeCb(data="ab_web:abcd")
     asyncio.run(ab.cb_ab_web(cb))
     # format_user_error для RuntimeError возвращает "❌ Ошибка выполнения"
@@ -717,7 +756,7 @@ def test_run_web_search_finalize_success(monkeypatch):
         captured["system"] = messages[0]["content"]
         return "итоговый ответ"
 
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
 
     async def fake_finalize(uid, edit_func, text, **kwargs):
         captured["text"] = text
@@ -743,7 +782,9 @@ def test_run_web_search_finalize_empty_results(monkeypatch):
 
     monkeypatch.setattr("services.web_search.search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("ollama", "qwen"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "ответ")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "ответ"),
+    )
     monkeypatch.setattr(
         ab, "finalize_answer",
         lambda uid, edit_func, text, **kwargs: captured.append(text),
@@ -975,8 +1016,7 @@ def test_cb_no_data_guard(monkeypatch, handler):
 
 class TestActionBarMUTANTTexts:
     def test_build_action_bar_agent_button_exact_text(self):
-        from handlers.palace.action_bar import build_action_bar
-        from handlers.palace.action_bar import Answer
+        from handlers.palace.action_bar import Answer, build_action_bar
 
         answer = Answer(
             sid="s1", text="text", pages=["text"], title="", ctx={},

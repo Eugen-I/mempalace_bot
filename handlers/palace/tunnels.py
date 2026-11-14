@@ -8,10 +8,13 @@ from config import allowed_callback
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
+from .navigation import format_room_label, format_wing_label
 from .shared import (
-    router,
-    _pending_mcp_input, _tunnel_state, _create_tunnel_state,
+    _create_tunnel_state,
+    _pending_mcp_input,
     _room_cache,
+    _tunnel_state,
+    router,
 )
 
 # ─── TUNNELS (non‑conflicting handlers only) ───
@@ -40,6 +43,7 @@ async def _show_cross_rooms(edit_func, uid: int, src_wing: str, src_room: str):
     if not rooms:
         await edit_func(f"❌ Для «{src_room}» нет связанных комнат.")
         return
+    _tunnel_state.setdefault(uid, {})["cross_rooms"] = {r: w for w, r in rooms}
     kb = InlineKeyboardBuilder()
     for w, r in rooms:
         kb.row(types.InlineKeyboardButton(
@@ -52,20 +56,39 @@ async def _show_cross_rooms(edit_func, uid: int, src_wing: str, src_room: str):
     )
 
 
-@router.callback_query(F.data.startswith("p_tfa_"))
+@router.callback_query(F.data.startswith("p_crr:"))
+@allowed_callback
+async def cb_cross_room_select(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    room = (cb.data or "")[6:]
+    state = _tunnel_state.get(uid) or {}
+    cross_rooms = state.get("cross_rooms") or {}
+    wing = cross_rooms.get(room) or state.get("wing_a") or "my_notes"
+    from .navigation import _show_drawers_page
+    await _show_drawers_page(cb.message.edit_text, uid, wing, room, 0)
+
+
+@router.callback_query(F.data.startswith("p_tfa_") & ~F.data.startswith("p_tfa_:"))
 @allowed_callback
 async def cb_find_tunnels_wing_b(cb: types.CallbackQuery):
     await cb.answer()
     wing_a = cb.data[6:]
     _pending_mcp_input[cb.from_user.id] = "find_tunnels"
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(text="🔍 Между крыльями", callback_data="p_tb"),
+        types.InlineKeyboardButton(text="◀️ В меню туннелей", callback_data="p_tun"),
+    )
     await cb.message.edit_text(
         f"🔍 Выбрано крыло A: <b>{wing_a}</b>\n"
         f"Введите название крыла B (или '-' для любого):",
         parse_mode="HTML",
+        reply_markup=kb.as_markup(),
     )
 
 
-@router.callback_query(F.data.startswith("p_tfb_"))
+@router.callback_query(F.data.startswith("p_tfb_") & ~F.data.startswith("p_tfb_:"))
 @allowed_callback
 async def cb_find_tunnels_result(cb: types.CallbackQuery):
     await cb.answer()
@@ -82,7 +105,18 @@ async def cb_find_tunnels_result(cb: types.CallbackQuery):
         raw = await mcp.call_tool("mempalace_find_tunnels", args)
         tunnels = json.loads(raw) if raw else []
         if not tunnels:
-            await cb.message.edit_text("🔗 Туннелей не найдено.")
+            kb = InlineKeyboardBuilder()
+            kb.row(
+                types.InlineKeyboardButton(
+                    text="🔍 Между крыльями", callback_data="p_tb",
+                ),
+                types.InlineKeyboardButton(
+                    text="◀️ В меню туннелей", callback_data="p_tun",
+                ),
+            )
+            await cb.message.edit_text(
+                "🔗 Туннелей не найдено.", reply_markup=kb.as_markup(),
+            )
             return
         lines = [f"<b>🔗 Туннели между {wing_a} и {wing_b}</b>\n"]
         for t in tunnels:
@@ -90,13 +124,35 @@ async def cb_find_tunnels_result(cb: types.CallbackQuery):
                 f"  • <b>{safe_html_format(t.get('room', '?'))}</b> — "
                 f"{', '.join(t.get('wings', []))} ({t.get('count', 0)})",
             )
+        extra_rows = [
+            [
+                types.InlineKeyboardButton(
+                    text="🔍 Между крыльями", callback_data="p_tb",
+                ),
+                types.InlineKeyboardButton(
+                    text="◀️ В меню туннелей", callback_data="p_tun",
+                ),
+            ]
+        ]
         from .action_bar import finalize_answer
         await finalize_answer(
             uid, cb.message.edit_text, "\n".join(lines), is_html=True,
             ctx={"parent_cb": "p_tun"},
+            extra_rows=extra_rows,
         )
     except Exception as e:
-        await cb.message.edit_text(f"❌ Ошибка: {e}")
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🔍 Между крыльями", callback_data="p_tb",
+            ),
+            types.InlineKeyboardButton(
+                text="◀️ В меню туннелей", callback_data="p_tun",
+            ),
+        )
+        await cb.message.edit_text(
+            f"❌ Ошибка: {e}", reply_markup=kb.as_markup(),
+        )
 
 
 @router.callback_query(F.data == "p_to")
@@ -104,10 +160,17 @@ async def cb_find_tunnels_result(cb: types.CallbackQuery):
 async def cb_follow_tunnels_wing(cb: types.CallbackQuery):
     await cb.answer()
     _pending_mcp_input[cb.from_user.id] = "follow_tunnels"
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(
+            text="◀️ В меню туннелей", callback_data="p_tun",
+        ),
+    )
     await cb.message.edit_text(
         "🔍 Введите <b>крыло</b> и <b>комнату</b> для поиска туннелей.\n"
         "Пример: <code>мои заметки сны</code>",
         parse_mode="HTML",
+        reply_markup=kb.as_markup(),
     )
 
 
@@ -140,7 +203,7 @@ async def cb_follow_tunnels_room(cb: types.CallbackQuery):
     )
 
 
-@router.callback_query(F.data.startswith("p_tor_"))
+@router.callback_query(F.data.startswith("p_tor_") | F.data.startswith("p_tor:"))
 @allowed_callback
 async def cb_follow_tunnels_result(cb: types.CallbackQuery):
     await cb.answer()
@@ -178,9 +241,11 @@ async def _show_wing_buttons_for_tunnel(edit_func, action: str, uid: int, exclud
         return False
     kb = InlineKeyboardBuilder()
     for w in wing_names:
-        kb.row(types.InlineKeyboardButton(
-            text=f"🕸️ {w}", callback_data=f"p_{action}_{w}",
-        ))
+        w_ru = format_wing_label(w)
+        kb.button(
+            text=f"🕸️ {w_ru}", callback_data=f"p_{action}_{w}",
+        )
+    kb.adjust(2)
     kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tun"))
     await edit_func("Выберите крыло:", reply_markup=kb.as_markup())
     return True
@@ -215,14 +280,17 @@ async def cb_create_tunnel_source_room(cb: types.CallbackQuery):
         await cb.message.edit_text(f"❌ В крыле «{wing}» нет комнат.")
         return
     _room_cache[uid] = list(rooms.items())
+    w_ru = format_wing_label(wing)
     kb = InlineKeyboardBuilder()
     for i, (room, _) in enumerate(rooms.items()):
-        kb.row(types.InlineKeyboardButton(
-            text=f"📁 {room}", callback_data=f"p_tcsr_{i}",
-        ))
+        r_ru = format_room_label(room)
+        kb.button(
+            text=f"📁 {r_ru}", callback_data=f"p_tcsr_{i}",
+        )
+    kb.adjust(2)
     kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tc"))
     await cb.message.edit_text(
-        f"🕸️ <b>{wing}</b>\nВыберите исходную <b>комнату</b>:",
+        f"🕸️ <b>{safe_html_format(w_ru)}</b>\nВыберите исходную <b>комнату</b>:",
         parse_mode="HTML", reply_markup=kb.as_markup(),
     )
 
@@ -264,19 +332,22 @@ async def cb_create_tunnel_target_room(cb: types.CallbackQuery):
         await cb.message.edit_text(f"❌ В крыле «{wing}» нет комнат.")
         return
     _room_cache[uid] = list(rooms.items())
+    w_ru = format_wing_label(wing)
     kb = InlineKeyboardBuilder()
     for i, (room, _) in enumerate(rooms.items()):
-        kb.row(types.InlineKeyboardButton(
-            text=f"📁 {room}", callback_data=f"p_tctr:{i}",
-        ))
+        r_ru = format_room_label(room)
+        kb.button(
+            text=f"📁 {r_ru}", callback_data=f"p_tctr:{i}",
+        )
+    kb.adjust(2)
     kb.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="p_tc"))
     await cb.message.edit_text(
-        f"🕸️ <b>{wing}</b>\nВыберите целевую <b>комнату</b>:",
+        f"🕸️ <b>{safe_html_format(w_ru)}</b>\nВыберите целевую <b>комнату</b>:",
         parse_mode="HTML", reply_markup=kb.as_markup(),
     )
 
 
-@router.callback_query(F.data.startswith("p_tctr_"))
+@router.callback_query(F.data.startswith("p_tctr_") | F.data.startswith("p_tctr:"))
 @allowed_callback
 async def cb_create_tunnel_label_prompt(cb: types.CallbackQuery):
     await cb.answer()
@@ -289,14 +360,17 @@ async def cb_create_tunnel_label_prompt(cb: types.CallbackQuery):
         return
     state["target_room"] = rooms[idx][0]
     _pending_mcp_input[uid] = "create_tunnel"
-    src_w = safe_html_format(state['source_wing'])
-    src_r = safe_html_format(state['source_room'])
-    tgt_w = safe_html_format(state['target_wing'])
-    tgt_r = safe_html_format(state['target_room'])
+    src_w = safe_html_format(format_wing_label(state['source_wing']))
+    src_r = safe_html_format(format_room_label(state['source_room']))
+    tgt_w = safe_html_format(format_wing_label(state['target_wing']))
+    tgt_r = safe_html_format(format_room_label(state['target_room']))
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text="◀️ Отмена", callback_data="p_tun"))
     await cb.message.edit_text(
         f"🏗️ <b>Почти готово!</b>\n\n"
         f"Исходная: {src_w}/{src_r}\n"
         f"Целевая:  {tgt_w}/{tgt_r}\n\n"
         "✏️ Введите описание связи (или «-» чтобы пропустить):",
         parse_mode="HTML",
+        reply_markup=kb.as_markup(),
     )

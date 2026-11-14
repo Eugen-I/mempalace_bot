@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import re
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 import time
 from typing import Any
@@ -154,6 +154,16 @@ tell application "Notes"
 end tell
 """
 
+_AS_ENSURE_FOLDER = """
+set fname to "{folder}"
+tell application "Notes"
+  if not (exists folder fname) then
+    make new folder with properties {name:fname}
+  end if
+  return "{\\"ok\\":true}"
+end tell
+"""
+
 
 class AppleNotesError(Exception):
     """Ошибка доступа к Apple Notes (TCC, osascript, таймаут)."""
@@ -163,7 +173,7 @@ def run_osascript(jxa_script: str, timeout: float = OSASCRIPT_TIMEOUT) -> str:
     """Выполняет JXA-скрипт через osascript и возвращает stdout."""
     try:
         proc = subprocess.run(
-            ["osascript", "-l", "JavaScript", "-e", jxa_script],
+            ["/usr/bin/osascript", "-l", "JavaScript", "-e", jxa_script],  # nosec B603
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -531,6 +541,23 @@ def list_folders() -> list[str]:
     if not isinstance(data, list):
         raise AppleNotesError(f"Неожиданный формат ответа Notes: {data!r}")
     return [str(item) for item in data if isinstance(item, str) and item]
+
+
+def ensure_folder(folder: str) -> bool:
+    """Создаёт папку в Apple Notes, если она ещё не существует."""
+    if not isinstance(folder, str) or not folder.strip():
+        raise AppleNotesError("Укажите имя папки.")
+    clean = folder.strip()
+    if clean == "Recently Deleted":
+        return False
+    script = _AS_ENSURE_FOLDER.replace("{folder}", _as_literal(clean))
+    try:
+        run_applescript(script)
+        invalidate_index()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[NOTES] ensure_folder %s failed: %s", clean, exc)
+        return False
 
 
 def move_note(note_id: str, target_folder: str) -> dict:

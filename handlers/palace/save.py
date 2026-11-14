@@ -1,5 +1,6 @@
 """handlers/palace/save.py — Save/quote handlers for palace notes"""
 import json
+import logging
 
 from aiogram import F, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -10,10 +11,14 @@ from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
 
 from .shared import (
+    _pending_mcp_input,
+    _room_cache,
+    _save_state,
+    _wing_cache,
     router,
-    _pending_mcp_input, _save_state, _wing_cache, _room_cache,
 )
 
+logger = logging.getLogger("PalaceSave")
 
 # ─── SAVE / QUOTE ───
 
@@ -86,6 +91,9 @@ async def _show_save_wings(edit_func, uid: int):
         return
     wing_names = list(wings.keys()) if isinstance(wings, dict) else list(wings)
     _wing_cache[uid] = wing_names
+    state = _save_state.get(uid)
+    if isinstance(state, dict):
+        state["wings"] = wing_names
     kb = InlineKeyboardBuilder()
     for i, w in enumerate(wing_names):
         kb.row(types.InlineKeyboardButton(
@@ -108,11 +116,11 @@ async def cb_save_wing_chosen(cb: types.CallbackQuery):
         idx = int(cb.data[5:])
     except ValueError:
         return
-    wings = _wing_cache.get(uid)
+    state = _save_state.get(uid)
+    wings = (state.get("wings") if isinstance(state, dict) else None) or _wing_cache.get(uid)
     if not wings or idx >= len(wings):
         await cb.message.edit_text("❌ Сессия истекла.")
         return
-    state = _save_state.get(uid)
     if state:
         state["wing"] = wings[idx]
     await _show_save_rooms(cb.message.edit_text, uid)
@@ -153,7 +161,9 @@ async def _show_save_rooms(edit_func, uid: int):
         )
         return
     room_names = list(rooms.keys())
-    _room_cache[uid] = [(r, rooms[r]) for r in room_names]
+    rooms_list = [(r, rooms[r]) for r in room_names]
+    _room_cache[uid] = rooms_list
+    state["rooms"] = rooms_list
     kb = InlineKeyboardBuilder()
     for i, r in enumerate(room_names):
         kb.row(types.InlineKeyboardButton(
@@ -184,11 +194,11 @@ async def cb_save_room_chosen(cb: types.CallbackQuery):
         idx = int(cb.data[5:])
     except ValueError:
         return
-    rooms = _room_cache.get(uid)
+    state = _save_state.get(uid)
+    rooms = (state.get("rooms") if isinstance(state, dict) else None) or _room_cache.get(uid)
     if not rooms or idx >= len(rooms):
         await cb.message.edit_text("❌ Сессия истекла.")
         return
-    state = _save_state.get(uid)
     if state:
         state["room"] = rooms[idx][0]
     await _save_confirm(cb.message.edit_text, uid)
@@ -252,9 +262,37 @@ async def cb_save_confirm_execute(cb: types.CallbackQuery):
         content = text
     try:
         mcp = get_mcp()
-        raw = await mcp.call_tool("mempalace_add_drawer", {
+        tool_args = {
             "wing": wing, "room": room, "content": content,
-        })
+        }
+        source_id = state.get("source_id")
+        source_type = state.get("source_type")
+        source_title = state.get("source_title", "")
+        if source_id:
+            tool_args["source_id"] = str(source_id)
+        if source_type:
+            tool_args["source_type"] = str(source_type)
+
+        raw = await mcp.call_tool("mempalace_add_drawer", tool_args)
+
+        if source_id and source_type:
+            try:
+                parsed_res = json.loads(raw or "{}")
+                did = parsed_res.get("drawer_id")
+                if did:
+                    from services.notes_sync import record_backlink
+                    record_backlink(
+                        drawer_id=did,
+                        source_type=source_type,
+                        source_id=str(source_id),
+                        wing=wing,
+                        room=room,
+                        content=content,
+                        title=source_title,
+                    )
+            except Exception as exc:
+                logger.warning("Failed to record backlink: %s", exc)
+
         await cb.message.edit_text(
             _format_save_result(raw, wing, room),
             parse_mode="HTML",

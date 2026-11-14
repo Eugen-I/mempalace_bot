@@ -14,14 +14,32 @@ class FakeMessage:
         self.answered = []
         self.deleted = False
         self.voices = []
+        self.reply_markup_cleared = False
 
     async def edit_text(self, text, **kwargs):
         if self.fail_on == "edit":
             raise RuntimeError("edit fail")
+        if self.fail_on == "not_modified":
+            from aiogram.exceptions import TelegramBadRequest
+            raise TelegramBadRequest(
+                method="editMessageText",
+                message="Bad Request: message is not modified",
+            )
+        if self.fail_on == "no_text":
+            from aiogram.exceptions import TelegramBadRequest
+            raise TelegramBadRequest(
+                method="editMessageText",
+                message="Bad Request: there is no text in the message to edit",
+            )
         self.edited.append((text, kwargs))
 
+    async def edit_reply_markup(self, reply_markup=None):
+        if self.fail_on == "markup":
+            raise RuntimeError("markup fail")
+        self.reply_markup_cleared = True
+
     async def answer(self, text, **kwargs):
-        if self.fail_on == "answer":
+        if self.fail_on == "answer" or self.fail_on == "no_text_answer_fail":
             raise RuntimeError("answer fail")
         self.answered.append((text, kwargs))
         return self.answer_result if self.answer_result is not None else self
@@ -101,58 +119,42 @@ async def test_safe_edit_text_error(caplog):
     assert any("safe_edit_text" in r.message for r in caplog.records)
 
 
-# ---------- safe_answer ----------
+@pytest.mark.asyncio
+async def test_safe_edit_text_not_modified(caplog):
+    msg = FakeMessage(fail_on="not_modified")
+    assert await u.safe_edit_text(msg, "текст") is True
+    assert not any("safe_edit_text" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_safe_answer_success():
+async def test_safe_edit_text_no_text_fallback(caplog):
+    msg = FakeMessage(fail_on="no_text")
+    assert await u.safe_edit_text(msg, "текст", parse_mode="HTML") is True
+    assert msg.reply_markup_cleared is True
+    assert msg.answered == [("текст", {"parse_mode": "HTML"})]
+    assert not any("safe_edit_text" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_safe_edit_text_no_text_fallback_fails(caplog):
+    class FailingFallbackMessage(FakeMessage):
+        async def answer(self, text, **kwargs):
+            raise RuntimeError("fallback answer fail")
+
+    msg = FailingFallbackMessage(fail_on="no_text")
+    assert await u.safe_edit_text(msg, "текст") is False
+    assert any("safe_edit_text_fallback" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_safe_edit_text_message_text_is_none(caplog):
     msg = FakeMessage()
-    assert await u.safe_answer(msg, "ответ") is True
-    assert msg.answered == [("ответ", {})]
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_none():
-    assert await u.safe_answer(None, "ответ") is False
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_inaccessible():
-    assert await u.safe_answer(_inaccessible(), "ответ") is False
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_error(caplog):
-    msg = FakeMessage(fail_on="answer")
-    assert await u.safe_answer(msg, "ответ") is False
-    assert any("safe_answer" in r.message for r in caplog.records)
-
-
-# ---------- safe_answer_returning_message ----------
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_returning_success():
-    msg = FakeMessage(answer_result="sent")
-    assert await u.safe_answer_returning_message(msg, "ответ") == "sent"
-    assert msg.answered == [("ответ", {})]
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_returning_none():
-    assert await u.safe_answer_returning_message(None, "ответ") is None
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_returning_inaccessible():
-    assert await u.safe_answer_returning_message(_inaccessible(), "ответ") is None
-
-
-@pytest.mark.asyncio
-async def test_safe_answer_returning_error(caplog):
-    msg = FakeMessage(fail_on="answer")
-    assert await u.safe_answer_returning_message(msg, "ответ") is None
-    assert any("safe_answer_returning_message" in r.message for r in caplog.records)
+    msg.text = None
+    assert await u.safe_edit_text(msg, "текст", parse_mode="HTML") is True
+    assert msg.reply_markup_cleared is True
+    assert msg.answered == [("текст", {"parse_mode": "HTML"})]
+    assert msg.edited == []
+    assert not any("safe_edit_text" in r.message for r in caplog.records)
 
 
 # ---------- safe_delete ----------
@@ -233,4 +235,26 @@ async def test_safe_send_inaccessible():
 async def test_safe_send_error(caplog):
     msg = FakeMessage(fail_on="answer")
     assert await u.safe_send(msg, "текст") is False
+    assert any("safe_send" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_safe_send_return_message_success():
+    msg = FakeMessage(answer_result="sent")
+    assert await u.safe_send(msg, "текст", return_message=True) == "sent"
+    assert msg.answered == [("текст", {})]
+
+
+@pytest.mark.asyncio
+async def test_safe_send_return_message_none_and_inaccessible():
+    assert await u.safe_send(None, "текст", return_message=True) is None
+    assert await u.safe_send(
+        _inaccessible(), "текст", return_message=True,
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_safe_send_return_message_error(caplog):
+    msg = FakeMessage(fail_on="answer")
+    assert await u.safe_send(msg, "текст", return_message=True) is None
     assert any("safe_send" in r.message for r in caplog.records)

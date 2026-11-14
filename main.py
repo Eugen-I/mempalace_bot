@@ -2,35 +2,66 @@
    Message handlers extracted to handlers/messages.py"""
 
 import asyncio
-import os
 import sys
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import API_TOKEN, ADMIN_ID, CHATS_DIR, DATA_DIR, allowed_only, allowed_callback
+from config import (
+    DATA_DIR,
+    allowed_callback,
+    allowed_only,
+    validate_config,
+)
 from handlers.chat import user_sessions
-from services.palace_bridge import export_chat_verbatim, sync_to_palace
-from services.palace_mcp import get_mcp
+from services.chat_sync import ChatSyncStatus, sync_active_chat
 from services.logging_setup import setup_logging
+from services.palace_mcp import get_mcp
 
-from services.bot_setup import bot, dp, init_bot
-
-if API_TOKEN == "your_telegram_bot_token" or ADMIN_ID == 0:
-    print("❌ Заполните TELEGRAM_BOT_TOKEN и ADMIN_ID в файле .env")
+try:
+    validate_config()
+except RuntimeError as e:
+    print(f"❌ {e}")
     print("📄 Скопируйте .env.example → .env и отредактируйте")
     sys.exit(1)
+
+from services.bot_setup import bot, dp, init_bot
 
 logger = setup_logging(DATA_DIR)
 init_bot(logger)
 
 from handlers import (  # noqa: E402
-    agent, brainstorm, chat, digest, notes, notes_agent, palace, pdf,
-    personal_note, reminder, settings, search,
+    agent,
+    brainstorm,
+    chat,
+    copilot,
+    digest,
+    notes,
+    notes_agent,
+    palace,
+    pdf,
+    personal_note,
+    photographer,
+    photos,
+    reactions,
+    reminder,
+    search,
+    settings,
+    transkript,
+    voice,
+    web_search_btn,
+    youtube_ui,
 )
-from handlers import photos, reactions, transkript, voice, web_search_btn, youtube_ui  # noqa: E402
 from handlers.messages import process_user_message  # noqa: E402
+
+# Garmin is optional: a missing dependency (fitparse/reportlab/matplotlib)
+# must not take the whole bot down.
+try:
+    from handlers import garmin  # noqa: E402
+except ImportError as _garmin_exc:  # pragma: no cover - depends on venv
+    garmin = None  # type: ignore[assignment]
+    logger.warning("Garmin disabled: %s", _garmin_exc)
 
 
 def _safe_include(router):
@@ -43,13 +74,19 @@ def _safe_include(router):
 _safe_include(chat.router)
 _safe_include(settings.router)
 _safe_include(agent.router)
+_safe_include(photographer.router)
 _safe_include(photos.router)
 _safe_include(notes.router)
+# Garmin must be registered before pdf: its document handler claims only
+# Garmin ZIP/FIT files and returns UNHANDLED for everything else.
+if garmin is not None:
+    _safe_include(garmin.router)
 _safe_include(pdf.router)
 _safe_include(voice.router)
 _safe_include(palace.router)
 _safe_include(personal_note.router)
 _safe_include(brainstorm.router)
+_safe_include(copilot.router)
 _safe_include(digest.router)
 _safe_include(reminder.router)
 _safe_include(youtube_ui.router)
@@ -93,12 +130,22 @@ async def cmd_start(message: types.Message):
                 types.KeyboardButton(text="📜 Транскрипты"),
             ],
             [
+                types.KeyboardButton(text="🏃 Garmin"),
                 types.KeyboardButton(text="📝 Apple Notes"),
             ],
         ],
         resize_keyboard=True,
     )
-    await message.answer("🦾 MemPalace запущен.", reply_markup=kb)
+    welcome_text = (
+        "🦾 <b>MemPalace запущен.</b>\n\n"
+        "🏛️ <b>Возможности Чертогов Разума:</b>\n"
+        "• <b>OmniSearch:</b> сквозной поиск по ящикам, Графу знаний (KG) и Apple Notes\n"
+        "• <b>Карта Дворца:</b> интерактивная 3D/2D визуализация в .html\n"
+        "• <b>Apple Notes:</b> двусторонняя синхронизация с умными бэклинками\n"
+        "• <b>Автономный AI-агент:</b> реструктуризация комнат и оптимизация связей\n\n"
+        "💡 <i>Выберите действие на клавиатуре ниже или команду /palace.</i>"
+    )
+    await message.answer(welcome_text, reply_markup=kb, parse_mode="HTML")
     logger.info(f"User {message.from_user.id} started.")
 
 
@@ -108,6 +155,18 @@ async def cmd_palace_button(message: types.Message):
     from handlers.palace import cmd_palace
 
     await cmd_palace(message)
+
+
+@fallback_router.message(F.text == "🏃 Garmin")
+@allowed_only
+async def cmd_garmin_button(message: types.Message):
+    if garmin is None:
+        await message.answer(
+            "⚠️ Garmin недоступен: не установлены зависимости "
+            "(fitparse, reportlab, matplotlib)."
+        )
+        return
+    await garmin._show_main(message, message.from_user.id)
 
 
 @fallback_router.message(F.text == "📝 Apple Notes")
@@ -121,16 +180,11 @@ async def cmd_notes_agent_button(message: types.Message):
 @fallback_router.message(F.text == "🔄 Синхронизация")
 @allowed_only
 async def cmd_sync_button(message: types.Message):
-    fname = user_sessions.get(message.from_user.id)
-    if not fname:
-        return await message.answer("⚠️ Нет активного чата для синхронизации.")
-    fpath = os.path.join(CHATS_DIR, fname)
-    exported = export_chat_verbatim(fpath, fname)
-    if not exported:
-        return await message.answer("ℹ️ Чат пуст или не найден.")
+    result = await sync_active_chat(message.from_user.id, user_sessions)
+    if result.status is not ChatSyncStatus.RESULT:
+        return await message.answer(result.message)
     status = await message.answer("🔄 Синхронизирую с MemPalace (verbatim)...")
-    result = await sync_to_palace(exported)
-    await status.edit_text(result)
+    await status.edit_text(result.message)
 
 
 @fallback_router.message(F.text == "🔍 Поиск")
@@ -138,12 +192,27 @@ async def cmd_sync_button(message: types.Message):
 async def cmd_search_button(message: types.Message):
     kb = InlineKeyboardBuilder()
     kb.row(
-        types.InlineKeyboardButton(text="🔍 Поиск по крылу", callback_data="search:wing"),
+        types.InlineKeyboardButton(text="🔍 По всей базе", callback_data="search:all"),
+    )
+    kb.row(
+        types.InlineKeyboardButton(text="🕸️ Поиск по крылу", callback_data="search:wing"),
     )
     kb.row(
         types.InlineKeyboardButton(text="🌐 Поиск в интернет", callback_data="search:web"),
     )
     await message.answer("Выберите тип поиска:", reply_markup=kb.as_markup())
+
+
+@fallback_router.callback_query(F.data == "search:all")
+@allowed_callback
+async def cb_search_all(callback: types.CallbackQuery):
+    from services.bot_setup import pending_wing_search as _pending_wing_search
+    _pending_wing_search[callback.from_user.id] = ""
+    await callback.message.answer(
+        "🔍 Введите текст для поиска по всей базе (Дворец, заметки, файлы):",
+        reply_markup=types.ForceReply(selective=True, input_field_placeholder="Запрос..."),
+    )
+    await callback.answer()
 
 
 @fallback_router.callback_query(F.data == "search:wing")
@@ -235,7 +304,7 @@ async def main():
 if __name__ == "__main__":
     import signal
 
-    def _on_term(signum, frame):
+    def _on_term(_signum, _frame):
         raise SystemExit("SIGTERM received")
 
     signal.signal(signal.SIGTERM, _on_term)

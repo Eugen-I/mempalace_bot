@@ -22,6 +22,13 @@ SID = "a1b2c3d4"
 TEST_UID = 424242
 
 
+def _async_ai(fn):
+    async def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 @pytest.fixture(autouse=True)
 def _allow_test_user(monkeypatch):
     import config
@@ -113,7 +120,7 @@ def test_paginate_near_limit_1499():
 
 
 def test_paginate_over_limit_1501():
-    text = "а" * 1501
+    text = "а" * (PAGE_LIMIT + 1)
     pages = paginate(text)
     assert len(pages) == 2
 
@@ -122,10 +129,11 @@ def test_paginate_over_limit_1501():
 
 
 def test_render_page_escapes_raw_text():
-    answer = Answer(sid=SID, text="<b>не html</b>", pages=["<b>не html</b>"])
+    raw = "<script>alert(1)</script>"
+    answer = Answer(sid=SID, text=raw, pages=[raw])
     rendered = _render_page(answer, 0)
-    assert "&lt;b&gt;" in rendered
-    assert "<b>не html</b>" not in rendered
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered
 
 
 def test_render_page_html_mode_keeps_tags():
@@ -207,6 +215,73 @@ def test_action_bar_back_button_only_with_parent():
     assert any("ab_back:" in d for d in _button_data(with_parent))
     without_parent = Answer(sid=SID, text="т", pages=["т"])
     assert not any("ab_back:" in d for d in _button_data(without_parent))
+
+
+def test_action_bar_hide_action_bar_ctx():
+    from aiogram import types
+
+    extra = [[types.InlineKeyboardButton(text="Кнопка", callback_data="test_cb")]]
+    answer = Answer(
+        sid=SID, text="т", pages=["т"],
+        ctx={"parent_cb": "p_nav", "hide_action_bar": True},
+        extra_rows=extra,
+    )
+    labels = _button_labels(answer)
+    assert "Кнопка" in labels
+    assert "🔙 Вернуться к списку" in labels
+    assert "🤖 Анализ ИИ" not in labels
+    assert "🤖 Агент" not in labels
+    assert "🌐 Поиск в интернете" not in labels
+    assert "💾 Сохранить" not in labels
+
+
+def test_action_bar_deduplicates_agent_button():
+    from aiogram import types
+
+    extra = [[types.InlineKeyboardButton(text="🤖 Агент", callback_data="p_agent_room:xyz")]]
+    answer = Answer(
+        sid=SID, text="т", pages=["т"],
+        ctx={"parent_cb": "p_nav"},
+        extra_rows=extra,
+    )
+    labels = _button_labels(answer)
+    assert labels.count("🤖 Агент") == 1
+    data = _button_data(answer)
+    assert "p_agent_room:xyz" in data
+    assert not any(d.startswith("ab_agent:") for d in data)
+
+
+def test_action_bar_deduplicates_ai_button():
+    from aiogram import types
+
+    extra = [[types.InlineKeyboardButton(
+        text="🤖 Спросить ИИ по комнате", callback_data="p_room_ai",
+    )]]
+    answer = Answer(
+        sid=SID, text="т", pages=["т"],
+        ctx={"parent_cb": "p_nav"},
+        extra_rows=extra,
+    )
+    labels = _button_labels(answer)
+    assert "🤖 Спросить ИИ по комнате" in labels
+    assert "🤖 Анализ ИИ" not in labels
+    data = _button_data(answer)
+    assert "p_room_ai" in data
+    assert not any(d.startswith("ab_ai:") for d in data)
+
+
+def test_action_bar_deduplicates_back_button():
+    from aiogram import types
+
+    extra = [[types.InlineKeyboardButton(text="◀️ В меню туннелей", callback_data="p_tun")]]
+    answer = Answer(
+        sid=SID, text="т", pages=["т"],
+        ctx={"parent_cb": "p_tun"},
+        extra_rows=extra,
+    )
+    labels = _button_labels(answer)
+    assert "◀️ В меню туннелей" in labels
+    assert "🔙 Вернуться к списку" not in labels
 
 
 # ─── store ───
@@ -380,7 +455,9 @@ def test_finalize_answer_pages_by_page_limit():
         msg.edited.append(text)
         return msg
 
-    answer = asyncio.run(ab.finalize_answer(1, edit_func, "т" * 1600, is_html=True))
+    answer = asyncio.run(
+        ab.finalize_answer(1, edit_func, "т" * (ab.PAGE_LIMIT + 100), is_html=True)
+    )
     assert len(answer.pages) == 2
 
 
@@ -431,7 +508,9 @@ def test_cb_ab_ai_run_mode_answer(monkeypatch):
     import handlers.palace.action_bar as ab
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "Анализ готов")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "Анализ готов"),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"])
     answer_store[SID] = answer
@@ -445,7 +524,9 @@ def test_cb_ab_ai_run_mode_context_with_summary(monkeypatch):
     import handlers.palace.action_bar as ab
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "Контекстный анализ")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "Контекстный анализ"),
+    )
 
     answer = Answer(
         sid=SID, text="текст", pages=["текст"],
@@ -486,7 +567,9 @@ def test_cb_ab_web_generates_query(monkeypatch):
     import handlers.palace.action_bar as ab
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: '"тестовый запрос"')
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: '"тестовый запрос"'),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"])
     answer_store[SID] = answer
@@ -501,7 +584,9 @@ def test_cb_ab_web_empty_query_error(monkeypatch):
     import handlers.palace.action_bar as ab
 
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "   ")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "   "),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"])
     answer_store[SID] = answer
@@ -521,7 +606,9 @@ def test_cb_ab_web_go_runs_search(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "Ответ с поиском")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "Ответ с поиском"),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"], ctx={})
     answer.ctx["web_query"] = "запрос"
@@ -566,7 +653,9 @@ def test_run_web_search_with_query(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "Поиск с ручным запросом")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "Поиск с ручным запросом"),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"])
     answer_store[SID] = answer
@@ -593,7 +682,9 @@ def test_run_web_search_title_truncated_to_80(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "Ответ")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: "Ответ"),
+    )
 
     answer = Answer(sid=SID, text="текст", pages=["текст"])
     answer_store[SID] = answer
@@ -782,8 +873,9 @@ def test_build_ai_context_mcp_empty(monkeypatch):
 
 
 def test_finalize_answer_extra_rows_rendered_and_kept_on_page_flip():
-    import handlers.palace.action_bar as ab
     from aiogram import types
+
+    import handlers.palace.action_bar as ab
 
     msg = FakeMessage()
     extra = [
@@ -831,20 +923,28 @@ def test_show_drawers_page_integration(monkeypatch):
     asyncio.run(navigation._show_drawers_page(
         msg.edit_text, TEST_UID, "dreams", "r1", 0,
     ))
-    assert "Записи в dreams/r1" in msg.edited[-1]
+    expected_wing = navigation.format_wing_label("dreams")
+    assert f"Записи в {expected_wing}/r1" in msg.edited[-1]
     data = _markup_data(msg)
     assert "p_rd:0" in data
     assert "p_rd:1" in data
     assert "p_room_ai" in data
-    assert any(d.startswith("ab_ai:") for d in data)
+    assert any(d.startswith("p_agent_room:") for d in data)
+    assert not any(d.startswith("ab_ai:") for d in data)
+    assert not any(d.startswith("ab_agent:") for d in data)
     assert "p_rdp:5" in data
+    assert any(d.startswith("ab_back:") for d in data)
+    # Check no duplicate button texts
+    labels = [b.text for row in msg.markups[-1].inline_keyboard for b in row]
+    assert labels.count("🤖 Агент") == 1
+    assert not any("Анализ ИИ" in label for label in labels)
 
 
 def test_cb_read_drawer_long_content_paginates(monkeypatch):
     import handlers.palace.action_bar as ab
     from handlers.palace import navigation
 
-    long_text = ("абвгд " * 400)  # 2400 символов -> 2 страницы по 1500
+    long_text = ("абвгд " * 600)  # 3600 символов -> 2 страницы по 2600
 
     class FakeMCP:
         async def call_tool(self, name, args=None):
@@ -1198,7 +1298,7 @@ def test_run_web_search_finalize_success(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
 
     answer = Answer(sid=SID, text="контекст ответа", pages=["к"], ctx={"k": "v"})
     answer_store[SID] = answer
@@ -1235,7 +1335,7 @@ def test_run_web_search_finalize_context_truncated_6000(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
 
     answer = Answer(
         sid=SID, text="к" * 6000 + "УНИКАЛЬНЫЙ-ХВОСТ", pages=["к"],
@@ -1258,7 +1358,9 @@ def test_run_web_search_finalize_empty_result_fallback(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", lambda *a, **k: "")
+    monkeypatch.setattr(
+        ab, "call_ai_async", _async_ai(lambda *a, **k: ""),
+    )
 
     answer = Answer(sid=SID, text="т", pages=["т"], ctx={})
     answer_store[SID] = answer
@@ -1286,7 +1388,7 @@ def test_run_web_search_finalize_sets_origin_sid(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
     monkeypatch.setattr(ab, "finalize_answer", fake_finalize)
 
     answer = Answer(sid=SID, text="т", pages=["т"], ctx={"k": "v"})
@@ -1315,7 +1417,7 @@ def test_run_web_search_finalize_title_truncated_80(monkeypatch):
 
     monkeypatch.setattr(web_search, "search_web", fake_search)
     monkeypatch.setattr(ab, "get_current_ai", lambda: ("gemini", "m"))
-    monkeypatch.setattr(ab, "_sync_ai_call", fake_sync)
+    monkeypatch.setattr(ab, "call_ai_async", _async_ai(fake_sync))
     monkeypatch.setattr(ab, "finalize_answer", fake_finalize)
 
     query = "q" * 80 + "УНИКАЛЬНЫЙ-ХВОСТ"
@@ -1383,8 +1485,9 @@ def test_finalize_answer_sid_length_8():
 
 
 def test_finalize_answer_preserves_ctx_and_extra_rows():
-    import handlers.palace.action_bar as ab
     from aiogram import types
+
+    import handlers.palace.action_bar as ab
 
     msg = FakeMessage()
 
@@ -1590,8 +1693,7 @@ def test_finalize_answer_single_page_first_markup_has_no_nav():
         return msg
 
     asyncio.run(ab.finalize_answer(1, edit_func, "текст"))
-    kb = msg.markups[0].inline_keyboard
-    labels = [b.text for row in kb for b in row]
+    assert msg.markups[0].inline_keyboard
 
 
 def test_finalize_answer_first_markup_uses_page_zero():
@@ -1618,3 +1720,104 @@ def test_find_cut_double_newline_in_second_half():
     import handlers.palace.action_bar as ab
 
     assert ab._find_cut("aaaaa\n\nb\ncccc", 10) == 7
+
+
+# ─── Note Deduplication & File Reading Tests ───
+
+
+def test_clean_drawer_title():
+    from handlers.palace.navigation import _clean_drawer_title
+
+    assert _clean_drawer_title("Оскар Бренифье [часть 1]") == "Оскар Бренифье"
+    assert _clean_drawer_title("Заметка [ч. 2]") == "Заметка"
+    assert _clean_drawer_title("Текст [часть 3/10]") == "Текст"
+    assert _clean_drawer_title("Обычная заметка без чанков") == "Обычная заметка без чанков"
+    assert _clean_drawer_title("") == ""
+
+
+def test_group_drawers_into_notes_by_source_file():
+    from handlers.palace.navigation import _group_drawers_into_notes
+
+    chunks = [
+        {
+            "drawer_id": f"id_{i}",
+            "source_file": "/notes/Philosophy/Brenifier.txt",
+            "title": f"Оскар Бренифье [часть {i + 1}]",
+            "chunk_index": i,
+            "content": f"Фрагмент текста {i}",
+        }
+        for i in range(10)
+    ]
+    notes = _group_drawers_into_notes(chunks)
+    assert len(notes) == 1
+    assert notes[0]["title"] == "Оскар Бренифье"
+    assert notes[0]["chunk_count"] == 10
+    assert len(notes[0]["all_chunks"]) == 10
+    assert len(notes[0]["drawer_ids"]) == 10
+
+
+def test_group_drawers_into_notes_multiple_files_order_preserved():
+    from handlers.palace.navigation import _group_drawers_into_notes
+
+    chunks = [
+        {"drawer_id": "a1", "source_file": "/notes/a.txt", "title": "Заметка A [ч.1]"},
+        {"drawer_id": "b1", "source_file": "/notes/b.txt", "title": "Заметка B [ч.1]"},
+        {"drawer_id": "a2", "source_file": "/notes/a.txt", "title": "Заметка A [ч.2]"},
+        {"drawer_id": "b2", "source_file": "/notes/b.txt", "title": "Заметка B [ч.2]"},
+        {"drawer_id": "c1", "source_file": "/notes/c.txt", "title": "Заметка C"},
+    ]
+    notes = _group_drawers_into_notes(chunks)
+    assert len(notes) == 3
+    assert [n["title"] for n in notes] == ["Заметка A", "Заметка B", "Заметка C"]
+    assert notes[0]["chunk_count"] == 2
+    assert notes[1]["chunk_count"] == 2
+    assert notes[2]["chunk_count"] == 1
+
+
+def test_action_bar_pagination_row_placed_first():
+    from aiogram import types
+
+    import handlers.palace.action_bar as ab
+
+    answer = ab.Answer(sid="test", text="t")
+    answer.pages = ["стр 1", "стр 2", "стр 3"]
+    answer.extra_rows = [
+        [types.InlineKeyboardButton(text="🗑️ Удалить", callback_data="p_drdel:0")]
+    ]
+    kb = ab.build_action_bar(answer, 0)
+    rows = kb.export()
+    # Первая строка должна быть навигационной строкой листания страниц
+    nav_row_data = [b.callback_data for b in rows[0]]
+    assert "ab_pg_noop" in nav_row_data
+    assert "ab_pg:test:1" in nav_row_data
+    # Вторая строка — extra_rows (удаление)
+    assert rows[1][0].callback_data == "p_drdel:0"
+
+
+def test_cb_read_drawer_loads_full_file_from_disk(tmp_path, monkeypatch):
+    from handlers.palace import navigation
+
+    # Создаём длинный файл на диске (5000 символов)
+    note_file = tmp_path / "Brenifier_full.txt"
+    long_content = "Текст философии Оскара Бренифье. " * 150
+    note_file.write_text(long_content, encoding="utf-8")
+
+    monkeypatch.setattr(navigation, "_drawer_list_state", {
+        TEST_UID: {
+            "wing": "philosophy", "room": "brenifier", "offset": 0,
+            "drawers": [{
+                "title": "Оскар Бренифье",
+                "drawer_id": "d1",
+                "source_file": str(note_file),
+            }],
+        },
+    })
+
+    msg = FakeMessage()
+    cb = FakeCallback("p_rd:0", msg)
+    asyncio.run(navigation.cb_read_drawer(cb))
+    assert len(msg.edited) == 1
+    assert "Оскар Бренифье" in msg.edited[-1]
+    # Должна появиться пагинация со стрелками
+    data = _markup_data(msg)
+    assert any(d.startswith("ab_pg:") for d in data)

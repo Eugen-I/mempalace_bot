@@ -13,7 +13,6 @@ TEST_UID = 424242
 @pytest.fixture(autouse=True)
 def _allow_test_user(monkeypatch):
     import config
-
     from handlers.personal_note import _note_data, _waiting_for_note
 
     monkeypatch.setattr(config, "ALLOWED_IDS", {TEST_UID})
@@ -135,7 +134,7 @@ def test_reclass_empty_session():
 
 
 def test_wing_select_by_index():
-    from handlers.personal_note import cb_pn_wing, _note_data
+    from handlers.personal_note import _note_data, cb_pn_wing
 
     _seed_note_data()
     _note_data[TEST_UID]["wings"] = ["личные_мысли", _long_wing(), "my_notes"]
@@ -147,7 +146,7 @@ def test_wing_select_by_index():
 
 
 def test_wing_select_index_zero():
-    from handlers.personal_note import cb_pn_wing, _note_data
+    from handlers.personal_note import _note_data, cb_pn_wing
 
     _seed_note_data()
     _note_data[TEST_UID]["wings"] = ["личные_мысли", "my_notes"]
@@ -159,7 +158,7 @@ def test_wing_select_index_zero():
 
 
 def test_wing_select_out_of_range_falls_back():
-    from handlers.personal_note import cb_pn_wing, _note_data
+    from handlers.personal_note import _note_data, cb_pn_wing
 
     _seed_note_data()
     _note_data[TEST_UID]["wings"] = ["личные_мысли", "my_notes"]
@@ -170,7 +169,7 @@ def test_wing_select_out_of_range_falls_back():
 
 
 def test_wing_select_malformed_index_falls_back():
-    from handlers.personal_note import cb_pn_wing, _note_data
+    from handlers.personal_note import _note_data, cb_pn_wing
 
     _seed_note_data()
     _note_data[TEST_UID]["wings"] = ["личные_мысли", "my_notes"]
@@ -190,7 +189,7 @@ def test_wing_select_empty_session():
 
 
 def test_wing_select_no_rooms_falls_back_to_inbox():
-    from handlers.personal_note import cb_pn_wing, _note_data
+    from handlers.personal_note import _note_data, cb_pn_wing
 
     _seed_note_data()
     _note_data[TEST_UID]["wings"] = ["личные_мысли"]

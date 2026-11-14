@@ -6,9 +6,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from cachetools import TTLCache
 
 from config import TRANSKRIPT_DIR, allowed_callback, allowed_only
+from services.ai_engine import AITimeoutError, call_ai_async, get_current_ai
+from services.error_formatter import format_user_error
 from services.text_formatter import safe_html_format, split_message
 from services.ttl_dict import TtlDict
-from services.error_formatter import format_user_error
 
 router = Router()
 PAGE_SIZE = 5
@@ -361,8 +362,6 @@ async def _answer_tr_ai(msg, uid: int, fname: str, question: str, with_web: bool
         await msg.edit_text("❌ Транскрипт пуст.")
         return
 
-    from services.ai_engine import get_current_ai, _sync_ai_call
-
     engine, model = get_current_ai()
     _tr_last_question[uid] = question
     if with_web:
@@ -384,11 +383,44 @@ async def _answer_tr_ai(msg, uid: int, fname: str, question: str, with_web: bool
             f"Транскрипт:\n{content[:25000]}"
         )
 
-    result = _sync_ai_call(engine, model, [
-        {"role": "system", "content": system},
-        {"role": "user", "content": question},
-    ])
-    await msg.edit_text(result or "❌ Пустой ответ.", parse_mode="HTML")
+    try:
+        result = await call_ai_async(engine, model, [
+            {"role": "system", "content": system},
+            {"role": "user", "content": question},
+        ])
+    except AITimeoutError:
+        await msg.edit_text("⏱️ ИИ не ответил вовремя. Попробуйте ещё раз.")
+        return
+    except Exception as e:
+        await msg.edit_text(format_user_error(e, "transcript_ai"))
+        return
+    if not result:
+        await msg.edit_text("❌ Пустой ответ.")
+        return
+
+    formatted = safe_html_format(result)
+    parts = split_message(formatted, limit=4000)
+    if not parts:
+        await msg.edit_text("❌ Пустой ответ.")
+        return
+
+    use_html = True
+    try:
+        await msg.edit_text(parts[0], parse_mode="HTML")
+    except Exception:
+        use_html = False
+        parts = split_message(result, limit=4000) or [result[:4000]]
+        await msg.edit_text(parts[0])
+
+    for part in parts[1:]:
+        if hasattr(msg, "answer"):
+            if use_html:
+                try:
+                    await msg.answer(part, parse_mode="HTML")
+                except Exception:
+                    await msg.answer(part)
+            else:
+                await msg.answer(part)
 
 
 async def handle_tr_ai_question(uid: int, message: types.Message, fname: str, question: str):

@@ -1,0 +1,214 @@
+{
+  "links": [
+    {
+      "source": "room_Творчество_Текст для сайта",
+      "target": "room_projects_technical",
+      "type": "tunnel",
+      "weight": 8,
+      "reason": "mask, inner, more"
+    },
+    {
+      "source": "room_general__registry",
+      "target": "room_philosophy__registry",
+      "type": "tunnel",
+      "weight": 8,
+      "reason": "documents, registry, users"
+    },
+    {
+      "source": "room_Фотография_Фотографы",
+      "target": "room_general_technical",
+      "type": "tunnel",
+      "weight": 8,
+      "reason": "тестино, марио, официантом"
+    },
+    {
+      "source": "room_projects__registry",
+      "target": "room_general__registry",
+      "type": "tunnel",
+      "weight": 7,
+      "reason": "documents, registry, users"
+    },
+    {
+      "source": "room_projects__registry",
+      "target": "room_philosophy__registry",
+      "type": "tunnel",
+      "weight": 7,
+      "reason": "documents, registry, users"
+    },
+    {
+      "source": "room_Творчество_Презентация V1 на немецком",
+      "target": "room_projects_planning",
+      "type": "tunnel",
+      "weight": 5,
+      "reason": "und, der, die"
+    },
+    {
+      "source": "room_Фотография_Арт фототерапия как мой проект",
+      "target": "room_general_general",
+      "type": "tunnel",
+      "weight": 5,
+      "reason": "клиента, фотографии, его"
+    },
+    {
+      "source": "room_deutsch_B1",
+      "target": "room_insights_general",
+      "type": "tunnel",
+      "weight": 4,
+      "reason": "sie, ich, ist"
+    },
+    {
+      "source": "room_Творчество_Выставки",
+      "target": "room_projects_general",
+      "type": "tunnel",
+      "weight": 4,
+      "reason": "маски, выставки, архетип"
+    },
+    {
+      "source": "room_Фотография_Архетипы",
+      "target": "room_projects_planning",
+      "type": "tunnel",
+      "weight": 3,
+      "reason": "der, und, mit"
+    },
+    {
+      "source": "room_Философия_Эмиль Чоран",
+      "target": "room_Литература_Эмиль Чоран Комментарии",
+      "type": "tunnel",
+      "weight": 3,
+      "reason": "чоран, чорана, исследователи"
+    },
+    {
+      "source": "room_Философия_Эмиль Чоран Комментарии",
+      "target": "room_Литература_Эмиль Чоран Комментарии",
+      "type": "tunnel",
+      "weight": 3,
+      "reason": "чорана, чоран, исследователи"
+    },
+    {
+      "source": "room_Творчество_Эмиль Чоран",
+      "target": "room_Литература_Эмиль Чоран Комментарии",
+      "type": "tunnel",
+      "weight": 3,
+      "reason": "чоран, чорана, жить"
+    },
+    {
+      "source": "room_Философия_Эмиль Чоран",
+      "target": "room_Творчество_Эмиль Чоран Комментарии",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "чоран, чорана"
+    },
+    {
+      "source": "room_Творчество_Фототерапия",
+      "target": "room_Фотография_Арт фототерапия как мой проект",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "фотографии, клиента"
+    },
+    {
+      "source": "room_Философия_Эмиль Чоран Комментарии",
+      "target": "room_Творчество_Эмиль Чоран Комментарии",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "чорана, чоран"
+    },
+    {
+      "source": "room_Фотография_Архетипы",
+      "target": "room_Творчество_Презентация V1 на немецком",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "und, der"
+    },
+    {
+      "source": "room_Литература_Тень",
+      "target": "room_Психология_Индивидуация Юнга",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "тень, тени"
+    },
+    {
+      "source": "room_Творчество_Анима",
+      "target": "room_Фотография_Бессознательное",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "название, описание"
+    },
+    {
+      "source": "room_Творчество_Презентация V1 на немецком",
+      "target": "room_projects_architecture",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "und, die"
+    },
+    {
+      "source": "room_Философия_Эмиль Чоран",
+      "target": "room_Творчество_Эмиль Чоран",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "чоран, чорана"
+    },
+    {
+      "source": "room_Творчество_Фототерапия",
+      "target": "room_general_general",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "фотографии, клиента"
+    },
+    {
+      "source": "room_Фотография_Арт фототерапия как мой проект",
+      "target": "room_Творчество_Арт-терапия",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "фотографии, клиента"
+    },
+    {
+      "source": "room_Философия_Эмиль Чоран Комментарии",
+      "target": "room_Творчество_Эмиль Чоран",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "чорана, чоран"
+    },
+    {
+      "source": "room_Литература_Тень",
+      "target": "room_general_general",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "тень, тени"
+    },
+    {
+      "source": "room_projects_architecture",
+      "target": "room_deutsch_B1",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "ich, ist"
+    },
+    {
+      "source": "room_Фотография_Архетипы",
+      "target": "room_projects_architecture",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "und, ich"
+    },
+    {
+      "source": "room_Творчество_Бессознательное",
+      "target": "room_Психология_Карл Густав Юнг",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "коллективное, бессознательное"
+    },
+    {
+      "source": "room_Психология_Анализ мифов и репрессии",
+      "target": "room_Философия_Сознание",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "шаг, мышления"
+    },
+    {
+      "source": "room_Психология_Анализ мифов и репрессии",
+      "target": "room_Философия_null",
+      "type": "tunnel",
+      "weight": 2,
+      "reason": "шаг, мышления"
+    }
+  ]
+}

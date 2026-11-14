@@ -4,10 +4,14 @@
 ввод, валидация типа, граничные значения (None, пустая строка,
 вложенные объекты, множественные фенсы).
 """
-from services.json_parser import extract_json_from_text, safe_parse_llm_json
-
+from services.json_parser import (
+    extract_json_from_text,
+    extract_partial_json_array,
+    safe_parse_llm_json,
+)
 
 # ─── extract_json_from_text: happy path ───
+
 
 def test_clean_object():
     assert extract_json_from_text('{"a": 1}') == {"a": 1}
@@ -201,3 +205,108 @@ def test_multiple_broken_fences_returns_none():
     """Все фенсы битые и объектов нет — по-прежнему None."""
     text = '```json\n{"a": \n```\n```json\n{"b":\n```'
     assert extract_json_from_text(text) is None
+
+
+# ─── extract_partial_json_array: спасение обрезанных массивов ───
+
+def test_extract_partial_json_array_truncated():
+    text = (
+        '{\n  "projects": [\n'
+        '    {"title": "П1", "manifesto": "Текст 1"},\n'
+        '    {"title": "П2", "manifesto": "Текст 2"},\n'
+        '    {"title": "П3", "manifesto": "Обрезанная с'
+    )
+    items = extract_partial_json_array(text, array_keys=("projects",))
+    assert len(items) == 2
+    assert items[0]["title"] == "П1"
+    assert items[1]["title"] == "П2"
+
+
+def test_extract_partial_json_array_with_token_notice():
+    text = (
+        '```json\n{\n  "projects": [\n'
+        '    {"title": "П1", "manifesto": "Текст 1"}\n'
+        '  ]\n}\n```\n\n'
+        '⚠️ <i>(Ответ модели был обрезан из-за лимита токенов)</i>'
+    )
+    items = extract_partial_json_array(text, array_keys=("projects",))
+    assert len(items) == 1
+    assert items[0]["title"] == "П1"
+
+
+def test_extract_partial_json_array_empty():
+    assert extract_partial_json_array("") == []
+    assert extract_partial_json_array(None) == []
+    assert extract_partial_json_array("просто текст без json") == []
+
+
+def test_extract_partial_json_array_root_list():
+    text = '[\n  {"title": "Идея 1"},\n  {"title": "Идея 2"},\n  {"title": "Идея 3'
+    items = extract_partial_json_array(text)
+    assert len(items) == 2
+    assert items[0]["title"] == "Идея 1"
+    assert items[1]["title"] == "Идея 2"
+
+
+def test_repair_llm_json_unescaped_shutter_quote():
+    """Реальный баг qwen2.5:7b: неэкранированная кавычка секунд '1/6\"' внутри JSON."""
+    raw = (
+        '{\n'
+        '  "projects": [\n'
+        '    {\n'
+        '      "title": "Quantum",\n'
+        '      "triad": {\n'
+        '        "narrative": {"role": "narrative", "style": "Сюрреализм", '
+        '"traits": "Онейрический сюжет, деконтекстуализация"}\n'
+        '      },\n'
+        '      "camera_setup": {\n'
+        '        "Выдержка": "1/6"",\n'
+        '        "Диафрагма": "f/5.6"\n'
+        '      }\n'
+        '    }\n'
+        '  ]\n'
+        '}'
+    )
+    parsed = safe_parse_llm_json(raw, expected_type=dict)
+    assert parsed is not None
+    assert "projects" in parsed
+    assert parsed["projects"][0]["title"] == "Quantum"
+    assert parsed["projects"][0]["camera_setup"]["Выдержка"] == '1/6"'
+
+
+def test_repair_llm_json_inner_prose_quotes_and_trailing_commas():
+    """Неэкранированные кавычки в русском тексте и висячие запятые перед } / ]."""
+    raw = (
+        '{\n'
+        '  "projects": [\n'
+        '    {\n'
+        '      "title": "Осенний сплин",\n'
+        '      "scene_description": "Парк в дождь, эффект "тумана", тишина и покой",\n'
+        '    },\n'
+        '  ],\n'
+        '}'
+    )
+    parsed = safe_parse_llm_json(raw, expected_type=dict)
+    assert parsed is not None
+    assert parsed["projects"][0]["title"] == "Осенний сплин"
+    assert 'эффект "тумана", тишина' in parsed["projects"][0]["scene_description"]
+
+
+def test_salvage_truncated_json_object_mid_first_project():
+    """Если первый проект оборвался на 'ligh, salvage_truncated_json_object спасает его."""
+    from services.json_parser import salvage_truncated_json_object
+
+    raw = (
+        '{\n'
+        '  "projects": [\n'
+        '    {\n'
+        '      "title": "Quantum",\n'
+        '      "triad": {\n'
+        '        "narrative": {"role": "narrative", "style": "Сюрреализм", '
+        '"traits": "Онейрический сюжет, деконтекстуализация"},\n'
+        '        "ligh'
+    )
+    salvaged = salvage_truncated_json_object(raw, array_keys=("projects",))
+    assert len(salvaged) == 1
+    assert salvaged[0]["title"] == "Quantum"
+    assert salvaged[0]["triad"]["narrative"]["style"] == "Сюрреализм"

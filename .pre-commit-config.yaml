@@ -15,12 +15,15 @@ repos:
     hooks:
       - id: flake8
         additional_dependencies: []
+        # flake8 ignores .flake8 exclude rules when pre-commit passes paths
+        # explicitly; mirror the directories here (INC-15).
+        exclude: ^(tests/|features/|_scripts/|mutants/|cli_ask\.py$|.*MemPalace.*)
 
   - repo: local
     hooks:
       - id: pytest
         name: pytest
-        entry: python -m pytest
+        entry: python3 -m pytest
         language: system
         pass_filenames: false
         stages: [pre-push]
@@ -32,5 +35,5 @@ repos:
         entry: python3 .git-hooks/check_no_secrets.py
         language: system
         pass_filenames: false
-        stages: [pre-commit]
+        stages: [pre-commit, pre-push]
         verbose: true

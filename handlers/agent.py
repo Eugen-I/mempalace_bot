@@ -25,16 +25,22 @@ logger = logging.getLogger("AgentHandler")
 router = Router()
 
 AGENT_SYSTEM_PROMPT = (
-    "Ты — агент персональной базы знаний MemPalace. Отвечай на русском языке.\n"
+    "Ты — автономный ИИ-ассистент и агент базы знаний MemPalace и Apple Notes.\n"
+    "Отвечай на русском языке.\n\n"
+    "Твои инструменты:\n"
+    "• Дворец памяти: mempalace_list_wings, mempalace_list_rooms, mempalace_list_tunnels, "
+    "mp_search, mp_drawer_read, mp_kg_query, mp_kg_timeline, mp_kg_stats.\n"
+    "• Apple Notes: notes_search, notes_list, notes_read.\n"
+    "• Интернет: web_search — для актуальных новостей, фактов и данных из сети.\n"
+    "• Системные: agent_now (дата/время), agent_list_tools.\n\n"
     "Правила:\n"
-    "- Для ответа используй доступные инструменты: agent_list_tools — чтобы узнать "
-    "возможности, agent_now — если нужна дата/время.\n"
-    "- При использовании заметок Apple Notes (notes_read) обязательно цитируй "
-    "дословные фрагменты из них в кавычках и указывай название заметки — "
-    "пользователь должен видеть, откуда взят ответ.\n"
-    "- Не выдумывай факты: если данных нет — честно скажи об этом.\n"
-    "- Если инструмент вернул ошибку — сообщи о ней и предложи альтернативу.\n"
-    "- Отвечай структурированно и по делу, не более 500 слов."
+    "- Думай пошагово: вызови нужные инструменты перед ответом.\n"
+    "- Если вопрос о проектах, идеях или личных записях — ищи во Дворце и Apple Notes.\n"
+    "- Если вопрос о событиях в мире или внешней информации — используй web_search.\n"
+    "- При использовании заметок (notes_read) обязательно цитируй дословные фрагменты "
+    "в кавычках и указывай название заметки.\n"
+    "- Не выдумывай факты: если информации нет — честно сообщи об этом.\n"
+    "- Отвечай структурированно и по делу."
 )
 
 # Ключ -> (wing, room) для кнопки агента на странице комнаты
@@ -58,7 +64,11 @@ async def _run_agent_reply(
     include_write: bool = False,
     conversation_history: list[dict] | None = None,
 ) -> ae.AgentResult:
-    """Общая логика: статус → run_agent (со статус-колбэком) → finalize_answer."""
+    """Общая логика: статус → run_agent → finalize_answer.
+
+    Всегда возвращает AgentResult: ошибки представлены безопасным
+    результатом с ``ok=False``, ``final_answer=""`` и текстом в ``error``.
+    """
     from handlers.palace.action_bar import finalize_answer
 
     async def status_cb(text: str):
@@ -73,25 +83,29 @@ async def _run_agent_reply(
         )
     except ae.AgentEngineError as exc:
         await _status_edit(status_msg, f"⚠️ {exc}")
-        return
-    except Exception as exc:  # noqa: BLE001
+        return ae.AgentResult.failure(str(exc))
+    except Exception as exc:
         logger.error("[AGENT] run failed: %s", exc, exc_info=True)
-        await _status_edit(status_msg, f"❌ Ошибка агента: {exc}")
-        return
+        message = f"Ошибка агента: {exc}"
+        await _status_edit(status_msg, f"❌ {message}")
+        return ae.AgentResult.failure(message)
 
     if result.finished_reason == "error":
         await _status_edit(status_msg, f"❌ {result.error or 'Неизвестная ошибка'}")
-        return
+        return result
     if result.finished_reason == "max_iterations":
         await _status_edit(status_msg, f"⚠️ {result.error or 'Лимит итераций'}")
         return result
+
+    from services.ai_engine import get_current_ai
+    _, active_model = get_current_ai()
 
     await finalize_answer(
         uid,
         status_msg.edit_text,
         result.final_answer,
         ctx=ctx or {},
-        title="<b>🤖 Агент</b>",
+        title=f"<b>🤖 Агент ({active_model})</b>",
     )
     return result
 
@@ -152,7 +166,7 @@ async def cb_ab_agent(cb: types.CallbackQuery):
 
     # Create button-mode session
     ctx_store = get_agent_context_store()
-    session_id = ctx_store.create_button_session(answer.sid)
+    session_id = ctx_store.create_button_session()
     ctx_store.bind_button_session_to_uid(cb.from_user.id, session_id)
 
     # Store session_id in answer.ctx for follow-up routing
@@ -176,8 +190,8 @@ async def cb_ab_agent(cb: types.CallbackQuery):
         cb.from_user.id, status, prompt, question, ctx=ctx, conversation_history=[]
     )
 
-    # Save agent response to button session history
-    if result.final_answer:
+    # Save only a successful agent response to button session history
+    if result.ok and result.final_answer:
         ctx_store.append_button_context(session_id, "assistant", result.final_answer)
 
 

@@ -5,8 +5,6 @@
 import asyncio
 import logging
 
-import pytest
-
 import services.auto_sync as auto_sync
 
 

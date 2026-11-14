@@ -159,12 +159,12 @@ async def test_cb_analyze_last_photo_success(monkeypatch, tmp_path):
     monkeypatch.setattr(ph, "encode_image_to_base64", lambda path: "b64data")
     monkeypatch.setattr(ph, "search_palace_context", _async_none)
     monkeypatch.setattr(ph, "get_smart_prompt", lambda **kw: "SYSTEM")
-    monkeypatch.setattr(ph, "get_ai_response_sync_wrapper", lambda *a, **kw: "очень полезный ответ про фото")
+    monkeypatch.setattr(ph, "call_ai_sync", lambda *a, **kw: "очень полезный ответ про фото")
     monkeypatch.setattr(ph, "safe_html_format", lambda t: t)
     monkeypatch.setattr(ph, "split_message", lambda t: [t])
 
-    async def fake_to_thread(fn):
-        return fn()
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
 
     monkeypatch.setattr(ph.asyncio, "to_thread", fake_to_thread)
     await ph.cb_analyze_last_photo(cb)
@@ -210,7 +210,10 @@ async def test_cb_analyze_last_photo_no_base64(monkeypatch, tmp_path):
     monkeypatch.setattr(ph, "encode_image_to_base64", lambda path: "")
     await ph.cb_analyze_last_photo(cb)
     # format_user_error для ValueError возвращает "❌ Некорректные данные"
-    assert any("Некорректные данные" in (b[0] if isinstance(b, tuple) else b) for b in cb.message.answers)
+    assert any(
+        "Некорректные данные" in (b[0] if isinstance(b, tuple) else b)
+        for b in cb.message.answers
+    )
 
 
 @pytest.mark.asyncio
@@ -228,7 +231,7 @@ async def test_cb_analyze_last_photo_analysis_error(monkeypatch, tmp_path):
     def boom(*a, **kw):
         raise RuntimeError("model timeout")
 
-    monkeypatch.setattr(ph, "get_ai_response_sync_wrapper", boom)
+    monkeypatch.setattr(ph, "call_ai_sync", boom)
     await ph.cb_analyze_last_photo(cb)
     assert any("❌ Ошибка" in (b[0] if isinstance(b, tuple) else b) for b in cb.message.answers)
 
@@ -239,7 +242,9 @@ async def test_cb_analyze_last_photo_analysis_error(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_cb_show_links_success(monkeypatch, tmp_path):
     _, notes = _enable(monkeypatch, tmp_path)
-    (notes / "note1.md").write_text("тело\n## 🔗 Связанные записи\nсвязь А\nсвязь Б", encoding="utf-8")
+    (notes / "note1.md").write_text(
+        "тело\n## 🔗 Связанные записи\nсвязь А\nсвязь Б", encoding="utf-8",
+    )
     cb = FakeCb(4242, data="show_links:note1.md")
     await ph.cb_show_links(cb)
     assert "Связанные записи" in cb.message.answers[0][0]
@@ -376,23 +381,6 @@ async def test_handle_photo_save_returns_empty(monkeypatch, tmp_path):
     assert "Ошибка выполнения" in msg.answers[0][0]
 
 
-def test_get_ai_response_sync_wrapper_calls_sync_ai_call(monkeypatch):
-    """Реальный _sync_ai_call через обёртку (47-49)."""
-    calls = []
-
-    def fake_sync(*a, **kw):
-        calls.append((a, kw))
-        return "ответ"
-
-    monkeypatch.setattr("services.ai_engine._sync_ai_call", fake_sync)
-    out = ph.get_ai_response_sync_wrapper("e", "m", [{"role": "user", "content": "x"}], context="c", user_query="q", has_images=True)
-    assert out == "ответ"
-    assert calls[0][0][:3] == ("e", "m", [{"role": "user", "content": "x"}])
-    assert calls[0][0][3] == "c"
-    assert calls[0][0][4] == "q"
-    assert calls[0][0][5] is True
-
-
 @pytest.mark.asyncio
 async def test_cb_analyze_last_photo_empty_parts_skipped(monkeypatch, tmp_path):
     """Пустые части ответа пропускаются (167->166)."""
@@ -405,12 +393,12 @@ async def test_cb_analyze_last_photo_empty_parts_skipped(monkeypatch, tmp_path):
     monkeypatch.setattr(ph, "encode_image_to_base64", lambda path: "b64")
     monkeypatch.setattr(ph, "search_palace_context", _async_none)
     monkeypatch.setattr(ph, "get_smart_prompt", lambda **kw: "S")
-    monkeypatch.setattr(ph, "get_ai_response_sync_wrapper", lambda *a, **kw: "ok")
+    monkeypatch.setattr(ph, "call_ai_sync", lambda *a, **kw: "ok")
     monkeypatch.setattr(ph, "safe_html_format", lambda t: t)
     monkeypatch.setattr(ph, "split_message", lambda t: ["part1", "", "part3"])
 
-    async def fake_to_thread(fn):
-        return fn()
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
 
     monkeypatch.setattr(ph.asyncio, "to_thread", fake_to_thread)
     await ph.cb_analyze_last_photo(cb)
@@ -431,12 +419,12 @@ async def test_cb_analyze_last_photo_html_send_fails_fallback(monkeypatch, tmp_p
     monkeypatch.setattr(ph, "encode_image_to_base64", lambda path: "b64")
     monkeypatch.setattr(ph, "search_palace_context", _async_none)
     monkeypatch.setattr(ph, "get_smart_prompt", lambda **kw: "S")
-    monkeypatch.setattr(ph, "get_ai_response_sync_wrapper", lambda *a, **kw: "ok")
+    monkeypatch.setattr(ph, "call_ai_sync", lambda *a, **kw: "ok")
     monkeypatch.setattr(ph, "safe_html_format", lambda t: t)
     monkeypatch.setattr(ph, "split_message", lambda t: ["контент"])
 
-    async def fake_to_thread(fn):
-        return fn()
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
 
     monkeypatch.setattr(ph.asyncio, "to_thread", fake_to_thread)
 
@@ -465,12 +453,12 @@ async def test_cb_analyze_last_photo_status_delete_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(ph, "encode_image_to_base64", lambda path: "b64")
     monkeypatch.setattr(ph, "search_palace_context", _async_none)
     monkeypatch.setattr(ph, "get_smart_prompt", lambda **kw: "S")
-    monkeypatch.setattr(ph, "get_ai_response_sync_wrapper", lambda *a, **kw: "ok")
+    monkeypatch.setattr(ph, "call_ai_sync", lambda *a, **kw: "ok")
     monkeypatch.setattr(ph, "safe_html_format", lambda t: t)
     monkeypatch.setattr(ph, "split_message", lambda t: ["x"])
 
-    async def fake_to_thread(fn):
-        return fn()
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
 
     monkeypatch.setattr(ph.asyncio, "to_thread", fake_to_thread)
 

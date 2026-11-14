@@ -6,9 +6,9 @@ get_mcp() замокан: проверяется маршрутизация ар
 
 import pytest
 
+from services import agent_engine as ae
 from services import agent_mcp_tools as amt
 from services import agent_tools as at
-from services import agent_engine as ae
 
 
 class FakeMCP:
@@ -228,3 +228,41 @@ def _make_harness(script):
 
     harness = ModelHarness(script=script)
     return harness
+
+
+@pytest.mark.asyncio
+async def test_mempalace_list_wings_tool(fake_mcp):
+    tool = at.get_tool("mempalace_list_wings")
+    assert tool is not None
+    out = await at.execute_tool(tool, {})
+    assert "результат mempalace_list_wings" in out
+    assert fake_mcp.calls[-1] == ("mempalace_list_wings", {})
+
+
+@pytest.mark.asyncio
+async def test_mempalace_list_rooms_tool(fake_mcp):
+    tool = at.get_tool("mempalace_list_rooms")
+    assert tool is not None
+    out = await at.execute_tool(tool, {"wing": "it"})
+    assert "результат mempalace_list_rooms" in out
+    assert fake_mcp.calls[-1] == ("mempalace_list_rooms", {"wing": "it"})
+
+
+@pytest.mark.asyncio
+async def test_mempalace_list_tunnels_tool(fake_mcp):
+    tool = at.get_tool("mempalace_list_tunnels")
+    assert tool is not None
+    out = await at.execute_tool(tool, {})
+    assert "результат mempalace_list_tunnels" in out
+    assert fake_mcp.calls[-1] == ("mempalace_list_tunnels", {})
+
+
+@pytest.mark.asyncio
+async def test_mempalace_list_drawers_tool(fake_mcp):
+    tool = at.get_tool("mempalace_list_drawers")
+    assert tool is not None
+    out = await at.execute_tool(tool, {"wing": "it", "room": "dev", "limit": 10})
+    assert "результат mempalace_list_drawers" in out
+    assert fake_mcp.calls[-1] == (
+        "mempalace_list_drawers", {"wing": "it", "room": "dev", "limit": 10},
+    )

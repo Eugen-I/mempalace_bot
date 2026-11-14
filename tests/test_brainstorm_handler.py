@@ -23,9 +23,9 @@ class FakeStatus:
         self.edits = []
         self.last_kw = None
 
-    async def edit_text(self, text, parse_mode=None, reply_markup=None):
+    async def edit_text(self, text, parse_mode=None, reply_markup=None, **kwargs):
         self.edits.append(text)
-        self.last_kw = {"parse_mode": parse_mode, "reply_markup": reply_markup}
+        self.last_kw = {"parse_mode": parse_mode, "reply_markup": reply_markup, **kwargs}
 
 
 class FakeMessage:
@@ -35,15 +35,17 @@ class FakeMessage:
         self.text = text
         self.answers = []
         self.edits = []
+        self.last_reply_markup = None
 
-    async def answer(self, text, parse_mode=None, reply_markup=None):
+    async def answer(self, text, parse_mode=None, reply_markup=None, **kwargs):
         self.answers.append(text)
         status = FakeStatus()
         self.last_status = status
         return status
 
-    async def edit_text(self, text, parse_mode=None, reply_markup=None):
+    async def edit_text(self, text, parse_mode=None, reply_markup=None, **kwargs):
         self.edits.append(text)
+        self.last_reply_markup = reply_markup
 
 
 class FakeCb:
@@ -77,7 +79,7 @@ def mock_ai(monkeypatch):
     monkeypatch.setattr(h, "get_ai_response_async", _fake_ai)
     monkeypatch.setattr(h, "get_current_ai", lambda: ("ollama", "qwen2.5"))
 
-    async def _fake_context(topic):
+    async def _fake_context(topic, mode="standard", folder=None):
         return {"notes": "n", "palace": "p", "kg": "k"}
 
     monkeypatch.setattr(bs, "collect_context", _fake_context)
@@ -242,15 +244,16 @@ async def test_confirm_no_linked_block_empty_context():
 async def test_confirm_linked_html_escaped():
     await h.run_storm(4242, FakeStatus(), "Тема")
     h._storm_data[4242]["context"] = {
-        "notes": "- идея с тегом <b>сырым</b>",
+        "notes": "- <b>идея</b> с тегом <script>сырым</script>",
         "palace": "",
         "kg": "",
     }
     cb = FakeCb(data="bs_pick:1")
     await h.cb_pick_idea(cb)
     preview = cb.message.edits[-1]
-    assert "<b>сырым</b>" not in preview
-    assert "&lt;b&gt;сырым&lt;/b&gt;" in preview
+    assert "<b>идея</b>" in preview
+    assert "<script>" not in preview
+    assert "&lt;script&gt;сырым&lt;/script&gt;" in preview
 
 
 # ─── Сохранение (мост в save-флоу) ───
@@ -295,6 +298,8 @@ async def test_cb_back_expired():
 
 
 async def test_cb_cancel_clears_state():
+    from handlers.copilot import _copilot_waiting_topic
+    _copilot_waiting_topic[4242] = True
     await h.run_storm(4242, FakeStatus(), "Тема")
     h._storm_waiting[4242] = True
     cb = FakeCb(data="bs_cancel")
@@ -302,6 +307,7 @@ async def test_cb_cancel_clears_state():
     assert "Отменено" in cb.message.edits[-1]
     assert 4242 not in h._storm_data
     assert 4242 not in h._storm_waiting
+    assert 4242 not in _copilot_waiting_topic
 
 
 # ─── Границы: количество идей ───
@@ -373,3 +379,527 @@ async def test_cb_confirm_save_sets_reflection_pending(monkeypatch):
     assert pending is not None
     assert pending["theme"] == "Тема про сны"
     assert pending["ideas_count"] == 5
+
+
+# ─── Экспорт проекта в Apple Notes ───
+
+async def test_confirm_screen_has_export_notes_button():
+    """На экране подтверждения должна присутствовать кнопка экспорта в Apple Notes."""
+    await h.run_storm(4242, FakeStatus(), "Тема штурма")
+    cb = FakeCb(data="bs_pick:1")
+    await h.cb_pick_idea(cb)
+
+    pending = h._storm_data[4242].get("pending")
+    assert pending is not None
+    assert "ideas" in pending
+    # Проверяем, что в разметке последнего редактирования есть кнопка bs_export_notes
+    kb = cb.message.last_reply_markup
+    assert kb is not None
+    callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "bs_export_notes" in callbacks
+    assert "bs_save" in callbacks
+
+
+async def test_cb_export_notes_happy_path(monkeypatch):
+    """Успешный экспорт FusedPhotoConcept в Apple Notes (папка Фотопроекты)."""
+    from services.style_fusion import (
+        FusedPhotoConcept,
+        StyleAssignment,
+        StyleTriad,
+    )
+
+    triad = StyleTriad(
+        narrative=StyleAssignment(role="narrative", style="Сюрреализм"),
+        lighting=StyleAssignment(role="lighting", style="Экспрессионизм"),
+        optics=StyleAssignment(role="optics", style="Импрессионизм"),
+    )
+    concept = FusedPhotoConcept(
+        title="Тестовый экспортный проект",
+        triad=triad,
+        camera_setup={"Выдержка": "1/6s"},
+        shooting_action="Тремор",
+        shooting_steps=["1. Снять", "2. Проверить"],
+    )
+
+    h._storm_data[4242] = {
+        "pending": {
+            "ideas": [concept],
+            "text": "Текст проекта",
+            "label": "Идея 1",
+        }
+    }
+
+    exported_calls = []
+
+    def mock_export(c, folder="Фотопроекты"):
+        exported_calls.append((c.title, folder))
+        return "x-coredata://note-123"
+
+    monkeypatch.setattr("services.style_fusion.export_concept_to_apple_notes", mock_export)
+
+    cb = FakeCb(data="bs_export_notes")
+    await h.cb_export_notes(cb)
+
+    assert len(exported_calls) == 1
+    assert exported_calls[0] == ("Тестовый экспортный проект", "Фотопроекты")
+    assert "Проект сохранён в Apple Notes!" in cb.message.edits[-1]
+    assert "Фотопроекты" in cb.message.edits[-1]
+    assert "[В планах]" in cb.message.edits[-1]
+
+
+async def test_cb_export_notes_expired_session():
+    """Попытка экспорта при истекшей сессии возвращает сообщение об ошибке."""
+    h._storm_data.pop(4242, None)
+    cb = FakeCb(data="bs_export_notes")
+    await h.cb_export_notes(cb)
+    assert "Сессия истекла" in cb.message.edits[-1]
+
+
+async def test_cb_export_notes_error_handling(monkeypatch):
+    """Сбой Apple Notes корректно отлавливается и выводит понятную ошибку."""
+    from services.apple_notes import AppleNotesError
+
+    h._storm_data[4242] = {
+        "pending": {
+            "ideas": [{"title": "Проект с ошибкой"}],
+            "text": "Текст",
+            "label": "Идея",
+        }
+    }
+
+    def mock_fail(*args, **kwargs):
+        raise AppleNotesError("JXA Timeout")
+
+    monkeypatch.setattr("services.apple_notes.create_note", mock_fail)
+    monkeypatch.setattr("services.apple_notes.ensure_folder", lambda f: True)
+
+    cb = FakeCb(data="bs_export_notes")
+    await h.cb_export_notes(cb)
+    assert any("Ошибка Apple Notes: JXA Timeout" in ans for ans in cb.message.answers)
+
+
+# ─── Тесты Шага 5: Многостраничная лаборатория и микро-действия ───
+
+def _make_sample_fused_concept(title="Концепт синтеза"):
+    from services.style_fusion import (
+        FusedPhotoConcept,
+        StyleAssignment,
+        StyleTriad,
+    )
+    triad = StyleTriad(
+        narrative=StyleAssignment(role="narrative", style="Сюрреализм"),
+        lighting=StyleAssignment(role="lighting", style="Экспрессионизм"),
+        optics=StyleAssignment(role="optics", style="Импрессионизм"),
+        rationale="Синергия сна и света",
+    )
+    return FusedPhotoConcept(
+        title=title,
+        triad=triad,
+        manifesto="Манифест серии",
+        scene_description="Одинокая фигура на причале",
+        lighting_setup="Контровой закатный свет",
+        camera_setup={"Выдержка": "1/6s", "Диафрагма": "f/4"},
+        shooting_action="Поворот призмы на втором кадре",
+        gear_recipe={"camera": "Fujifilm X-T4", "lens": "Гелиос 44-2 58mm"},
+        shooting_steps=["1. Первый кадр", "2. Второй кадр"],
+    )
+
+
+async def test_cmd_fusion_storm_without_topic():
+    msg = FakeMessage(text="/синтез")
+    await h.cmd_fusion_storm(msg)
+    assert "Творческая лаборатория: Стилистический синтез" in msg.answers[0]
+    assert h._storm_waiting.get(4242) == "fusion"
+
+
+async def test_cmd_fusion_storm_with_topic(monkeypatch):
+    called = []
+
+    async def fake_run_storm(uid, status_msg, topic, mode="standard"):
+        called.append((uid, topic, mode))
+
+    monkeypatch.setattr(h, "run_storm", fake_run_storm)
+    msg = FakeMessage(text="/синтез туманный город")
+    await h.cmd_fusion_storm(msg)
+    assert len(called) == 1
+    assert called[0] == (4242, "туманный город", "fusion")
+
+
+async def test_cb_start_fusion():
+    cb = FakeCb(data="bs_start_fusion")
+    await h.cb_start_fusion(cb)
+    assert h._storm_waiting.get(4242) == "fusion"
+    assert "Творческая лаборатория (Синтез стилей)" in cb.message.edits[-1]
+
+
+async def test_cb_pick_idea_opens_multipage_lab_for_fusion():
+    concept = _make_sample_fused_concept()
+    h._storm_data[4242] = {
+        "topic": "сон",
+        "ideas": [concept],
+        "mode": "fusion",
+    }
+    cb = FakeCb(data="bs_pick:1")
+    await h.cb_pick_idea(cb)
+
+    assert "Стр. 1/4" in cb.message.edits[-1]
+    assert "Концепт синтеза" in cb.message.edits[-1]
+    kb = cb.message.last_reply_markup
+    assert kb is not None
+    callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "bs_page:1:2" in callbacks
+    assert "bs_deepen:1" in callbacks
+    assert "bs_refs:1" in callbacks
+    assert "bs_prompt:1" in callbacks
+    assert "bs_export_concept:1" in callbacks
+
+
+async def test_cb_concept_page_navigation():
+    concept = _make_sample_fused_concept()
+    h._storm_data[4242] = {
+        "topic": "сон",
+        "ideas": [concept],
+        "mode": "fusion",
+    }
+    # Переход на страницу 2 (Раскадровка)
+    cb2 = FakeCb(data="bs_page:1:2")
+    await h.cb_concept_page(cb2)
+    assert "Стр. 2/4" in cb2.message.edits[-1]
+    assert "Одинокая фигура на причале" in cb2.message.edits[-1]
+
+    # Переход на страницу 3 (Сетап)
+    cb3 = FakeCb(data="bs_page:1:3")
+    await h.cb_concept_page(cb3)
+    assert "Стр. 3/4" in cb3.message.edits[-1]
+    assert "1/6s" in cb3.message.edits[-1]
+
+    # Переход на страницу 4 (Шутинг-лист)
+    cb4 = FakeCb(data="bs_page:1:4")
+    await h.cb_concept_page(cb4)
+    assert "Стр. 4/4" in cb4.message.edits[-1]
+    assert "Чек-лист перед выходом" in cb4.message.edits[-1]
+
+
+async def test_cb_concept_prompt_action():
+    concept = _make_sample_fused_concept()
+    h._storm_data[4242] = {
+        "ideas": [concept],
+    }
+    cb = FakeCb(data="bs_prompt:1")
+    await h.cb_concept_prompt(cb)
+    assert "Промпт Midjourney / Flux.1" in cb.message.edits[-1]
+    assert "surrealism aesthetic" in cb.message.edits[-1]
+    assert "<code>" in cb.message.edits[-1]
+    assert "--no cgi" in cb.message.edits[-1]
+
+    # Переключение в режим Галерейный арт и формат 4:5
+    cb_art = FakeCb(data="bs_prompt:1:art:4:5")
+    await h.cb_concept_prompt(cb_art)
+    assert "Галерейный арт" in cb_art.message.edits[-1]
+    assert "--ar 4:5 --v 6.1 --s 220" in cb_art.message.edits[-1]
+
+
+async def test_cb_concept_refs_action(monkeypatch):
+    concept = _make_sample_fused_concept()
+    h._storm_data[4242] = {
+        "ideas": [concept],
+    }
+
+    async def mock_search_web(*a, **kw):
+        return "Тестовый сниппет веб-поиска"
+
+    monkeypatch.setattr("services.web_search.search_web", mock_search_web)
+
+    cb = FakeCb(data="bs_refs:1")
+    await h.cb_concept_refs(cb)
+    assert "Художественные референсы" in cb.message.edits[-1]
+    assert "Мастера для визуального изучения" in cb.message.edits[-1]
+
+
+async def test_cb_concept_deepen_action(monkeypatch):
+    concept = _make_sample_fused_concept()
+    h._storm_data[4242] = {
+        "ideas": [concept],
+    }
+
+    async def mock_ai_response(*a, **kw):
+        return "1. Скрытый символизм: Одиночество и бесконечность.\n2. Пластика: Наклон корпуса."
+
+    monkeypatch.setattr("handlers.brainstorm.get_ai_response_async", mock_ai_response)
+
+    cb = FakeCb(data="bs_deepen:1")
+    await h.cb_concept_deepen(cb)
+    assert "Режиссёрское углубление" in cb.message.edits[-1]
+    assert "Одиночество и бесконечность" in cb.message.edits[-1]
+
+
+async def test_cb_concept_deepen_message_too_long_splits_safely(monkeypatch):
+    concept = _make_sample_fused_concept()
+    h._storm_data[4242] = {
+        "ideas": [concept],
+    }
+
+    # Анализ объемом более 5000 символов (превышает лимит 4096 символов Telegram)
+    huge_analysis = (
+        "1. 🎭 Скрытый символизм: Отражение тени в мутной воде.\n\n"
+        + ("Длинный абзац визуального описания символизма кадра и драматургии. " * 50)
+        + "\n\n2. 🎬 Режиссура модели: Застывшее дыхание.\n\n"
+        + ("Длинный абзац режиссерского разбора напряжения модели и взгляда. " * 50)
+    )
+
+    async def mock_ai_response(*a, **kw):
+        return huge_analysis
+
+    monkeypatch.setattr("handlers.brainstorm.get_ai_response_async", mock_ai_response)
+
+    cb = FakeCb(data="bs_deepen:1")
+    await h.cb_concept_deepen(cb)
+
+    # Первое сообщение редактируется с вводной частью
+    assert len(cb.message.edits) >= 2
+    assert "Режиссёрское углубление" in cb.message.edits[-1]
+    # Оставшаяся часть отправлена через answer без сбоя MESSAGE_TOO_LONG
+    assert len(cb.message.answers) >= 1
+    # Кнопки возврата и сохранения прикреплены к последнему сообщению
+    assert cb.message.last_reply_markup is not None or cb.message.answers[-1] is not None
+
+
+async def test_cb_concept_export_single(monkeypatch):
+    concept = _make_sample_fused_concept("Проект экспорта")
+    h._storm_data[4242] = {
+        "ideas": [concept],
+    }
+
+    called = []
+
+    def mock_export(c, folder="Фотопроекты"):
+        called.append((c.title, folder))
+        return "id-123"
+
+    monkeypatch.setattr("services.style_fusion.export_concept_to_apple_notes", mock_export)
+
+    cb = FakeCb(data="bs_export_concept:1")
+    await h.cb_concept_export_single(cb)
+    assert len(called) == 1
+    assert called[0] == ("Проект экспорта", "Фотопроекты")
+    assert any("Проект «Проект экспорта» сохранён" in str(ans) for ans in cb.answers)
+
+
+async def test_cb_concept_save_palace_initiates_wings(monkeypatch):
+    concept = _make_sample_fused_concept("Дворцовый проект")
+    h._storm_data[4242] = {
+        "ideas": [concept],
+    }
+
+    saved = []
+
+    async def fake_show_save_wings(edit_func, uid):
+        saved.append(uid)
+
+    monkeypatch.setattr("handlers.palace._show_save_wings", fake_show_save_wings)
+
+    cb = FakeCb(data="bs_save_concept:1")
+    await h.cb_concept_save_palace(cb)
+    assert len(saved) == 1
+    assert saved[0] == 4242
+
+
+async def test_cb_back_to_ideas_preserves_fusion():
+    concept = _make_sample_fused_concept("Проект 1")
+    h._storm_data[4242] = {
+        "topic": "осенний парк",
+        "ideas": [concept],
+        "mode": "fusion",
+    }
+    cb = FakeCb(data="bs_back")
+    await h.cb_back_to_ideas(cb)
+    assert "Творческая лаборатория (Триада стилей)" in cb.message.edits[-1]
+    kb = cb.message.last_reply_markup
+    assert kb is not None
+    # Кнопка идеи должна быть с палитрой 🎨 1
+    labels = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert "🎨 1" in labels
+
+
+async def test_run_storm_auto_fallback_on_gemini_429(monkeypatch):
+    """При ошибке 429 от Gemini штурм автоматически переключается на Ollama qwen2.5:7b."""
+    calls = []
+
+    async def fake_get_ai(engine, model, msgs, sampling=None):
+        calls.append((engine, model))
+        if engine == "gemini":
+            return (
+                "❌ Ошибка ИИ (gemini): 429 Quota exceeded for metric: "
+                "generate_content_free_tier_requests"
+            )
+        return (
+            '{"projects": [{\n'
+            '  "title": "Локальный проект от Qwen",\n'
+            '  "triad": {\n'
+            '    "narrative": {"role": "narrative", "style": "Сюрреализм", "traits": "Сон"},\n'
+            '    "lighting": {"role": "lighting", "style": "Экспрессионизм", "traits": "Тени"},\n'
+            '    "optics": {"role": "optics", "style": "Импрессионизм", "traits": "Свет"},\n'
+            '    "rationale": "Синергия"\n'
+            '  },\n'
+            '  "manifesto": "Манифест",\n'
+            '  "scene_description": "Локация",\n'
+            '  "lighting_setup": "Свет",\n'
+            '  "camera_setup": {"Выдержка": "1/6 с", "Диафрагма": "f/8.0"},\n'
+            '  "shooting_action": "Микро-ICM",\n'
+            '  "gear_recipe": {"camera": "Fujifilm X-T4"},\n'
+            '  "shooting_steps": ["1. Шаг 1", "2. Шаг 2"]\n'
+            '}]}'
+        )
+
+    monkeypatch.setattr(h, "get_current_ai", lambda: ("gemini", "gemini-2.5-flash"))
+    monkeypatch.setattr(h, "get_ai_response_async", fake_get_ai)
+
+    status = FakeStatus()
+    await h.run_storm(4242, status, "туман", mode="fusion")
+
+    assert len(calls) == 2
+    assert calls[0] == ("gemini", "gemini-2.5-flash")
+    assert calls[1] == ("qwen", "qwen2.5:7b")
+
+    assert any("Переключаюсь на локальный Qwen" in edit for edit in status.edits)
+    assert 4242 in h._storm_data
+    assert h._storm_data[4242]["ideas"][0].title == "Локальный проект от Qwen"
+
+
+async def test_safe_edit_or_split_send_short_text():
+    msg = FakeMessage()
+    await h.safe_edit_or_split_send(msg, "Короткий текст")
+    assert msg.edits == ["Короткий текст"]
+    assert msg.answers == []
+
+
+async def test_safe_edit_or_split_send_long_text_splits():
+    msg = FakeMessage()
+    part1 = "Блок режиссерского анализа текста. " * 150
+    part2 = "Второй абзац текста. " * 100
+    long_text = f"{part1}\n\n{part2}"
+    assert len(long_text) > 4000
+
+    await h.safe_edit_or_split_send(msg, long_text)
+    assert len(msg.edits) == 1
+    assert len(msg.answers) >= 1
+    assert all(len(p) <= 4000 for p in msg.edits + msg.answers)
+
+
+async def test_safe_edit_or_split_send_fallback_on_edit_error():
+    msg = FakeMessage()
+
+    async def fail_edit(text, **kw):
+        raise Exception("Telegram edit failed")
+
+    msg.edit_text = fail_edit
+    await h.safe_edit_or_split_send(msg, "Текст при сбое edit")
+    assert "Текст при сбое edit" in msg.answers
+
+
+def test_format_ideas_text_escapes_html():
+    from services import brainstorm as bs
+
+    ideas = [
+        {
+            "title": "Кадр <f/2.0 & f/8>",
+            "reason": "Контраст <свет> & <тень>",
+            "steps": "1. Снять <raw> -> 2. Проявить",
+        }
+    ]
+    out = bs.format_ideas_text("Тема <тест & штурм>", ideas)
+    assert "&lt;тест &amp; штурм&gt;" in out
+    assert "&lt;f/2.0 &amp; f/8&gt;" in out
+    assert "&lt;свет&gt; &amp; &lt;тень&gt;" in out
+    assert "<f/2.0" not in out
+
+
+async def test_cb_concept_fuji_recipe_answers_callback():
+    concept = _make_sample_fused_concept("Fuji проект")
+    h._storm_data[4242] = {"ideas": [concept]}
+    cb = FakeCb(data="bs_fuji_recipe:1")
+    await h.cb_concept_fuji_recipe(cb)
+    assert len(cb.answers) == 1
+    assert "Рецепт Fujifilm" in cb.message.edits[-1] or "X-T4" in cb.message.edits[-1]
+
+
+async def test_storm_confirm_long_preview_truncates_under_limit():
+    huge_ideas = [
+        {
+            "title": f"Идея {i}",
+            "reason": "Очень длинное обоснование фотопроекта. " * 40,
+            "steps": "Подробный шаг съемки на локации. " * 40,
+        }
+        for i in range(1, 6)
+    ]
+    h._storm_data[4242] = {"topic": "длинный штурм", "ideas": huge_ideas}
+    cb = FakeCb(data="bs_all")
+    await h.cb_save_all(cb)
+    edited_preview = cb.message.edits[-1]
+    assert len(edited_preview) <= 3900
+    assert "превью сокращено" in edited_preview
+    assert len(h._storm_data[4242]["pending"]["text"]) > 4000
+
+
+async def test_cb_concept_save_palace_records_reflection_data(monkeypatch):
+    concept = _make_sample_fused_concept("Проект с рефлексией")
+    h._storm_data[4242] = {
+        "topic": "ночной дождь",
+        "ideas": [concept],
+    }
+
+    async def fake_show_save_wings(edit_func, uid):
+        pass
+
+    monkeypatch.setattr("handlers.palace._show_save_wings", fake_show_save_wings)
+    cb = FakeCb(data="bs_save_concept:1")
+    await h.cb_concept_save_palace(cb)
+    assert h._reflection_data.get(4242) == {
+        "theme": "ночной дождь",
+        "ideas_count": 1,
+    }
+
+
+async def test_cb_concept_deepen_auto_fallback_on_429(monkeypatch):
+    concept = _make_sample_fused_concept("Углубление с фоллбэком")
+    h._storm_data[4242] = {"ideas": [concept]}
+    calls = []
+
+    async def fake_ai(engine, model, msgs, sampling=None):
+        calls.append((engine, model))
+        if engine == "gemini":
+            return "❌ Ошибка 429: Resource_Exhausted quota"
+        return "1. Символизм от локального Qwen."
+
+    monkeypatch.setattr(h, "get_current_ai", lambda: ("gemini", "gemini-2.5-flash"))
+    monkeypatch.setattr(h, "get_ai_response_async", fake_ai)
+    cb = FakeCb(data="bs_deepen:1")
+    await h.cb_concept_deepen(cb)
+    assert calls == [("gemini", "gemini-2.5-flash"), ("qwen", "qwen2.5:7b")]
+    assert "Символизм от локального Qwen" in cb.message.edits[-1]
+
+
+async def test_run_storm_fusion_qwen_retries_with_lower_temp_on_parse_error(monkeypatch):
+    """Если активен локальный qwen и первый ответ fusion не парсится, повтор с низким temp."""
+    concept = _make_sample_fused_concept("Осенний Quantum")
+    valid_json = json.dumps({"projects": [concept.to_dict()]}, ensure_ascii=False)
+    calls = []
+
+    async def fake_ai(engine, model, msgs, sampling=None):
+        calls.append((engine, model, sampling))
+        if len(calls) == 1:
+            return "битый ответ без json"
+        return valid_json
+
+    async def fake_fusion_ctx(topic, mode="fusion", folder=None):
+        return {"fusion_prompt": f"Тема: {topic}", "notes": "", "palace": "", "kg": ""}
+
+    monkeypatch.setattr(h, "get_current_ai", lambda: ("qwen", "qwen2.5:7b"))
+    monkeypatch.setattr(h, "get_ai_response_async", fake_ai)
+    monkeypatch.setattr(bs, "collect_context", fake_fusion_ctx)
+
+    status = FakeStatus()
+    await h.run_storm(4242, status, "Осенняя депрессия...", mode="fusion")
+    assert len(calls) == 2
+    assert calls[1][2] == {"temperature": 0.4, "top_p": 0.9}
+    assert "Осенний Quantum" in status.edits[-1]

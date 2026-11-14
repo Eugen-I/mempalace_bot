@@ -195,7 +195,7 @@ async def test_handle_pdf_download_error(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_handle_pdf_single_mode(monkeypatch, tmp_path):
-    tmp = _enable(monkeypatch, tmp_path)
+    _enable(monkeypatch, tmp_path)
     saved = []
     monkeypatch.setattr(
         pdf_h, "save_pdf_original", lambda src, name: saved.append((src, name)),

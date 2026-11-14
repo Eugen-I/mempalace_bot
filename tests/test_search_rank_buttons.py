@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from tests.test_action_bar import FakeMessage, _markup_data, TEST_UID
+from tests.test_action_bar import TEST_UID, FakeMessage, _markup_data
 
 
 @pytest.fixture(autouse=True)

@@ -8,7 +8,7 @@ import json
 import pytest
 
 from handlers.palace import navigation
-from tests.test_action_bar import FakeCallback, FakeMessage, TEST_UID
+from tests.test_action_bar import TEST_UID, FakeCallback, FakeMessage
 
 LANG_DIRECTIVE = "Отвечай на русском языке"
 

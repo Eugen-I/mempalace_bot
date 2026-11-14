@@ -24,9 +24,10 @@ logger = logging.getLogger("AgentTools")
 CAT_SYSTEM = "system"
 CAT_PALACE = "palace"
 CAT_NOTES = "notes"
+CAT_WEB = "web"
 
 # Все категории, разрешённые агенту по умолчанию (read-only набор)
-DEFAULT_ALLOWED_CATEGORIES = (CAT_SYSTEM, CAT_PALACE, CAT_NOTES)
+DEFAULT_ALLOWED_CATEGORIES = (CAT_SYSTEM, CAT_PALACE, CAT_NOTES, CAT_WEB)
 
 # Лимит символов результата инструмента, возвращаемого модели
 TOOL_RESULT_LIMIT = 8000

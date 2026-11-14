@@ -1,8 +1,9 @@
+import html
+import os
+from datetime import datetime
+
 from aiogram import F, Router, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from datetime import datetime
-import os
-import html
 
 from config import NOTES_DIR, TAVILY_API_KEY, allowed_callback
 from handlers.messages import _last_user_query
@@ -18,8 +19,9 @@ async def search_with_ai_evaluation(
     Поиск: сначала бесплатные движки, затем AI оценка, затем Tavily при необходимости.
     """
     import secrets
-    from services.web_search import _search_all_engines
+
     from services.tavily_search import search_tavily
+    from services.web_search import _search_all_engines
 
     search_id = f"ws_{secrets.token_hex(8)}"
 

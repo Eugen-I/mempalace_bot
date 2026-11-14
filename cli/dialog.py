@@ -3,22 +3,51 @@ import os
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.key_binding import KeyBindings
 
-from services.ai_engine import get_current_ai
-from cli.menu import load_chat, save_chat
 from cli.commands import (
-    cmd_photos, cmd_analyze_photo, cmd_sound_toggle, cmd_sound_speed,
-    cmd_history, cmd_export, cmd_search,
-    cmd_status, cmd_mcp, cmd_wakeup, cmd_repair, cmd_compact, cmd_compress, cmd_palace,
-    cmd_wings, cmd_rooms, cmd_taxonomy, cmd_graph, cmd_traverse,
-    cmd_tunnels, cmd_follow, cmd_kg, cmd_kgstats, cmd_enrich, cmd_sync,
-    cmd_remind, cmd_pdfs, cmd_yt, cmd_transkript, cmd_kgadd, cmd_files,
-    cmd_settings, cmd_web, save_quick_note, save_extraction, process_ai_query,
+    cmd_analyze_photo,
+    cmd_compact,
+    cmd_compress,
+    cmd_enrich,
+    cmd_export,
+    cmd_files,
+    cmd_follow,
+    cmd_graph,
+    cmd_history,
+    cmd_kg,
+    cmd_kgadd,
+    cmd_kgstats,
+    cmd_mcp,
+    cmd_palace,
+    cmd_pdfs,
+    cmd_photos,
+    cmd_remind,
+    cmd_repair,
+    cmd_rooms,
+    cmd_search,
+    cmd_settings,
+    cmd_sound_speed,
+    cmd_sound_toggle,
+    cmd_status,
+    cmd_sync,
+    cmd_taxonomy,
+    cmd_transkript,
+    cmd_traverse,
+    cmd_tunnels,
+    cmd_wakeup,
+    cmd_web,
+    cmd_wings,
+    cmd_yt,
+    process_ai_query,
+    save_extraction,
+    save_quick_note,
 )
-from cli.utils import C, format_for_terminal, get_cli_voice, is_noise_input
 from cli.help_sections import HELP_SECTIONS
+from cli.menu import load_chat, save_chat
+from cli.utils import C, format_for_terminal, get_cli_voice, is_noise_input
+from services.ai_engine import get_current_ai
 
 
 # CLI Completer for commands
@@ -36,7 +65,7 @@ class CLICompleter(Completer):
             'list', 'create', 'delete', 'analyze', 'between',
         ]
 
-    def get_completions(self, document, complete_event):
+    def get_completions(self, document, _complete_event):
         text = document.text_before_cursor
 
         if text.startswith('/tunnels '):
@@ -135,7 +164,7 @@ async def chat_loop(chat_path: str, session: PromptSession):
             continue
 
         if cmd in HELP_SECTIONS or cmd == "0":
-            from cli.help_sections import show_section, show_all_help
+            from cli.help_sections import show_all_help, show_section
             if cmd == "0":
                 show_all_help()
             else:

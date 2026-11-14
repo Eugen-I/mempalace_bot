@@ -7,7 +7,6 @@
 
 from services import camera_setup as cs
 
-
 # ─── happy path: полный dict из примера пользователя ───
 
 def test_format_full_dict_russian_labels():
@@ -344,3 +343,68 @@ def test_unknown_key_kept_as_is():
 def test_label_value_non_scalar_dict():
     text = cs._format_label_value("custom", {"a": 1, "b": 2})
     assert "custom: a: 1; b: 2" in text
+
+
+# ─── новые тесты: режимы мультиэкспозиции, движение рук и синтез стилей ───
+
+def test_camera_setup_blend_modes():
+    """Проверка перевода режимов наложения мультиэкспозиции."""
+    assert "Режим мультиэкспозиции: Тёмный" in cs.format_camera_setup(
+        {"режим мультиэкспозиции": "dark"}
+    )
+    assert "Режим мультиэкспозиции: Тёмный" in cs.format_camera_setup(
+        {"blend_mode": "тёмный"}
+    )
+    assert "Режим мультиэкспозиции: Тёмный" in cs.format_camera_setup(
+        {"multi_exposure_blend": "темный"}
+    )
+    assert "Режим мультиэкспозиции: Яркий" in cs.format_camera_setup(
+        {"режим наложения": "bright"}
+    )
+    assert "Режим мультиэкспозиции: Усреднённый" in cs.format_camera_setup(
+        {"blend_mode": "average"}
+    )
+    assert "Режим мультиэкспозиции: Аддитивный" in cs.format_camera_setup(
+        {"blend_mode": "additive"}
+    )
+    assert "Количество кадров мультиэкспозиции: 3 кадра" in cs.format_camera_setup(
+        {"количество кадров": "3 кадра"}
+    )
+    assert "Количество кадров мультиэкспозиции: 2-4 кадра" in cs.format_camera_setup(
+        {"frames": "2-4 кадра"}
+    )
+
+
+def test_camera_setup_movement_and_styles():
+    """Проверка форматирования движения рук и синтеза стилей."""
+    setup = {
+        "движение камеры": "Микро-тремор",
+        "синтез стилей": ["Сюрреализм", "Пиктореализм", "Импрессионизм"],
+        "режим привода": "Мультиэкспозиция",
+    }
+    text = cs.format_camera_setup(setup)
+    assert "• Движение камеры / Руки: Микро-тремор" in text
+    assert "• Синтез стилей: Сюрреализм, Пиктореализм, Импрессионизм" in text
+    assert "• Режим привода: Мультиэкспозиция" in text
+
+
+def test_camera_setup_icm_and_watercolor_shoot_types():
+    """Проверка приёмов съемки: микро-ICM и акварельная лессировка."""
+    assert "Приём съёмки: Микро-ICM" in cs.format_camera_setup(
+        {"приём съёмки": "микро-icm"}
+    )
+    assert "Приём съёмки: Микро-ICM" in cs.format_camera_setup(
+        {"type_of_shoot": "icm"}
+    )
+    assert "Приём съёмки: Акварельная лессировка" in cs.format_camera_setup(
+        {"type_of_shoot": "лессировка"}
+    )
+    assert "Приём съёмки: Акварельная лессировка" in cs.format_camera_setup(
+        {"shooting_mode": "акварельная лессировка"}
+    )
+
+
+def test_camera_setup_styles_as_single_string():
+    """Синтез стилей строкой (не списком) форматируется корректно."""
+    text = cs.format_camera_setup({"стили": "Сюрреализм + Экспрессионизм + Пиктореализм"})
+    assert "• Синтез стилей: Сюрреализм + Экспрессионизм + Пиктореализм" in text

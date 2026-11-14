@@ -215,3 +215,10 @@ async def _format_mcp_result(raw: str) -> str:
         return raw
     except (json.JSONDecodeError, TypeError):
         return raw
+
+
+def __getattr__(name: str):
+    if name == "_drawer_list_state":
+        from .navigation import _drawer_list_state
+        return _drawer_list_state
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

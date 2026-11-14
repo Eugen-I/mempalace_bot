@@ -1,6 +1,5 @@
 """Шаги BDD для features/palace_wing_select.feature."""
 import json
-from urllib.parse import parse_qs
 
 from behave import given, then, when
 
@@ -117,4 +116,6 @@ def step_show_both(context):
 def step_show_rooms(context):
     text = _last_text(context)
     assert f"Комнаты крыла {LONG_WING}" in text
-    assert "Комната" in text
+    markup = context.cb.message.edited[-1][1].get("reply_markup")
+    btn_texts = [b.text for row in markup.inline_keyboard for b in row]
+    assert any("Комната" in b for b in btn_texts)

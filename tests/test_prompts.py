@@ -1,16 +1,16 @@
 from services.prompts import (
-    get_smart_prompt,
-    get_summary_prompt,
     BASE_RULES,
     FOCUS_CODE_TECH,
     FOCUS_DREAMS_JUNG,
+    FOCUS_GENERAL_EXPERT,
     FOCUS_MEDICINE,
+    FOCUS_PHILOSIPHY,
     FOCUS_PHOTO_ART,
     FOCUS_PSYCHOLOGY,
-    FOCUS_PHILOSIPHY,
-    FOCUS_GENERAL_EXPERT,
     PDF_CHUNK_PROMPT,
     PDF_COMBINE_PROMPT,
+    get_smart_prompt,
+    get_summary_prompt,
 )
 
 
@@ -41,6 +41,16 @@ class TestGetSmartPrompt:
     def test_photo_analysis(self):
         result = get_smart_prompt(query="посмотри это фото", has_images=True)
         assert FOCUS_PHOTO_ART in result
+
+    def test_creative_photo_art_autumn_leaves(self):
+        result = get_smart_prompt(query="Осенние листья")
+        assert FOCUS_PHOTO_ART in result
+        assert "арт-директор" in result
+
+    def test_creative_photo_gear_context(self):
+        result = get_smart_prompt(query="как снять на pentacon")
+        assert FOCUS_PHOTO_ART in result
+        assert "Fujifilm X-T4" in result
 
     def test_dream_plus_photo(self):
         result = get_smart_prompt(query="мне приснился сон", has_images=True)

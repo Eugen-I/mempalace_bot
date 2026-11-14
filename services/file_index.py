@@ -30,7 +30,12 @@ from typing import Any
 import numpy as np
 
 from config import DATA_DIR
-from services.notes_embeddings import EMBED_MODEL, EmbeddingsError, _call_embed, is_model_available
+from services.notes_embeddings import (
+    EMBED_MODEL,
+    EmbeddingsError,
+    _call_embed,
+    is_model_available,
+)
 
 logger = logging.getLogger("FileIndex")
 

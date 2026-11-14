@@ -354,3 +354,20 @@ def test_callbacks_not_allowed(monkeypatch, data):
     }
     asyncio.run(mapping[data](cb))
     assert cb.answered == [("❌ Нет доступа", True)]
+
+
+def test_spawn_background_task_tracks_and_cleans_up():
+    """Регрессия: фоновые задачи хранятся в _background_tasks и удаляются по завершении."""
+    async def _scenario():
+        done = asyncio.Event()
+
+        async def _worker():
+            await done.wait()
+
+        a._spawn_background_task(_worker())
+        assert len(a._background_tasks) >= 1
+        done.set()
+        await asyncio.sleep(0.01)
+        assert len(a._background_tasks) == 0
+
+    asyncio.run(_scenario())

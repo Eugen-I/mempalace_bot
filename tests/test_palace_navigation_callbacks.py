@@ -4,12 +4,11 @@ import pytest
 
 from handlers.palace.navigation import (
     _build_room_callback_data,
-    _decode_room_callback_data,
     _decode_callback_part,
+    _decode_room_callback_data,
     _encode_callback_part,
 )
-
-from tests.test_action_bar import FakeCallback, FakeMessage, _markup_data, TEST_UID
+from tests.test_action_bar import TEST_UID, FakeCallback, FakeMessage, _markup_data
 
 
 @pytest.fixture(autouse=True)
@@ -45,6 +44,7 @@ def test_room_callback_data_round_trips_wing_and_room():
 
 def test_cb_continue_read_legacy_degrades_with_alert():
     import asyncio
+
     from handlers.palace import navigation
 
     cb = FakeCallback("p_cr:3500")
@@ -57,10 +57,11 @@ def test_cb_continue_read_legacy_degrades_with_alert():
 
 def test_cb_get_drawer_long_content_paginates(monkeypatch):
     import asyncio
+
     import handlers.palace.action_bar as ab
     from handlers.palace import navigation
 
-    long_text = "абвгд " * 400
+    long_text = "абвгд " * 600
 
     class FakeMCP:
         async def call_tool(self, name, args=None):
@@ -88,6 +89,7 @@ def test_cb_get_drawer_long_content_paginates(monkeypatch):
 
 def test_cb_get_drawer_short_content_no_pagination(monkeypatch):
     import asyncio
+
     from handlers.palace import navigation
 
     class FakeMCP:
@@ -111,6 +113,7 @@ def test_cb_get_drawer_short_content_no_pagination(monkeypatch):
 
 def test_cb_get_drawer_unknown_falls_back_to_search(monkeypatch):
     import asyncio
+
     from handlers.palace import navigation
 
     class FakeMCP:
@@ -133,7 +136,7 @@ def test_cb_get_drawer_unknown_falls_back_to_search(monkeypatch):
 
 def _open_drawer_state(monkeypatch):
     import asyncio
-    import handlers.palace.action_bar as ab
+
     from handlers.palace import navigation
 
     class FakeMCP:
@@ -154,7 +157,7 @@ def _open_drawer_state(monkeypatch):
 
 
 def test_cb_read_drawer_has_delete_button(monkeypatch):
-    navigation, msg = _open_drawer_state(monkeypatch)
+    _navigation, msg = _open_drawer_state(monkeypatch)
     data = _markup_data(msg)
     assert any(d.startswith("p_drdel:") for d in data)
 

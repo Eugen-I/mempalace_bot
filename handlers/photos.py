@@ -4,9 +4,9 @@
 
 import asyncio
 import hashlib
+import logging
 import os
 import tempfile
-import logging
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
@@ -14,8 +14,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from cachetools import TTLCache
 
 from config import NOTES_DIR, PHOTOS_DIR, allowed_callback, allowed_only
-
-from services.ai_engine import get_current_ai
+from services.ai_engine import call_ai_sync, get_current_ai
+from services.error_formatter import format_user_error
 from services.multimodal import (
     check_capability,
     delete_photo,
@@ -26,7 +26,6 @@ from services.multimodal import (
 from services.palace_bridge import search_palace_context
 from services.prompts import get_smart_prompt
 from services.text_formatter import safe_html_format, split_message
-from services.error_formatter import format_user_error
 
 router = Router()
 logger = logging.getLogger("PhotosHandler")
@@ -34,22 +33,6 @@ logger = logging.getLogger("PhotosHandler")
 FILE_LIMIT = 50 * 1024 * 1024
 
 _photo_delete_cache: TTLCache[str, str] = TTLCache(maxsize=500, ttl=300)
-
-
-def get_ai_response_sync_wrapper(
-    engine: str,
-    model: str,
-    messages: list,
-    context: str = "",
-    user_query: str = "",
-    has_images: bool = False,
-    **kwargs,
-) -> str:
-    from services.ai_engine import _sync_ai_call
-
-    return _sync_ai_call(
-        engine, model, messages, context, user_query, has_images, **kwargs,
-    )
 
 
 @router.message(F.photo | (F.document & F.document.mime_type.startswith("image/")))
@@ -155,9 +138,7 @@ async def cb_analyze_last_photo(cb: types.CallbackQuery):
         ]
 
         answer = await asyncio.to_thread(
-            lambda: get_ai_response_sync_wrapper(
-                engine, model, msgs, context="", images=[b64],
-            ),
+            call_ai_sync, engine, model, msgs, images=[b64],
         )
 
         safe_answer = safe_html_format(answer)

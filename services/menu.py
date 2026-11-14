@@ -26,9 +26,9 @@ async def go_main_menu(target):
         from main import cmd_start
 
         await cmd_start(target)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error(f"Не удалось открыть главное меню: {exc}", exc_info=True)
         try:
             await target.answer("❌ Не удалось открыть меню.")
-        except Exception as exc2:  # noqa: BLE001
+        except Exception as exc2:
             logger.error(f"Не удалось уведомить об ошибке: {exc2}", exc_info=True)

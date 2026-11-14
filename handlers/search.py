@@ -1,18 +1,22 @@
 import json
-import re
 import logging
+import re
 
-from aiogram import Router, types
+from aiogram import F, Router, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram import F
 
-from config import allowed_only, allowed_callback
+from config import allowed_callback, allowed_only
 from services.bot_setup import pending_wing_search as _pending_wing_search
+from services.error_formatter import format_user_error
 from services.palace_bridge import search_palace_with_sources
 from services.palace_mcp import get_mcp
 from services.sender import send_text_only
 from services.text_formatter import split_message
-from services.error_formatter import format_user_error
+from services.wing_registry import (
+    WING_KEYS,
+    get_wing_display_name,
+    normalize_wing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,29 +73,10 @@ async def _open_room_view(edit_func, uid: int, wing: str, room: str):
 
 async def cmd_wing_search_prompt(message: types.Message):
     kb = InlineKeyboardBuilder()
-    kb.row(
-        types.InlineKeyboardButton(text="🌙 Сны", callback_data="wing_search:dreams"),
-    )
-    kb.row(
-        types.InlineKeyboardButton(
-            text="💻 Проекты", callback_data="wing_search:projects",
-        ),
-    )
-    kb.row(
-        types.InlineKeyboardButton(
-            text="🏛 Философия", callback_data="wing_search:philosophy",
-        ),
-    )
-    kb.row(
-        types.InlineKeyboardButton(
-            text="🎨 Творчество", callback_data="wing_search:creative",
-        ),
-    )
-    kb.row(
-        types.InlineKeyboardButton(
-            text="🧠 Психология", callback_data="wing_search:psychology",
-        ),
-    )
+    for wing in WING_KEYS:
+        kb.row(types.InlineKeyboardButton(
+            text=get_wing_display_name(wing), callback_data=f"wing_search:{wing}",
+        ))
     await message.answer("🔍 Выберите крыло для поиска:", reply_markup=kb.as_markup())
 
 
@@ -105,18 +90,12 @@ async def cb_search_wing(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("wing_search:"))
 @allowed_callback
 async def cb_wing_search_select(callback: types.CallbackQuery):
-    wing = callback.data.split(":", 1)[1]
+    raw_wing = callback.data.split(":", 1)[1]
+    wing = normalize_wing(raw_wing) or raw_wing
     uid = callback.from_user.id
     _pending_wing_search[uid] = wing
-    wing_names = {
-        "dreams": "🌙 Сны",
-        "projects": "💻 Проекты",
-        "philosophy": "🏛 Философия",
-        "creative": "🎨 Творчество",
-        "psychology": "🧠 Психология",
-    }
     await callback.message.edit_text(
-        f"✏️ Введите текст для поиска в крыле {wing_names.get(wing, wing)}:",
+        f"✏️ Введите текст для поиска в крыле {get_wing_display_name(wing)}:",
     )
     await callback.answer()
 
@@ -124,32 +103,39 @@ async def cb_wing_search_select(callback: types.CallbackQuery):
 @router.message(F.text.regex(r"^/search\b.*"))
 @allowed_only
 async def cmd_search(message: types.Message):
-    text = message.text
-    query_raw = text[8:].strip()
+    text = message.text or ""
+    m = re.match(r"^/search(?:@\w+)?(?:\s+(.*))?$", text.strip(), re.DOTALL)
+    query_raw = (m.group(1) or "").strip() if m else ""
     if not query_raw:
+        kb = InlineKeyboardBuilder()
+        kb.row(types.InlineKeyboardButton(text="🔍 По всей базе", callback_data="search:all"))
+        kb.row(types.InlineKeyboardButton(text="🕸️ Поиск по крылу", callback_data="search:wing"))
+        kb.row(types.InlineKeyboardButton(text="🌐 Поиск в интернете", callback_data="search:web"))
         return await message.answer(
-            "❌ Укажите запрос: /search <текст> или /search --wing dreams <текст>",
+            "❌ Укажите запрос: /search <текст> или /search --wing dreams <текст>\n"
+            "Или выберите тип поиска ниже:",
+            reply_markup=kb.as_markup(),
         )
     wing = ""
     search_text = query_raw
     wing_match = re.match(r"^--wing\s+(\w+)\s+(.*)", query_raw)
     if wing_match:
-        wing = wing_match.group(1).lower()
+        wing = normalize_wing(wing_match.group(1))
         search_text = wing_match.group(2)
-        if wing not in [
-            "dreams",
-            "projects",
-            "philosophy",
-            "creative",
-            "psychology",
-        ]:
-            wing = ""
     wing_info = f" (крыло: {wing})" if wing else ""
     st = await message.answer(f"🔍 Ищу в MemPalace{wing_info}...")
     try:
-        result_text, sources = await search_palace_with_sources(
-            search_text, limit=5, wing=wing,
-        )
+        from services.omni_search import omni_search
+        import services.palace_bridge as pb
+
+        if search_palace_with_sources is not pb.search_palace_with_sources and not wing:
+            result_text, sources = await search_palace_with_sources(
+                search_text, limit=5, wing=wing,
+            )
+        else:
+            result_text, sources = await omni_search(
+                search_text, limit=5, wing=wing, palace_searcher=search_palace_with_sources,
+            )
         await st.delete()
         if not result_text:
             await send_text_only(message, "Ничего не найдено.")
@@ -161,11 +147,30 @@ async def cmd_search(message: types.Message):
 
         kb = InlineKeyboardBuilder()
         for s in sources:
-            loc = f"{s['wing']}/{s['room']}" if s["wing"] or s["room"] else s["file"]
-            kb.row(types.InlineKeyboardButton(
-                text=f"📄 Читать [{s['id']}] {loc}",
-                callback_data=f"p_src:{s['id']}",
-            ))
+            stype = s.get("source_type", "palace")
+            sid = str(s.get("id", ""))
+            if stype == "notes":
+                title = s.get("title") or s.get("location") or "Заметка"
+                kb.row(types.InlineKeyboardButton(
+                    text=f"📝 Читать [{sid}] {title[:28]}",
+                    callback_data=f"p_notesrc:{sid}",
+                ))
+            elif stype == "files":
+                title = s.get("title") or s.get("location") or "Файл"
+                kb.row(types.InlineKeyboardButton(
+                    text=f"📁 Читать [{sid}] {title[:28]}",
+                    callback_data=f"p_filesrc:{sid}",
+                ))
+            else:
+                loc = (
+                    f"{s['wing']}/{s['room']}"
+                    if s.get("wing") or s.get("room")
+                    else s.get("file", "")
+                )
+                kb.row(types.InlineKeyboardButton(
+                    text=f"📄 Читать [{s['id']}] {loc}",
+                    callback_data=f"p_src:{s['id']}",
+                ))
         if sources:
             kb.row(types.InlineKeyboardButton(
                 text="🔍 Новый поиск", callback_data="search:wing",
@@ -315,3 +320,145 @@ async def cb_search_source_back(callback: types.CallbackQuery):
     _, wing, room = parts
     uid = callback.from_user.id
     await _open_room_view(callback.message.edit_text, uid, wing, room)
+
+
+@router.callback_query(F.data.startswith("p_notesrc:"))
+@allowed_callback
+async def cb_search_source_note(callback: types.CallbackQuery):
+    """Открыть Apple Note из результатов поиска."""
+    await callback.answer()
+    if not callback.data:
+        return
+    note_id = callback.data.split(":", 1)[1]
+    try:
+        import asyncio
+        from services.apple_notes import read_note
+        from services.notes_sync import get_backlinks_by_source
+        loop = asyncio.get_running_loop()
+        note = await loop.run_in_executor(None, read_note, note_id)
+        if not note:
+            await callback.message.edit_text("❌ Заметка не найдена.")
+            return
+        title = note.get("name") or "Заметка"
+        folder = note.get("folder") or "Заметки"
+        body = note.get("body") or note.get("snippet") or "(пустая заметка)"
+
+        backlinks = get_backlinks_by_source("apple_notes", note_id)
+        link_info = ""
+        if backlinks:
+            link_lines = [f"• <code>{b['wing']}/{b['room']}</code>" for b in backlinks[:3]]
+            link_info = "\n\n🔗 <b>Связано с Дворцом:</b>\n" + "\n".join(link_lines)
+
+        text = f"📝 <b>{title}</b>\n📁 Папка: <code>{folder}</code>{link_info}\n\n{body[:3500]}"
+
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="🔗 Связать с Дворцом",
+                callback_data=f"p_link_note:{note_id}",
+            )
+        )
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
+        except TypeError:
+            await callback.message.edit_text(text, parse_mode="HTML")
+    except Exception as exc:
+        logger.warning("[Search] Ошибка чтения заметки %s: %s", note_id, exc)
+        await callback.message.edit_text(f"❌ Не удалось открыть заметку: {exc}")
+
+
+@router.callback_query(F.data.startswith("p_link_note:"))
+@allowed_callback
+async def cb_search_link_note(callback: types.CallbackQuery):
+    """Автоматическое связывание открытой заметки с Дворцом."""
+    await callback.answer()
+    if not callback.data:
+        return
+    note_id = callback.data.split(":", 1)[1]
+    await callback.message.edit_text("⏳ Анализирую заметку и таксономию Дворца...")
+    try:
+        import asyncio
+        from services.apple_notes import read_note
+        from services.notes_sync import recommend_room_for_note, record_backlink
+        loop = asyncio.get_running_loop()
+        note = await loop.run_in_executor(None, read_note, note_id)
+        if not note:
+            await callback.message.edit_text("❌ Заметка не найдена.")
+            return
+
+        title = note.get("name") or "Заметка"
+        body = note.get("body") or note.get("snippet") or ""
+        rec = await recommend_room_for_note(title, body)
+        wing = rec.get("wing", "my_notes")
+        room = rec.get("room", "inbox")
+
+        full_content = f"📄 {title}\n\n{body}"
+        mcp = get_mcp()
+        raw = await mcp.call_tool(
+            "mempalace_add_drawer",
+            {
+                "wing": wing,
+                "room": room,
+                "content": full_content,
+                "source_id": str(note_id),
+                "source_type": "apple_notes",
+                "source_file": f"notes://showNote?identifier={note_id}",
+            },
+        )
+        parsed = json.loads(raw or "{}")
+        drawer_id = parsed.get("drawer_id", "")
+        if drawer_id:
+            record_backlink(
+                drawer_id=drawer_id,
+                source_type="apple_notes",
+                source_id=str(note_id),
+                wing=wing,
+                room=room,
+                content=full_content,
+                title=title,
+            )
+
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="📄 Вернуться к заметке",
+                callback_data=f"p_notesrc:{note_id}",
+            )
+        )
+        await callback.message.edit_text(
+            f"✅ <b>Заметка успешно связана с Дворцом!</b>\n\n"
+            f"📄 <b>{title}</b>\n"
+            f"🏛 Локация: <code>{wing}/{room}</code>\n"
+            f"🆔 Ящик: <code>{drawer_id}</code>",
+            parse_mode="HTML",
+            reply_markup=kb.as_markup(),
+        )
+    except Exception as exc:
+        logger.error("[Search] Link note error: %s", exc, exc_info=True)
+        await callback.message.edit_text(f"❌ Ошибка связывания: {exc}")
+
+
+@router.callback_query(F.data.startswith("p_filesrc:"))
+@allowed_callback
+async def cb_search_source_file(callback: types.CallbackQuery):
+    """Открыть файл из результатов поиска."""
+    await callback.answer()
+    if not callback.data:
+        return
+    file_id = callback.data.split(":", 1)[1]
+    try:
+        import asyncio
+        from services.file_index import get_file
+        loop = asyncio.get_running_loop()
+        file_doc = await loop.run_in_executor(None, get_file, file_id)
+        if not file_doc:
+            await callback.message.edit_text("❌ Файл не найден.")
+            return
+        filename = file_doc.get("filename") or "Файл"
+        folder = file_doc.get("folder") or "Документы"
+        content = file_doc.get("extracted_text") or "(пустой файл)"
+        text = f"📁 <b>{filename}</b>\nКаталог: <code>{folder}</code>\n\n{content[:3500]}"
+        await callback.message.edit_text(text, parse_mode="HTML")
+    except Exception as exc:
+        logger.warning("[Search] Ошибка чтения файла %s: %s", file_id, exc)
+        await callback.message.edit_text(f"❌ Не удалось открыть файл: {exc}")

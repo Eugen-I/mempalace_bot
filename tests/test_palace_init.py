@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+
 from services.agent_context import AgentContextStore
 
 # Module-level imports that execute code
@@ -161,7 +162,7 @@ def test_cmd_palace(monkeypatch):
     assert "MemPalace — управление" in text
     assert pm == "Markdown"
     assert _kb_data(markup) == [
-        "palace_status", "p_nav", "p_kg", "palace_admin",
+        "palace_status", "p_nav", "p_unfiled", "p_kg", "palace_admin",
         "palace_instructions", "palace_main_menu",
     ]
 
@@ -225,6 +226,86 @@ def test_process_mcp_text_input_no_action(monkeypatch):
     assert result is False
     assert msg.answers == []
     assert msg.edits == []
+
+
+def test_process_mcp_text_input_button_agent_error_is_safe(monkeypatch):
+    from handlers import agent as agent_handler
+
+    class FakeCtxStore:
+        def __init__(self):
+            self.history = []
+
+        def has_active_button_session(self, uid):
+            return "button-sid"
+
+        def append_button_context(self, session_id, role, content):
+            self.history.append({"role": role, "content": content})
+
+        def get_button_context(self, session_id):
+            return list(self.history)
+
+        def end_button_session(self, session_id):
+            return None
+
+        def unbind_button_session_from_uid(self, uid):
+            return None
+
+    store = FakeCtxStore()
+    monkeypatch.setattr(
+        "services.agent_context.get_agent_context_store", lambda: store,
+    )
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("поломка агента")
+
+    monkeypatch.setattr(agent_handler.ae, "run_agent", boom)
+    msg = FakeAnswerMsg()
+
+    result = asyncio.run(palace.process_mcp_text_input(
+        4242, "привет", FakeAnswerFactory(msg),
+    ))
+
+    assert result is True
+    assert store.history == [{"role": "user", "content": "привет"}]
+    assert any("поломка агента" in text for text, _ in msg.edits)
+
+
+def test_process_mcp_text_input_button_followup_before_assistant_reply(
+    monkeypatch, tmp_path,
+):
+    from handlers import agent as agent_handler
+    from services import agent_context as ac
+    from services import agent_engine as ae
+    from services.kv_store import KVStore
+
+    kv = KVStore(db_path=str(tmp_path / "agent_context.sqlite"))
+    monkeypatch.setattr(ac, "get_kv_store", lambda: kv)
+    store = ac.AgentContextStore()
+    session_id = store.create_button_session()
+    store.bind_button_session_to_uid(4242, session_id)
+    monkeypatch.setattr(
+        "services.agent_context.get_agent_context_store", lambda: store,
+    )
+    seen = {}
+
+    async def fake_run_agent(
+        uid, status, system_prompt, question, ctx=None, conversation_history=None,
+    ):
+        seen["history"] = conversation_history
+        return ae.AgentResult(final_answer="готово")
+
+    monkeypatch.setattr(agent_handler, "_run_agent_reply", fake_run_agent)
+    try:
+        result, _msg, _ = _run_process(monkeypatch, 4242, "продолжай")
+    finally:
+        kv.close()
+
+    assert result is True
+    assert seen["history"] == [{"role": "user", "content": "продолжай"}]
+    assert store.get_button_context(session_id) == [
+        {"role": "user", "content": "продолжай"},
+        {"role": "assistant", "content": "готово"},
+    ]
 
 
 # ---------- list_rooms: "*" ----------
@@ -400,7 +481,7 @@ def test_save_new_wing(monkeypatch):
     assert called == [(msg.edit_text, 4242)]
 
 
-def test_save_new_wing_subprocess_error(monkeypatch):
+def test_save_new_wing_subprocess_error(monkeypatch, caplog):
     _enable(monkeypatch)
 
     async def boom(*a, **k):
@@ -417,6 +498,7 @@ def test_save_new_wing_subprocess_error(monkeypatch):
         4242, "крыло", FakeAnswerFactory(msg),
     ))
     assert result is True
+    assert "Не удалось инициализировать крыло" in caplog.text
 
 
 # ---------- save_new_room ----------
@@ -1181,3 +1263,98 @@ def test_unknown_action_falls_through(monkeypatch):
     ))
     assert result is True
     assert msg.edits == []
+
+
+def test_fetch_room_content_json_read_drawer(monkeypatch):
+    mcp = FakeMCPSeq([json.dumps({"content": "Room body text"})])
+    res = asyncio.run(palace._fetch_room_content(mcp, "philosophy", "ethics"))
+    assert res == "Room body text"
+
+
+def test_fetch_room_content_fallback_list_and_get(monkeypatch):
+    mcp = FakeMCPSeq([
+        RuntimeError("read_drawer not found"),
+        json.dumps({"drawers": [{"drawer_id": "d1", "title": "My Note"}]}),
+        json.dumps({"content": "Detailed note content from drawer"}),
+    ])
+    res = asyncio.run(palace._fetch_room_content(mcp, "psychology", "dreams"))
+    assert "--- My Note ---" in res
+    assert "Detailed note content from drawer" in res
+
+
+def test_fetch_room_content_disk_fallback(tmp_path, monkeypatch):
+    note_dir = tmp_path / "notes"
+    note_dir.mkdir()
+    note_file = note_dir / "зачем_проблемы_у_человека.txt"
+    note_file.write_text("Текст заметки о проблемах человека", encoding="utf-8")
+    monkeypatch.setattr("handlers.palace.NOTES_DIR", str(note_dir))
+    monkeypatch.setattr("handlers.palace.DATA_DIR", str(tmp_path))
+
+    mcp = FakeMCPSeq([
+        RuntimeError("not found"),
+        json.dumps({"drawers": []}),
+    ])
+    res = asyncio.run(palace._fetch_room_content(
+        mcp, "philosophy", "зачем_проблемы_у_человека",
+    ))
+    assert "Текст заметки о проблемах человека" in res
+
+
+def test_process_mcp_text_input_ab_web_query(monkeypatch):
+    _enable(monkeypatch)
+    called = []
+
+    async def fake_run_web(uid, msg, sid, query):
+        called.append((uid, sid, query))
+
+    monkeypatch.setattr(
+        "handlers.palace.action_bar.run_web_search_with_query", fake_run_web,
+    )
+    sh._pending_mcp_input[4242] = "ab_web_query:sid123"
+    msg = FakeAnswerMsg()
+    res = asyncio.run(palace.process_mcp_text_input(
+        4242, "  мой поисковый запрос  ", FakeAnswerFactory(msg),
+    ))
+    assert res is True
+    assert called == [(4242, "sid123", "мой поисковый запрос")]
+
+
+def test_kg_add_subject_and_object_escapes_html(monkeypatch):
+    _enable(monkeypatch)
+    sh._pending_mcp_input[4242] = "kg_add_subject"
+    msg = FakeAnswerMsg()
+    asyncio.run(palace.process_mcp_text_input(
+        4242, "Юнг <Тень & Персона>", FakeAnswerFactory(msg),
+    ))
+    text1, _ = msg.edits[-1]
+    assert "&lt;Тень &amp; Персона&gt;" in text1
+    assert "**" not in text1
+
+    sh._kg_add_state[4242]["predicate"] = "related_to"
+    sh._pending_mcp_input[4242] = "kg_add_object"
+    msg2 = FakeAnswerMsg()
+    asyncio.run(palace.process_mcp_text_input(
+        4242, "Архетип <Маска>", FakeAnswerFactory(msg2),
+    ))
+    text2, _ = msg2.edits[-1]
+    assert "&lt;Маска&gt;" in text2
+    assert "**" not in text2
+
+
+def test_search_connected_rooms_mcp_error_no_unbound_local(monkeypatch):
+    from services import palace_bridge
+
+    class FailingMCP:
+        async def start(self):
+            return None
+
+        async def call_tool(self, name, args=None):
+            raise RuntimeError("follow_tunnels failed before loop")
+
+    monkeypatch.setattr("services.palace_mcp.get_mcp", lambda: FailingMCP())
+    out = asyncio.run(
+        palace_bridge._search_connected_rooms(
+            "запрос", [{"wing": "philosophy", "room": "ethics"}],
+        )
+    )
+    assert out == ""

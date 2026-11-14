@@ -1,6 +1,6 @@
 """conversation_fsm.py — Finite State Machine for conversation state management."""
-import time
 import logging
+import time
 from enum import Enum, auto
 from typing import Any
 

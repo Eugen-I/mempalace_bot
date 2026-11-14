@@ -4,10 +4,7 @@
 """
 import asyncio
 
-import pytest
-
 import services.note_linker as linker
-
 
 # ─── escape_markdown_v2 ───
 

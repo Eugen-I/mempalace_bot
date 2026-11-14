@@ -12,7 +12,6 @@ import pytest
 import services.palace_bridge as pb
 import services.palace_mcp as palace_mcp
 from services.circuit_breaker import (
-    CircuitBreaker,
     CircuitBreakerOpenError,
     get_palace_circuit_breaker,
 )
@@ -139,11 +138,64 @@ async def test_search_palace_with_sources_circuit_breaker_open(monkeypatch, pala
 
     monkeypatch.setattr(pb, "_search_palace_context_impl", boom)
     assert await pb.search_palace_with_sources("q") == ("", [])
+
     async def boom(q, limit=5, wing="", room=""):
         raise ValueError("nope")
 
     monkeypatch.setattr(pb, "_search_palace_context_impl", boom)
     assert await pb.search_palace_with_sources("x") == ("", [])
+
+
+@pytest.mark.asyncio
+async def test_search_palace_with_sources_text_without_sources(monkeypatch, palace_cb):
+    async def fake_impl(q, limit=5, wing="", room=""):
+        return {"text": "только текст", "sources": []}
+
+    monkeypatch.setattr(pb, "_search_palace_context_impl", fake_impl)
+    assert await pb.search_palace_with_sources("q") == ("только текст", [])
+
+
+@pytest.mark.asyncio
+async def test_public_search_wrappers_share_impl(monkeypatch, palace_cb):
+    calls = []
+
+    async def fake_impl(q, limit=5, wing="", room=""):
+        calls.append((q, limit, wing, room))
+        return {"text": "текст", "sources": []}
+
+    monkeypatch.setattr(pb, "_search_palace_context_impl", fake_impl)
+    await pb.search_palace_context("q1", limit=3, wing="w1", room="r1")
+    await pb.search_palace_with_sources("q2", limit=4, wing="w2", room="r2")
+
+    assert calls == [
+        ("q1", 3, "w1", "r1"),
+        ("q2", 4, "w2", "r2"),
+    ]
+
+
+def test_format_sources_block_golden():
+    block = pb._format_sources_block([
+        {"id": 1, "wing": "w", "room": "r", "file": "", "score": 0.42},
+        {"id": 2, "wing": "", "room": "", "file": "note.md", "score": 0.1},
+    ])
+    assert block == (
+        "--- ИСТОЧНИКИ ---\n"
+        "[1] w/r (score: 0.420)\n"
+        "[2] note.md (score: 0.100)\n"
+        "--- КОНЕЦ ИСТОЧНИКОВ ---\n"
+    )
+
+
+def test_format_sources_block_empty():
+    assert pb._format_sources_block([]) == ""
+
+
+def test_format_context_without_sources():
+    assert pb._format_context("текст", []) == (
+        "\n--- ЛИЧНЫЕ ЗАПИСИ ИЗ MEMPALACE (Приоритетный источник) ---\n"
+        "текст\n"
+        "--- КОНЕЦ ЛИЧНЫХ ЗАПИСЕЙ ---\n"
+    )
 
 
 # ---------- _search_palace_context_impl ----------
@@ -206,6 +258,21 @@ async def test_impl_cli_fallback_when_api_empty(monkeypatch):
     monkeypatch.setattr(pb, "_search_via_cli", fake_cli)
     out = await pb._search_palace_context_impl("запрос", wing="projects")
     assert out["text"] == "cli hit"
+
+
+@pytest.mark.asyncio
+async def test_impl_propagates_cli_error(monkeypatch):
+    async def empty(q, limit=5, wing="", room=""):
+        return {"text": "", "sources": []}
+
+    async def broken_cli(q, limit=5, wing="", room=""):
+        return {"text": "", "sources": [], "error": True}
+
+    monkeypatch.setattr(pb, "_search_via_api", empty)
+    monkeypatch.setattr(pb, "_search_via_cli", broken_cli)
+    out = await pb._search_palace_context_impl("запрос")
+    assert out["text"] == ""
+    assert out["error"] is True
 
 
 # ---------- _rank_hits ----------
@@ -320,7 +387,7 @@ async def test_api_no_results(monkeypatch):
 async def test_api_filters_bad_hits(monkeypatch):
     _patch_mempalace_modules(monkeypatch)
     hits = [
-        {"bm25_score": 0.0, "distance": 0.1, "text": "drop"},
+        {"bm25_score": 0.0, "distance": None, "text": "drop"},
         {"bm25_score": 5.0, "distance": 0.9, "text": "drop2"},
         {"bm25_score": 4.0, "distance": 0.2, "text": "keep"},
     ]
@@ -337,7 +404,7 @@ async def test_api_filters_bad_hits(monkeypatch):
 async def test_api_filters_all_hits_out(monkeypatch):
     _patch_mempalace_modules(monkeypatch)
     hits = [
-        {"bm25_score": 0.0, "distance": 0.1, "text": "drop1"},
+        {"bm25_score": 0.0, "distance": None, "text": "drop1"},
         {"bm25_score": 5.0, "distance": 0.9, "text": "drop2"},
     ]
     monkeypatch.setattr(
@@ -372,7 +439,9 @@ async def test_api_exception(monkeypatch):
     monkeypatch.setitem(sys.modules, "mempalace", type(sys)("mempalace"))
     monkeypatch.setitem(sys.modules, "mempalace.searcher", search_module)
     monkeypatch.setitem(sys.modules, "mempalace.config", config_module)
-    assert await pb._search_via_api("q") == {"text": "", "sources": []}
+    out = await pb._search_via_api("q")
+    assert out["text"] == ""
+    assert out.get("error") is True
 
 
 # ---------- _search_via_cli ----------
@@ -426,7 +495,9 @@ async def test_cli_nonzero_returncode(monkeypatch):
         _FakeProc(1, b"", b"search crashed"),
     ])
     monkeypatch.setattr(pb.asyncio, "create_subprocess_exec", runner)
-    assert await pb._search_via_cli("q") == {"text": "", "sources": []}
+    out = await pb._search_via_cli("q")
+    assert out["text"] == ""
+    assert out.get("error") is True
 
 
 @pytest.mark.asyncio
@@ -466,7 +537,9 @@ async def test_cli_exception(monkeypatch):
         raise OSError("no such proc")
 
     monkeypatch.setattr(pb.asyncio, "create_subprocess_exec", boom)
-    assert await pb._search_via_cli("q") == {"text": "", "sources": []}
+    out = await pb._search_via_cli("q")
+    assert out["text"] == ""
+    assert out.get("error") is True
 
 
 # ---------- _search_connected_rooms ----------
@@ -523,7 +596,7 @@ async def test_connected_rooms_skips_self_and_bad_keys(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_connected_rooms_mcp_error_quietly_skips(monkeypatch):
+async def test_connected_rooms_mcp_error_quietly_skips(monkeypatch, caplog):
     class BoomMCP:
         async def start(self):
             raise RuntimeError("mcp down")
@@ -533,6 +606,7 @@ async def test_connected_rooms_mcp_error_quietly_skips(monkeypatch):
 
     monkeypatch.setattr(palace_mcp, "get_mcp", lambda: BoomMCP())
     assert await pb._search_connected_rooms("q", [{"wing": "a", "room": "b"}]) == ""
+    assert "[PALACE_TUNNELS]" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -561,6 +635,7 @@ async def test_connected_rooms_skips_missing_wing_or_room(monkeypatch):
     )
     assert out == ""
     assert mcp.calls == []
+
 
 @pytest.mark.asyncio
 async def test_connected_rooms_empty_connection_and_label_variants(monkeypatch):
@@ -595,6 +670,37 @@ async def test_search_with_kg_no_text(monkeypatch, palace_cb):
 
 
 @pytest.mark.asyncio
+async def test_search_with_kg_status_empty_is_available(monkeypatch, palace_cb):
+    async def fake_impl(q, limit=5, wing=""):
+        return {"text": "", "sources": []}
+
+    monkeypatch.setattr(pb, "_search_palace_context_impl", fake_impl)
+    assert await pb.search_with_kg_status("пусто") == ("", True)
+
+
+@pytest.mark.asyncio
+async def test_search_with_kg_status_backend_error_is_unavailable(
+    monkeypatch, palace_cb,
+):
+    async def fake_impl(q, limit=5, wing=""):
+        return {"text": "", "sources": [], "error": True}
+
+    monkeypatch.setattr(pb, "_search_palace_context_impl", fake_impl)
+    assert await pb.search_with_kg_status("пусто") == ("", False)
+
+
+@pytest.mark.asyncio
+async def test_search_with_kg_status_unexpected_exception_is_unavailable(
+    monkeypatch, palace_cb,
+):
+    async def boom(q, limit=5, wing=""):
+        raise RuntimeError("backend exploded")
+
+    monkeypatch.setattr(pb, "_search_palace_context_impl", boom)
+    assert await pb.search_with_kg_status("пусто") == ("", False)
+
+
+@pytest.mark.asyncio
 async def test_search_with_kg_plain_text(monkeypatch, palace_cb):
     async def fake_impl(q, limit=5, wing=""):
         return {"text": "запись", "sources": []}
@@ -614,7 +720,7 @@ async def test_search_with_kg_plain_text(monkeypatch, palace_cb):
     monkeypatch.setattr(pb, "_search_connected_rooms", fake_rooms)
     out = await pb.search_with_kg("тема")
     assert "запись" in out
-    assert "ИСТОЧНИКИ" in out
+    assert "ИСТОЧНИКИ" not in out
     assert "КГ" not in out
 
 
@@ -642,6 +748,7 @@ async def test_search_with_kg_with_facts(monkeypatch, palace_cb):
     monkeypatch.setattr(pb, "_search_palace_context_impl", fake_impl)
     monkeypatch.setattr(pb, "_search_connected_rooms", _async_empty_rooms)
     out = await pb.search_with_kg("Макс")
+    assert "[1] w/r (score: 0.500)" in out
     assert "СВЯЗИ ИЗ ГРАФА ЗНАНИЙ" in out
     assert "Макс написал: книгу" in out
     assert "→ идея" in out
@@ -690,7 +797,7 @@ async def test_search_with_kg_circuit_breaker_open(monkeypatch, palace_cb):
 
 
 @pytest.mark.asyncio
-async def test_search_with_kg_mcp_error(monkeypatch, palace_cb):
+async def test_search_with_kg_mcp_error(monkeypatch, palace_cb, caplog):
     async def fake_impl(q, limit=5, wing=""):
         return {"text": "запись", "sources": []}
 
@@ -703,6 +810,7 @@ async def test_search_with_kg_mcp_error(monkeypatch, palace_cb):
     monkeypatch.setattr(pb, "_search_connected_rooms", _async_empty_rooms)
     out = await pb.search_with_kg("тема")
     assert "запись" in out
+    assert "[PALACE_KG] Ошибка поиска KG" in caplog.text
 
 
 @pytest.mark.asyncio

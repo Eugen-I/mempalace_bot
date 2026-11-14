@@ -17,6 +17,7 @@
 
 import logging
 import os
+import re
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,14 +27,14 @@ from aiogram import F, Router, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import NOTES_DIR, allowed_callback
-from services.ai_engine import _sync_ai_call, get_current_ai
+from services.ai_engine import call_ai_async, get_current_ai
+from services.error_formatter import format_user_error
 from services.text_formatter import safe_html_format, split_message
 from services.ttl_dict import TtlDict
-from services.error_formatter import format_user_error
 
 logger = logging.getLogger("ActionBar")
 
-PAGE_LIMIT = 1500
+PAGE_LIMIT = 2600
 
 router = Router()
 
@@ -106,29 +107,14 @@ def _render_page(answer: Answer, idx: int) -> str:
         page = safe_html_format(page)
     if idx == 0 and answer.title:
         page = answer.title + "\n\n" + page
+    if len(page) > 4000:
+        page = page[:3990] + "..."
     return page
 
 
 def build_action_bar(answer: Answer, page_idx: int) -> InlineKeyboardBuilder:
     """Собирает клавиатуру панели действий для указанной страницы."""
     kb = InlineKeyboardBuilder()
-    for row in answer.extra_rows:
-        kb.row(*row)
-    kb.row(
-        types.InlineKeyboardButton(text="🤖 Анализ ИИ", callback_data=f"ab_ai:{answer.sid}"),
-        types.InlineKeyboardButton(
-            text="🌐 Поиск в интернете", callback_data=f"ab_web:{answer.sid}",
-        ),
-        types.InlineKeyboardButton(text="💾 Сохранить", callback_data=f"ab_sv:{answer.sid}"),
-    )
-    kb.row(types.InlineKeyboardButton(
-        text="🤖 Агент", callback_data=f"ab_agent:{answer.sid}",
-    ))
-    if answer.ctx.get("_is_button_mode"):
-        kb.row(types.InlineKeyboardButton(
-            text="⏹ Завершить диалог с агентом",
-            callback_data=f"ab_agent_stop:{answer.sid}",
-        ))
     if answer.total_pages > 1:
         nav_row = []
         if page_idx > 0:
@@ -144,10 +130,75 @@ def build_action_bar(answer: Answer, page_idx: int) -> InlineKeyboardBuilder:
                 text="▶️ Вперёд", callback_data=f"ab_pg:{answer.sid}:{page_idx + 1}",
             ))
         kb.row(*nav_row)
-    if answer.ctx.get("parent_cb"):
+    for row in answer.extra_rows:
+        kb.row(*row)
+
+    existing_texts = {
+        btn.text.strip().lower()
+        for row in answer.extra_rows
+        for btn in row
+        if getattr(btn, "text", None)
+    }
+    existing_cbs = {
+        btn.callback_data
+        for row in answer.extra_rows
+        for btn in row
+        if getattr(btn, "callback_data", None)
+    }
+
+    hide_action_bar = bool(
+        answer.ctx.get("hide_action_bar") or answer.ctx.get("no_action_bar")
+    )
+    if not hide_action_bar:
+        ai_row = []
+        has_ai = (
+            any("анализ" in t or "спросить ии" in t for t in existing_texts)
+            or any(cb.startswith(("ab_ai:", "p_room_ai")) for cb in existing_cbs)
+            or bool(answer.ctx.get("hide_ai"))
+        )
+        if not has_ai:
+            ai_row.append(types.InlineKeyboardButton(
+                text="🤖 Анализ ИИ", callback_data=f"ab_ai:{answer.sid}",
+            ))
+        if not answer.ctx.get("hide_web"):
+            ai_row.append(types.InlineKeyboardButton(
+                text="🌐 Поиск в интернете", callback_data=f"ab_web:{answer.sid}",
+            ))
+        if not answer.ctx.get("hide_save"):
+            ai_row.append(types.InlineKeyboardButton(
+                text="💾 Сохранить", callback_data=f"ab_sv:{answer.sid}",
+            ))
+        if ai_row:
+            kb.row(*ai_row)
+
+        has_agent = (
+            any("агент" in t for t in existing_texts)
+            or any(
+                cb.startswith(("ab_agent:", "p_agent_room:", "agent_"))
+                for cb in existing_cbs
+            )
+            or bool(answer.ctx.get("hide_agent"))
+        )
+        if not has_agent:
+            kb.row(types.InlineKeyboardButton(
+                text="🤖 Агент", callback_data=f"ab_agent:{answer.sid}",
+            ))
+
+    if answer.ctx.get("_is_button_mode"):
         kb.row(types.InlineKeyboardButton(
-            text="🔙 Вернуться к списку", callback_data=f"ab_back:{answer.sid}",
+            text="⏹ Завершить диалог с агентом",
+            callback_data=f"ab_agent_stop:{answer.sid}",
         ))
+    parent_cb = answer.ctx.get("parent_cb")
+    if parent_cb:
+        has_back = (
+            parent_cb in existing_cbs
+            or any(t in ("◀️ назад", "🔙 вернуться к списку") for t in existing_texts)
+        )
+        if not has_back:
+            kb.row(types.InlineKeyboardButton(
+                text="🔙 Вернуться к списку", callback_data=f"ab_back:{answer.sid}",
+            ))
     return kb
 
 
@@ -179,11 +230,28 @@ async def finalize_answer(
             answer.pages = paginate(text, PAGE_LIMIT)
         answer_store[sid] = answer
         kb = build_action_bar(answer, 0)
-        await edit_func(
-            _render_page(answer, 0),
-            parse_mode="HTML",
-            reply_markup=kb.as_markup(),
-        )
+        try:
+            await edit_func(
+                _render_page(answer, 0),
+                parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
+        except Exception as edit_err:
+            logger.warning(
+                "[ACTION_BAR] HTML edit failed (%s), fallback plain", edit_err,
+            )
+            plain_page = answer.pages[0]
+            if answer.title:
+                clean_title = re.sub(r"<[^>]+>", "", answer.title)
+                plain_page = clean_title + "\n\n" + plain_page
+            clean_text = re.sub(r"<[^>]+>", "", plain_page)
+            if len(clean_text) > 4000:
+                clean_text = clean_text[:3990] + "..."
+            await edit_func(
+                clean_text,
+                parse_mode=None,
+                reply_markup=kb.as_markup(),
+            )
         return answer
     except Exception as e:
         logger.error("[ACTION_BAR] finalize_answer error: %s", e, exc_info=True)
@@ -274,7 +342,22 @@ async def cb_ab_page(cb: types.CallbackQuery):
             reply_markup=kb.as_markup(),
         )
     except Exception as e:
-        logger.error("[ACTION_BAR] page edit error: %s", e)
+        logger.warning("[ACTION_BAR] page edit error (%s), fallback plain", e)
+        try:
+            raw_text = answer.pages[idx]
+            if idx == 0 and answer.title:
+                clean_title = re.sub(r"<[^>]+>", "", answer.title)
+                raw_text = clean_title + "\n\n" + raw_text
+            clean_text = re.sub(r"<[^>]+>", "", raw_text)
+            if len(clean_text) > 4000:
+                clean_text = clean_text[:3990] + "..."
+            await cb.message.edit_text(
+                clean_text,
+                parse_mode=None,
+                reply_markup=kb.as_markup(),
+            )
+        except Exception as e2:
+            logger.error("[ACTION_BAR] page edit fallback error: %s", e2)
 
 
 @router.callback_query(F.data.startswith("ab_back:"))
@@ -317,13 +400,24 @@ async def cb_ab_ai(cb: types.CallbackQuery):
         text="🏰 С контекстом комнаты", callback_data=f"ab_ai_m:c:{sid}",
     ))
     kb.row(types.InlineKeyboardButton(
-        text="◀️ Назад к ответу", callback_data=f"ab_back:{sid}",
+        text="❌ Отмена", callback_data=f"ab_ai_cancel:{sid}",
     ))
-    await cb.message.edit_text(
-        "🤖 <b>Режим анализа:</b>",
+    await cb.message.answer(
+        "🤖 <b>Режим анализа:</b>\n"
+        "<i>Исходный текст остаётся в сообщении выше.</i>",
         parse_mode="HTML",
         reply_markup=kb.as_markup(),
     )
+
+
+@router.callback_query(F.data.startswith("ab_ai_cancel:"))
+@allowed_callback
+async def cb_ab_ai_cancel(cb: types.CallbackQuery):
+    await cb.answer("Анализ отменён")
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
 
 
 async def _build_ai_context(answer: Answer, uid: int) -> str:
@@ -385,7 +479,12 @@ async def cb_ab_ai_run(cb: types.CallbackQuery):
         await cb.answer("Сессия истекла. Откройте заново.", show_alert=True)
         return
     uid = cb.from_user.id
-    status = await cb.message.answer("🧠 Анализирую...")
+    try:
+        await cb.message.edit_text("🧠 Анализирую...")
+        status_edit = cb.message.edit_text
+    except Exception:
+        status = await cb.message.answer("🧠 Анализирую...")
+        status_edit = status.edit_text
     try:
         engine, model = get_current_ai()
         if mode == "c":
@@ -406,7 +505,7 @@ async def cb_ab_ai_run(cb: types.CallbackQuery):
             system = (
                 "Ты — аналитик. Отвечай на русском языке, структурированно."
             )
-        result = _sync_ai_call(engine, model, [
+        result = await call_ai_async(engine, model, [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ])
@@ -414,14 +513,14 @@ async def cb_ab_ai_run(cb: types.CallbackQuery):
         ctx["_origin_sid"] = answer.sid
         await finalize_answer(
             uid,
-            status.edit_text,
+            status_edit,
             result or "❌ Пустой ответ.",
             ctx=ctx,
             title="<b>🤖 Анализ</b>",
             is_html=False,
         )
     except Exception as e:
-        await status.edit_text(format_user_error(e, "action_bar_analysis"))
+        await status_edit(format_user_error(e, "action_bar_analysis"))
 
 
 # ─── 🌐 Поиск в интернете ───
@@ -446,7 +545,9 @@ async def cb_ab_web(cb: types.CallbackQuery):
             "для уточнения следующего текста в интернете. Верни только запрос.\n\n"
             f"Текст:\n{answer.text[:3000]}"
         )
-        query = _sync_ai_call(engine, model, [{"role": "user", "content": prompt}])
+        query = await call_ai_async(
+            engine, model, [{"role": "user", "content": prompt}],
+        )
         query = (query or "").strip().strip('"').strip("«»")
         if not query:
             raise ValueError("ИИ не смог сформулировать запрос")
@@ -505,7 +606,7 @@ async def _run_web_search_finalize(
             f"Контекст ответа:\n{answer.text[:6000]}\n\n"
             f"Результаты поиска:\n{web_results}"
         )
-        result = _sync_ai_call(engine, model, [
+        result = await call_ai_async(engine, model, [
             {"role": "system", "content": system},
             {"role": "user", "content": query},
         ])
@@ -559,7 +660,8 @@ async def run_web_search_with_query(
     query = query.strip()
     answer.ctx["web_query"] = query
     status = await msg.edit_text("🌐 Ищу в интернете...")
-    await _run_web_search_finalize(uid, status.edit_text, answer, query)
+    edit_fn = status.edit_text if hasattr(status, "edit_text") else msg.edit_text
+    await _run_web_search_finalize(uid, edit_fn, answer, query)
 
 
 # ─── 💾 Сохранить ───
@@ -629,9 +731,27 @@ async def cb_ab_sv_notes(cb: types.CallbackQuery):
         path = os.path.join(NOTES_DIR, fn)
         with open(path, "w", encoding="utf-8") as f:
             f.write(answer.text)
+
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            types.InlineKeyboardButton(
+                text="📁 Разложить в Дворец", callback_data=f"p_unf_file_name:{fn}",
+            ),
+        )
+        kb.row(
+            types.InlineKeyboardButton(
+                text="📖 Открыть заметку", callback_data=f"p_unf_open_name:{fn}",
+            ),
+            types.InlineKeyboardButton(
+                text="◀️ Назад к ответу", callback_data=f"ab_back:{sid}",
+            ),
+        )
+
         await cb.message.edit_text(
-            f"✅ Сохранено в <code>my_notes/{fn}</code>",
+            f"✅ Сохранено в <code>my_notes/{fn}</code>\n\n"
+            "Вы можете разложить её по комнатам Дворца прямо сейчас:",
             parse_mode="HTML",
+            reply_markup=kb.as_markup(),
         )
     except Exception as e:
         await cb.message.edit_text(format_user_error(e, "action_bar_save"))

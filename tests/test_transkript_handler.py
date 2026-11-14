@@ -1,6 +1,7 @@
 """Unit tests for handlers.transkript."""
 
 import os
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -22,8 +23,13 @@ class FakeMessage:
 
     async def answer(self, text, parse_mode=None, reply_markup=None):
         self.answers.append((text, parse_mode, reply_markup))
-        status = SimpleNamespace(edits=[], deleted=False)
+        status = SimpleNamespace(edits=[], deleted=False, answers=[])
         status.edit_text = _make_edit(status.edits)
+
+        async def _ans(t, parse_mode=None, reply_markup=None):
+            status.answers.append((t, parse_mode, reply_markup))
+
+        status.answer = _ans
         self.status = status
         return status
 
@@ -152,7 +158,10 @@ def _real_cb(monkeypatch, data=""):
 
     monkeypatch.setattr(types.Message, "edit_text", noop_edit)
     monkeypatch.setattr(types.Message, "answer", noop_answer)
-    monkeypatch.setattr(types.CallbackQuery, "answer", lambda self, text=None, show_alert=None: None)
+    monkeypatch.setattr(
+        types.CallbackQuery, "answer",
+        lambda self, text=None, show_alert=None: None,
+    )
     msg = types.Message(
         message_id=1, date=0, chat=types.Chat(id=1, type="private"),
         from_user=types.User(id=4242, is_bot=False, first_name="t"), text="x",
@@ -362,7 +371,12 @@ async def test_show_content_page_nav_middle(monkeypatch, tmp_path):
     texts = [b.text for row in cb.message.answers[0][2].inline_keyboard for b in row]
     assert "◀️" in texts and "▶️" in texts
     assert "2/3" in texts
-    assert "tr_cp:0" in [b.callback_data for row in cb.message.answers[0][2].inline_keyboard for b in row]
+    callbacks = [
+        b.callback_data
+        for row in cb.message.answers[0][2].inline_keyboard
+        for b in row
+    ]
+    assert "tr_cp:0" in callbacks
 
 
 # ---------- cb_tr_content_page ----------
@@ -788,6 +802,59 @@ async def test_answer_tr_ai_empty_result(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_answer_tr_ai_does_not_block_event_loop(monkeypatch, tmp_path, heartbeat):
+    d = _enable(monkeypatch, tmp_path)
+    _write_file(d, "a.txt", "контент", 100)
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("ollama", "llama3"))
+
+    def slow_sync(*a, **k):
+        time.sleep(0.03)
+        return "ответ"
+
+    monkeypatch.setattr("services.ai_engine._sync_ai_call", slow_sync)
+    st = SimpleNamespace(edits=[])
+    st.edit_text = _make_edit(st.edits)
+
+    async with heartbeat(interval=0.005) as hb:
+        await tr._answer_tr_ai(st, 4242, "a.txt", "вопрос")
+
+    assert hb.ticks >= 1
+    assert st.edits[0][0] == "ответ"
+
+
+@pytest.mark.asyncio
+async def test_answer_tr_ai_error_replaces_status(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    _write_file(d, "a.txt", "контент", 100)
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("ollama", "llama3"))
+
+    async def failing_ai(*a, **k):
+        raise RuntimeError("ai down")
+
+    monkeypatch.setattr(tr, "call_ai_async", failing_ai)
+    st = SimpleNamespace(edits=[])
+    st.edit_text = _make_edit(st.edits)
+    await tr._answer_tr_ai(st, 4242, "a.txt", "вопрос")
+    assert "Ошибка выполнения" in st.edits[0][0]
+
+
+@pytest.mark.asyncio
+async def test_answer_tr_ai_timeout_replaces_status(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    _write_file(d, "a.txt", "контент", 100)
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("ollama", "llama3"))
+
+    async def timed_out(*a, **k):
+        raise tr.AITimeoutError("too slow")
+
+    monkeypatch.setattr(tr, "call_ai_async", timed_out)
+    st = SimpleNamespace(edits=[])
+    st.edit_text = _make_edit(st.edits)
+    await tr._answer_tr_ai(st, 4242, "a.txt", "вопрос")
+    assert st.edits[0][0] == "⏱️ ИИ не ответил вовремя. Попробуйте ещё раз."
+
+
+@pytest.mark.asyncio
 async def test_handle_tr_ai_question(monkeypatch, tmp_path):
     d = _enable(monkeypatch, tmp_path)
     _write_file(d, "a.txt", "контент", 100)
@@ -798,3 +865,51 @@ async def test_handle_tr_ai_question(monkeypatch, tmp_path):
     assert msg.answers[0][0] == "🤔 Анализирую транскрипт..."
     status = msg.answers[0][0]
     assert status is not None
+
+
+@pytest.mark.asyncio
+async def test_answer_tr_ai_long_result_splits(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    _write_file(d, "a.txt", "контент транскрипта", 100)
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("ollama", "llama3"))
+    long_reply = ("Абзац текста для проверки разбиения сообщения.\n\n" * 150)
+    monkeypatch.setattr("services.ai_engine._sync_ai_call", lambda *a, **k: long_reply)
+
+    answers = []
+    st = SimpleNamespace(edits=[])
+    st.edit_text = _make_edit(st.edits)
+
+    async def fake_answer(text, parse_mode=None, **kw):
+        answers.append((text, parse_mode))
+
+    st.answer = fake_answer
+
+    await tr._answer_tr_ai(st, 4242, "a.txt", "вопрос", with_web=False)
+    assert len(st.edits) == 1
+    assert len(st.edits[0][0]) <= 4000
+    assert len(answers) > 0
+
+
+@pytest.mark.asyncio
+async def test_answer_tr_ai_html_error_falls_back_to_plain_text(monkeypatch, tmp_path):
+    d = _enable(monkeypatch, tmp_path)
+    _write_file(d, "a.txt", "контент", 100)
+    monkeypatch.setattr("services.ai_engine.get_current_ai", lambda: ("ollama", "llama3"))
+    monkeypatch.setattr(
+        "services.ai_engine._sync_ai_call",
+        lambda *a, **k: "Ответ с <незакрытым тегом",
+    )
+
+    st = SimpleNamespace(edits=[], edit_count=0)
+
+    async def fake_edit(text, parse_mode=None, **kw):
+        st.edit_count += 1
+        if parse_mode == "HTML":
+            raise RuntimeError("TelegramBadRequest: can't parse entities")
+        st.edits.append((text, parse_mode))
+
+    st.edit_text = fake_edit
+
+    await tr._answer_tr_ai(st, 4242, "a.txt", "вопрос", with_web=False)
+    assert len(st.edits) == 1
+    assert st.edits[0][1] is None
