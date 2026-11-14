@@ -1095,7 +1095,7 @@ async def cb_read_drawer(cb: types.CallbackQuery):
 
         source_file = drawer.get("source_file", "")
         text = ""
-        meta = {}
+        meta: dict[str, object] = {}
         loaded_file_path = ""
 
         if source_file:

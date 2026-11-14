@@ -43,6 +43,7 @@ async def _show_cross_rooms(edit_func, uid: int, src_wing: str, src_room: str):
     if not rooms:
         await edit_func(f"❌ Для «{src_room}» нет связанных комнат.")
         return
+    _tunnel_state.setdefault(uid, {})["cross_rooms"] = {r: w for w, r in rooms}
     kb = InlineKeyboardBuilder()
     for w, r in rooms:
         kb.row(types.InlineKeyboardButton(
@@ -53,6 +54,19 @@ async def _show_cross_rooms(edit_func, uid: int, src_wing: str, src_room: str):
         f"<b>🔗 Связанные комнаты с «{src_room}»:</b>",
         parse_mode="HTML", reply_markup=kb.as_markup(),
     )
+
+
+@router.callback_query(F.data.startswith("p_crr:"))
+@allowed_callback
+async def cb_cross_room_select(cb: types.CallbackQuery):
+    await cb.answer()
+    uid = cb.from_user.id
+    room = (cb.data or "")[6:]
+    state = _tunnel_state.get(uid) or {}
+    cross_rooms = state.get("cross_rooms") or {}
+    wing = cross_rooms.get(room) or state.get("wing_a") or "my_notes"
+    from .navigation import _show_drawers_page
+    await _show_drawers_page(cb.message.edit_text, uid, wing, room, 0)
 
 
 @router.callback_query(F.data.startswith("p_tfa_") & ~F.data.startswith("p_tfa_:"))
@@ -189,7 +203,7 @@ async def cb_follow_tunnels_room(cb: types.CallbackQuery):
     )
 
 
-@router.callback_query(F.data.startswith("p_tor_"))
+@router.callback_query(F.data.startswith("p_tor_") | F.data.startswith("p_tor:"))
 @allowed_callback
 async def cb_follow_tunnels_result(cb: types.CallbackQuery):
     await cb.answer()

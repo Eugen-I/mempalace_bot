@@ -211,3 +211,12 @@ def test_format_mechanics_list():
 
     empty_text = format_mechanics_list([])
     assert "Банк фотомеханик пуст" in empty_text
+
+
+def test_format_mechanics_context_sanitizes_double_quotes():
+    """Выдержка вида 1/6\" заменяется на '1/6 с' в контексте для LLM."""
+    mechs = get_factory_mechanics()
+    ctx = format_mechanics_context(mechs)
+    assert '1/6"' not in ctx
+    assert '1/125"' not in ctx
+    assert "1/6 с" in ctx

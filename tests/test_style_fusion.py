@@ -622,7 +622,10 @@ def test_deepen_and_references_prompts_and_cards():
     assert "&lt;br&gt;" not in refs_card
     assert "Google Картинки" in refs_card
     assert "Pinterest" in refs_card
-    assert "https://www.google.com/search?tbm=isch&amp;q=" in refs_card or "https://www.google.com/search?tbm=isch&q=" in refs_card
+    assert (
+        "https://www.google.com/search?tbm=isch&amp;q=" in refs_card
+        or "https://www.google.com/search?tbm=isch&q=" in refs_card
+    )
     assert "https://www.pinterest.com/search/pins/?q=" in refs_card
 
     # Карточка референсов с HTML-сниппетами из поиска (очистка <br> и ссылок)
@@ -753,3 +756,163 @@ def test_concept_micro_actions_persistence():
     assert c2.deepened_analysis == "Глубокий анализ"
     assert c2.midjourney_prompt == "mj prompt"
     assert c2.fuji_recipe == "fuji recipe"
+
+
+def test_parse_fusion_concepts_quantum_autumn_depression_with_shutter_quotes():
+    """Репродукция бага qwen2.5:7b на теме 'Осенняя депрессия...': '1/6\"\"' в camera_setup."""
+    raw = (
+        '{\n'
+        '  "projects": [\n'
+        '    {\n'
+        '      "title": "Quantum",\n'
+        '      "triad": {\n'
+        '        "narrative": {"role": "narrative", "style": "Сюрреализм", '
+        '"traits": "Онейрический сюжет, деконтекстуализация"},\n'
+        '        "lighting": {"role": "lighting", "style": "Пиктореализм", '
+        '"traits": "Мягкий рассеянный свет"},\n'
+        '        "optics": {"role": "optics", "style": "Импрессионизм", '
+        '"traits": "Акварельная лессировка"},\n'
+        '        "rationale": "Синтез осенней меланхолии"\n'
+        '      },\n'
+        '      "manifesto": "Осенний парк как "квантовое" состояние памяти",\n'
+        '      "scene_description": "Опавшие листья в тёмной воде",\n'
+        '      "lighting_setup": "Пасмурный рассеянный свет",\n'
+        '      "camera_setup": {\n'
+        '        "Приём съёмки": "Мультиэкспозиция (3 кадра)",\n'
+        '        "Выдержка": "1/6"",\n'
+        '        "Диафрагма": "f/5.6",\n'
+        '      },\n'
+        '      "shooting_action": "Съёмка с рук с естественным микро-тремором",\n'
+        '      "gear_recipe": {"camera": "Fujifilm X-T4", "lens": "Kamlan 50mm f/1.1"},\n'
+        '      "shooting_steps": [\n'
+        '        "Шаг 1: Выбрать режим мультиэкспозиции Тёмный",\n'
+        '        "Шаг 2: Сделать 3 кадра с выдержкой 1/6 с"\n'
+        '      ]\n'
+        '    }\n'
+        '  ]\n'
+        '}'
+    )
+    concepts = parse_fusion_ideas(raw)
+    assert len(concepts) == 1
+    assert concepts[0].title == "Quantum"
+    assert len(set(concepts[0].triad.styles())) == 3
+
+
+def test_parse_fusion_concepts_salvages_truncated_quantum_project():
+    """Если генерация оборвалась внутри первого проекта 'Quantum', проект спасается."""
+    raw = (
+        '{\n'
+        '  "projects": [\n'
+        '    {\n'
+        '      "title": "Quantum",\n'
+        '      "triad": {\n'
+        '        "narrative": {"role": "narrative", "style": "Сюрреализм", '
+        '"traits": "Онейрический сюжет, деконтекстуализация"},\n'
+        '        "ligh'
+    )
+    concepts = parse_fusion_ideas(raw)
+    assert len(concepts) == 1
+    assert concepts[0].title == "Quantum"
+    assert len(set(concepts[0].triad.styles())) == 3
+    assert len(concepts[0].camera_setup) >= 2
+    assert len(concepts[0].shooting_steps) >= 2
+    assert concepts[0].shooting_action != ""
+
+
+def test_build_midjourney_prompt_full_arsenal_and_film_emulsions():
+    """Промпт Midjourney включает реальную эмульсию плёнки, оптику арсенала, перевод и анти-CGI."""
+    from services.style_fusion import (
+        build_arsenal_optics_mj_tokens,
+        build_fuji_recipe_mj_tokens,
+        translate_ru_photo_terms_to_en,
+    )
+
+    # 1. Проверка маппинга эмульсий Fujifilm X-T4
+    acros_tokens = build_fuji_recipe_mj_tokens(
+        {
+            "film_simulation": "ACROS (+R Красный)",
+            "highlight_tone": -1.5,
+            "shadow_tone": 3.0,
+            "grain_effect": "Сильный / Крупное",
+            "clarity": -3,
+        }
+    )
+    assert "Neopan 100 Acros" in acros_tokens
+    assert "crushed ink-black shadows" in acros_tokens
+    assert "soft rolled-off creamy highlights" in acros_tokens
+    assert "pronounced coarse 35mm silver halide film grain" in acros_tokens
+    assert "negative clarity dreamy highlight halation" in acros_tokens
+
+    classic_neg_tokens = build_fuji_recipe_mj_tokens(
+        {
+            "film_simulation": "Классический Негатив",
+            "wb_shift_r": 3,
+            "wb_shift_b": -4,
+        }
+    )
+    assert "Fujicolor Superia 400" in classic_neg_tokens
+    assert "warm amber-golden analog color cast" in classic_neg_tokens
+
+    # 2. Проверка оптического арсенала (Kamlan, Pentacon перевернутая линза, ткань, ND, Godox)
+    kamlan_tokens = " ".join(
+        build_arsenal_optics_mj_tokens(
+            lens_raw="Kamlan 50mm f/1.1",
+            filter_raw="Прозрачная ткань (вуаль) + вспышка Godox V1F",
+            action_raw="Мультиэкспозиция в режиме Тёмный",
+        )
+    )
+    assert "Kamlan 50mm f/1.1" in kamlan_tokens
+    assert "paper-thin depth of field" in kamlan_tokens
+    assert "sheer translucent tulle fabric veil" in kamlan_tokens
+    assert "rear-curtain sync flash photography with Godox V1F" in kamlan_tokens
+    assert "in-camera double exposure in Darken blend mode" in kamlan_tokens
+
+    pentacon_tokens = " ".join(
+        build_arsenal_optics_mj_tokens(
+            lens_raw="Pentacon 29mm с перевёрнутой передней линзой",
+            filter_raw="Линза с отверстием в центре + ND 2-400",
+            action_raw="Голландский угол 20°",
+        )
+    )
+    assert "reversed front element" in pentacon_tokens
+    assert "center-hole diopter filter" in pentacon_tokens
+    assert "variable ND filter" in pentacon_tokens
+    assert "Dutch angle tilted horizon 20 degrees" in pentacon_tokens
+
+    # 3. Проверка RU->EN перевода сцены и режимов raw/art + форматов кадра
+    en_tr = translate_ru_photo_terms_to_en(
+        "Одинокая фигура в пальто у мокрой бетонной стены в тумане"
+    )
+    assert "solitary human figure" in en_tr
+    assert "wet brutalist concrete wall texture" in en_tr
+    assert "dense atmospheric fog" in en_tr
+
+    triad = StyleTriad(
+        narrative=StyleAssignment(role="narrative", style="Пиктореализм"),
+        lighting=StyleAssignment(role="lighting", style="Экспрессионизм"),
+        optics=StyleAssignment(role="optics", style="Импрессионизм"),
+    )
+    concept = FusedPhotoConcept(
+        title="Осенняя элегия",
+        triad=triad,
+        scene_description="Одинокая фигура на причале в тумане",
+        lighting_setup="Контровой луч натриевого фонаря",
+        camera_setup={"Имитация": "Classic Chrome"},
+        shooting_action="Мультиэкспозиция в режиме Тёмный",
+        gear_recipe={
+            "lens": "Kamlan 50mm f/1.1",
+            "filter_or_accessory": "Прозрачная вуаль",
+        },
+        shooting_steps=["Шаг 1"],
+    )
+    prompt_raw = build_midjourney_prompt(concept, aspect_ratio="4:5", mode="raw")
+    assert "unretouched raw analog 35mm photograph" in prompt_raw
+    assert "8k resolution" not in prompt_raw
+    assert "timeless elegiac composition" in prompt_raw
+    assert "razor-sharp chiaroscuro light beam" in prompt_raw
+    assert "painterly optical bokeh swirl" in prompt_raw
+    assert "solitary human figure" in prompt_raw
+    assert "--ar 4:5 --v 6.1 --style raw --s 90 --no cgi" in prompt_raw
+
+    prompt_art = build_midjourney_prompt(concept, aspect_ratio="3:2", mode="art")
+    assert "--ar 3:2 --v 6.1 --s 220 --w 35 --c 12 --no cgi" in prompt_art

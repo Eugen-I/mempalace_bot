@@ -807,3 +807,29 @@ async def _dispatch(cb):
             "p_sv_c": s.cb_save_confirm_execute,
         }
         await mapping[cb.data](cb)
+
+
+def test_save_isolated_from_wing_and_room_cache_overwrite(monkeypatch):
+    """Навигация в другом окне, перезаписавшая _wing_cache/_room_cache, не ломает сохранение."""
+    import asyncio
+
+    _enable(monkeypatch)
+    s._save_state[4242] = {
+        "text": "текст",
+        "wings": ["крыло_сохр_1", "крыло_сохр_2"],
+        "rooms": [("комната_сохр_1", {}), ("комната_сохр_2", {})],
+    }
+    # Симулируем перезапись глобального кэша параллельной навигацией
+    s._wing_cache[4242] = ["чужое_крыло"]
+    s._room_cache[4242] = [("чужая_комната", {})]
+
+    monkeypatch.setattr(s, "_show_save_rooms", lambda ef, u: asyncio.sleep(0))
+    monkeypatch.setattr(s, "_save_confirm", lambda ef, u: asyncio.sleep(0))
+
+    cb_w = FakeCb(data="p_sw_1")
+    asyncio.run(s.cb_save_wing_chosen(cb_w))
+    assert s._save_state[4242]["wing"] == "крыло_сохр_2"
+
+    cb_r = FakeCb(data="p_sr_1")
+    asyncio.run(s.cb_save_room_chosen(cb_r))
+    assert s._save_state[4242]["room"] == "комната_сохр_2"

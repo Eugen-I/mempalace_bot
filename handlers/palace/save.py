@@ -91,6 +91,9 @@ async def _show_save_wings(edit_func, uid: int):
         return
     wing_names = list(wings.keys()) if isinstance(wings, dict) else list(wings)
     _wing_cache[uid] = wing_names
+    state = _save_state.get(uid)
+    if isinstance(state, dict):
+        state["wings"] = wing_names
     kb = InlineKeyboardBuilder()
     for i, w in enumerate(wing_names):
         kb.row(types.InlineKeyboardButton(
@@ -113,11 +116,11 @@ async def cb_save_wing_chosen(cb: types.CallbackQuery):
         idx = int(cb.data[5:])
     except ValueError:
         return
-    wings = _wing_cache.get(uid)
+    state = _save_state.get(uid)
+    wings = (state.get("wings") if isinstance(state, dict) else None) or _wing_cache.get(uid)
     if not wings or idx >= len(wings):
         await cb.message.edit_text("❌ Сессия истекла.")
         return
-    state = _save_state.get(uid)
     if state:
         state["wing"] = wings[idx]
     await _show_save_rooms(cb.message.edit_text, uid)
@@ -158,7 +161,9 @@ async def _show_save_rooms(edit_func, uid: int):
         )
         return
     room_names = list(rooms.keys())
-    _room_cache[uid] = [(r, rooms[r]) for r in room_names]
+    rooms_list = [(r, rooms[r]) for r in room_names]
+    _room_cache[uid] = rooms_list
+    state["rooms"] = rooms_list
     kb = InlineKeyboardBuilder()
     for i, r in enumerate(room_names):
         kb.row(types.InlineKeyboardButton(
@@ -189,11 +194,11 @@ async def cb_save_room_chosen(cb: types.CallbackQuery):
         idx = int(cb.data[5:])
     except ValueError:
         return
-    rooms = _room_cache.get(uid)
+    state = _save_state.get(uid)
+    rooms = (state.get("rooms") if isinstance(state, dict) else None) or _room_cache.get(uid)
     if not rooms or idx >= len(rooms):
         await cb.message.edit_text("❌ Сессия истекла.")
         return
-    state = _save_state.get(uid)
     if state:
         state["room"] = rooms[idx][0]
     await _save_confirm(cb.message.edit_text, uid)

@@ -304,3 +304,43 @@ async def test_launch_copilot_session(monkeypatch):
     assert sess is not None
     assert sess.topic == "Ребенок в депрессии"
     assert any("Вводный вопрос арт-директора" in e for e in msg.last_status.edits)
+
+
+@pytest.mark.asyncio
+async def test_generate_socratic_reply_strips_parroted_sentences(monkeypatch):
+    """Удаляет дословные повторы фраз из предыдущих реплик ассистента (баг 'Весёлая депрессия')."""
+    sess = CopilotSession(user_id=4242, topic="Весёлая депрессия")
+    sess.add_assistant_message(
+        "Это перекликается с твоим размышлением о депрессии как о пути инициации. "
+        "Как ты видишь эту связь в кадре? Чем именно является «весёлость» в твоей депрессии?"
+    )
+
+    async def fake_ai(eng, model, msgs, sampling=None):
+        return (
+            "Это перекликается с твоим размышлением о депрессии как о пути инициации. "
+            "Как ты видишь эту связь в кадре? Чем именно является «весёлость» в твоей депрессии? "
+            "Ироничная улыбка как защитная маска даёт сильный контраст между застывшей мимикой "
+            "и напряжёнными пальцами в тени — какую деталь сделаем главным акцентом кадра?"
+        )
+
+    monkeypatch.setattr(engine, "get_ai_response_async", fake_ai)
+    reply = await engine.generate_socratic_reply(
+        sess,
+        "Человек часто смеется над собой иронично, пряча боль души.",
+    )
+    assert "Это перекликается с твоим размышлением" not in reply
+    assert "Ироничная улыбка как защитная маска" in reply
+
+
+def test_build_socratic_messages_alternation_and_short_reply_guidance():
+    """Если история с assistant, добавляется начальный user-ход и инструкция согласия."""
+    history = [
+        {"role": "assistant", "content": "В чём главный парадокс темы?"},
+        {"role": "user", "content": "Это именно такая попытка"},
+    ]
+    msgs = engine.build_socratic_messages("Весёлая депрессия", history)
+    assert msgs[0]["role"] == "system"
+    assert "краткое согласие" in msgs[0]["content"]
+    assert "ЗАПРЕТ НА САМОПОВТОРЫ" in msgs[0]["content"]
+    # Чередование ролей: system -> user (тема) -> assistant -> user
+    assert [m["role"] for m in msgs] == ["system", "user", "assistant", "user"]

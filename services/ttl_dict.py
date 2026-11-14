@@ -41,3 +41,9 @@ class TtlDict(dict[K, V], Generic[K, V]):
     def __contains__(self, key):
         self._prune(key)
         return super().__contains__(key)
+
+    def setdefault(self, key, default=None):
+        self._prune(key)
+        if key not in self:
+            self[key] = default
+        return self[key]

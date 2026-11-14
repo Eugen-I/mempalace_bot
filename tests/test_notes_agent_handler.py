@@ -1587,3 +1587,49 @@ async def test_cb_notes_actions_not_allowed(monkeypatch):
         cb = FakeCbLite(777, data)
         await handler(cb)
         assert not cb.message.edits, f"{data}: неавторизованный ничего не получает"
+
+
+async def test_run_surreal_storm_populates_storm_data_and_buttons(monkeypatch):
+    """run_surreal_storm сохраняет идеи в _storm_data[uid] для последующего сохранения."""
+    from handlers import brainstorm as bh
+    from services import ai_engine
+    from services import brainstorm as bs
+
+    monkeypatch.setattr(
+        bs, "collect_context",
+        lambda topic, mode="standard", folder=None: _fake_coro(
+            {"notes": "заметка", "guide": "гайд"},
+        ),
+    )
+    monkeypatch.setattr(ai_engine, "get_current_ai", lambda: ("fake", "model"))
+
+    async def fake_response(engine, model, msgs, **kwargs):
+        camera = "Имитация плёнки ACROS, тени -2"
+        return (
+            '{"ideas": ['
+            f'{{"title": "Сон 1", "reason": "р1", "camera_setup": "{camera}", "steps": "s1"}},'
+            f'{{"title": "Сон 2", "reason": "р2", "camera_setup": "{camera}", "steps": "s2"}}'
+            ']}'
+        )
+
+    monkeypatch.setattr(ai_engine, "get_ai_response_async", fake_response)
+    bh._storm_data.pop(4242, None)
+
+    markups = []
+
+    class MarkupCapturingStatus(FakeStatus):
+        async def edit_text(self, text, parse_mode=None, reply_markup=None):
+            self.edits.append(text)
+            if reply_markup is not None:
+                markups.append(reply_markup)
+
+    status = MarkupCapturingStatus()
+    await na.run_surreal_storm(4242, status, "сны и зеркала")
+
+    assert 4242 in bh._storm_data
+    assert len(bh._storm_data[4242]["ideas"]) == 2
+    assert markups, "клавиатура выбора/сохранения идей должна быть прикреплена"
+    cb_datas = [b.callback_data for row in markups[-1].inline_keyboard for b in row]
+    assert "bs_pick:1" in cb_datas
+    assert "bs_pick:2" in cb_datas
+    assert "bs_all" in cb_datas

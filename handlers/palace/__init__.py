@@ -522,7 +522,8 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                 types.InlineKeyboardButton(text="❌ Отмена", callback_data="p_kga_x"),
             )
             await msg.edit_text(
-                f"🧠 Шаг 2/3: выберите **тип связи**\n\nСубъект: <b>{entity}</b>",
+                f"🧠 Шаг 2/3: выберите <b>тип связи</b>\n\n"
+                f"Субъект: <b>{safe_html_format(entity)}</b>",
                 parse_mode="HTML",
                 reply_markup=kb.as_markup(),
             )
@@ -547,8 +548,10 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                     ),
                 )
                 await msg.edit_text(
-                    f"🧠 **Подтверждение:**\n\n"
-                    f"<b>{subj}</b> → <b>{pred}</b> → <b>{obj}</b>\n\n"
+                    f"🧠 <b>Подтверждение:</b>\n\n"
+                    f"<b>{safe_html_format(subj)}</b> → "
+                    f"<b>{safe_html_format(pred)}</b> → "
+                    f"<b>{safe_html_format(obj)}</b>\n\n"
                     f"Добавить этот факт в граф знаний?",
                     parse_mode="HTML",
                     reply_markup=kb.as_markup(),
@@ -565,15 +568,17 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
             parsed = json.loads(raw)
             facts = parsed if isinstance(parsed, list) else parsed.get("facts", [])
             if not facts:
+                from .kg import _build_kgrs_callback
+
                 kb = InlineKeyboardBuilder()
                 kb.row(
                     types.InlineKeyboardButton(
                         text="🔍 Поискать в заметках",
-                        callback_data=f"p_kgrs:{entity}",
+                        callback_data=_build_kgrs_callback(entity, uid),
                     ),
                 )
                 await msg.edit_text(
-                    f"<b>🧠 Сущность: {entity}</b>\n\nНет фактов в графе знаний.",
+                    f"<b>🧠 Сущность: {safe_html_format(entity)}</b>\n\nНет фактов в графе знаний.",
                     parse_mode="HTML",
                     reply_markup=kb.as_markup(),
                 )
@@ -746,8 +751,8 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
                     f"✅ <b>Туннель создан!</b>\n\n"
                     f"• {src_w}/{src_r}\n"
                     f"  ⟷ {tgt_w}/{tgt_r}\n"
-                    + (f"• Описание: {label}\n" if label else "")
-                    + (f"• ID: {tunnel_id}" if tunnel_id else "")
+                    + (f"• Описание: {safe_html_format(label)}\n" if label else "")
+                    + (f"• ID: {safe_html_format(str(tunnel_id))}" if tunnel_id else "")
                 )
             except (json.JSONDecodeError, TypeError):
                 text = raw or "✅ Туннель создан!"
@@ -771,6 +776,11 @@ async def process_mcp_text_input(uid: int, text: str, answer_func):
         elif action and action.startswith("agent_room:"):
             from handlers.agent import run_room_agent
             await run_room_agent(uid, msg, action[len("agent_room:"):], text.strip())
+
+        elif action and action.startswith("ab_web_query:"):
+            sid = action.split(":", 1)[1]
+            from .action_bar import run_web_search_with_query
+            await run_web_search_with_query(uid, msg, sid, text.strip())
 
         elif action == "tunnel_discuss":
             ctx = _user_context.get(uid, {})

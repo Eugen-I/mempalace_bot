@@ -660,7 +660,8 @@ async def run_web_search_with_query(
     query = query.strip()
     answer.ctx["web_query"] = query
     status = await msg.edit_text("🌐 Ищу в интернете...")
-    await _run_web_search_finalize(uid, status.edit_text, answer, query)
+    edit_fn = status.edit_text if hasattr(status, "edit_text") else msg.edit_text
+    await _run_web_search_finalize(uid, edit_fn, answer, query)
 
 
 # ─── 💾 Сохранить ───

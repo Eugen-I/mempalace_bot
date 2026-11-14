@@ -535,8 +535,41 @@ async def run_surreal_storm(
         await _status_edit(status_msg, f"❌ Ошибка штурма: {exc}")
         return
 
+    from handlers.brainstorm import _storm_data, safe_edit_or_split_send
+
+    storm_mode = "fusion" if is_fusion else "surreal"
+    _storm_data[uid] = {
+        "topic": topic,
+        "context": context,
+        "ideas": ideas,
+        "mode": storm_mode,
+    }
+    kb = InlineKeyboardBuilder()
+    row = []
+    for i in range(1, len(ideas) + 1):
+        btn_label = f"🎨 {i}" if is_fusion else f"💡 {i}"
+        row.append(types.InlineKeyboardButton(
+            text=btn_label, callback_data=f"bs_pick:{i}",
+        ))
+        if len(row) == 3:
+            kb.row(*row)
+            row = []
+    if row:
+        kb.row(*row)
+    if len(ideas) > 1:
+        kb.row(types.InlineKeyboardButton(
+            text="💾 Сохранить все", callback_data="bs_all",
+        ))
+    kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
+
     try:
-        await status_msg.edit_text(text, parse_mode="HTML")
+        await safe_edit_or_split_send(
+            status_msg,
+            text,
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML",
+            disable_web_page_preview=False,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[SURREAL] show ideas failed: %s", exc)
 

@@ -427,7 +427,10 @@ def format_mechanics_context(mechanics: list[VisualMechanic]) -> str:
         lines.append(f"{i}. «{m.title}» (Стили: {', '.join(m.styles)}):")
         lines.append(f"   Эффект: {m.visual_outcome}")
         if m.camera_setup:
-            parts = [f"{k}: {v}" for k, v in m.camera_setup.items()]
+            parts = [
+                f"{k}: {str(v).replace('\"', ' с').strip()}"
+                for k, v in m.camera_setup.items()
+            ]
             lines.append(f"   Настройки: {'; '.join(parts)}")
         if m.physical_action:
             lines.append(f"   Действие: {m.physical_action}")

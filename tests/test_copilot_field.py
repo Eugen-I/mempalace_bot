@@ -217,13 +217,21 @@ async def test_cb_copilot_to_field_assistant(completed_session):
 
 @pytest.mark.asyncio
 async def test_cb_copilot_gen_mj_prompt(completed_session):
-    """Проверка вызова генерации Midjourney-промпта."""
+    """Проверка вызова генерации Midjourney-промпта и переключения режимов/форматов."""
     cb = FakeCb(9999, data="cp_gen_mj_prompt")
     await hc.cb_copilot_gen_mj_prompt(cb)
 
     assert len(cb.message.edits) == 1
     assert "Эскизный промпт для нейросетей" in cb.message.edits[0]
     assert "surrealism aesthetic" in cb.message.edits[0]
+    assert "--no cgi" in cb.message.edits[0]
+
+    # Переключение в режим Галерейный арт и портретный формат 4:5
+    cb_art = FakeCb(9999, data="cp_gen_mj_prompt:art:4:5")
+    await hc.cb_copilot_gen_mj_prompt(cb_art)
+    assert len(cb_art.message.edits) == 1
+    assert "Галерейный арт" in cb_art.message.edits[0]
+    assert "--ar 4:5 --v 6.1 --s 220" in cb_art.message.edits[0]
 
 
 @pytest.mark.asyncio

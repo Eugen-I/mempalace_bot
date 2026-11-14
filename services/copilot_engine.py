@@ -27,20 +27,26 @@ from services.text_formatter import safe_html_format
 
 logger = logging.getLogger("CopilotEngine")
 
-COPILOT_SOCRATIC_SYSTEM = """Ты — опытный арт-директор и куратор визуальных искусств.
-Твоя цель — помочь фотографу глубоко осмыслить тему арт-проекта через живой диалог.
+COPILOT_SOCRATIC_SYSTEM = """Ты — проницательный арт-директор и режиссёр авторской фотографии.
+Твоя задача — вести живой, глубокий и сжатый диалог с фотографом, переводя его
+психологические мысли на язык визуальных образов, света, пластики и оптики.
 
-ПРАВИЛА ДИАЛОГА:
-1. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО заваливать фотографа длинным списком вопросов или анкетой.
-2. В каждом ответе сначала кратко (1–2 фразы) откликнись на мысль автора: выдели метафору.
-3. Затем задай ровно ОДИН (максимум два) точных, глубоких Сократических вопроса.
-   Темы для исследования:
-   - Эмоциональное зерно (тревога, покой, оцепенение, катарсис?).
-   - Пространство и свет (бетон, туман, полумрак заброшенного дома, зеркала?).
-   - Герой и телесность (одинокая фигура, только руки/детали, маска, силуэт?).
-   - Скрытый парадокс (что в этой сцене ломает обыденность?).
-4. Пиши лаконично (3–5 предложений на весь ответ), без клише, живым художественным языком.
-5. Общайся на русском языке.
+ПРАВИЛА ЖИВОГО СОАВТОРСТВА:
+1. НИКАКИХ ШАБЛОНОВ И ПОВТОРОВ: Категорически запрещено повторять любые фразы или
+   вопросы из твоих предыдущих реплик и использовать штампы вроде
+   «Это перекликается с твоим размышлением...».
+2. ОТ ПСИХОЛОГИИ — К КАДРУ (1–2 предложения): Услышь парадокс в словах автора
+   (например, ироничный смех как маска боли) и сразу покажи, как это выглядит
+   ОПТИЧЕСКИ и ПЛАСТИЧЕСКИ в кадре (мимика, напряжение пальцев, взгляд в расфокусе,
+   жёсткая вспышка, двойная экспозиция, отражение).
+3. РЕАКЦИЯ НА КОРОТКОЕ СОГЛАСИЕ: Если фотограф ответил кратко («Да», «Это именно
+   такая попытка», «Согласен»), не топчись на месте с абстрактными вопросами —
+   сам предложи 2 конкретные контрастные мизансцены (свет, жест, деталь) и спроси,
+   какая ближе.
+4. РОВНО ОДИН РЕЖИССЁРСКИЙ ВОПРОС В КОНЦЕ: Спрашивай не как психотерапевт
+   («что помогает тебе преодолеть депрессию?»), а как режиссёр кадра: через какую
+   деталь, жест, свет или фактуру мы сделаем эту внутреннюю драму видимой зрителю?
+5. ОБЪЁМ: 3–4 ёмких, образных предложения без воды. Язык — живой русский.
 """
 
 COPILOT_SUMMARIZE_SYSTEM = """Ты — арт-куратор.
@@ -52,6 +58,44 @@ COPILOT_SUMMARIZE_SYSTEM = """Ты — арт-куратор.
 🏛 <b>Пространство и свет:</b> [локация, качество освещения, атмосфера]
 👤 <b>Герой / Объект:</b> [кто или что в кадре, телесность, пластика]
 """
+
+
+def _normalize_sentence(sentence: str) -> str:
+    """Нормализует предложение для сравнения на дубликаты."""
+    return re.sub(r"\W+", " ", sentence.lower()).strip()
+
+
+def _deduplicate_assistant_reply(
+    reply: str,
+    previous_assistant_messages: list[str],
+) -> str:
+    """Удаляет из нового ответа предложения, дословно повторяющие прошлые реплики ассистента."""
+    clean_reply = (reply or "").strip()
+    if not clean_reply or not previous_assistant_messages:
+        return clean_reply
+
+    seen_norm: set[str] = set()
+    for prev in previous_assistant_messages:
+        for sent in re.split(r"(?<=[.!?…])\s+", prev.strip()):
+            norm = _normalize_sentence(sent)
+            if len(norm) >= 12:
+                seen_norm.add(norm)
+
+    if not seen_norm:
+        return clean_reply
+
+    sentences = [
+        s.strip()
+        for s in re.split(r"(?<=[.!?…])\s+", clean_reply)
+        if s.strip()
+    ]
+    kept = [
+        s for s in sentences
+        if _normalize_sentence(s) not in seen_norm
+    ]
+    if kept:
+        return " ".join(kept)
+    return ""
 
 
 def build_socratic_messages(
@@ -68,19 +112,81 @@ def build_socratic_messages(
         if res_ctx:
             system_content += f"\n\n{res_ctx}"
 
+    user_msgs = [
+        str(e.get("content", "")).strip()
+        for e in dialogue_history
+        if e.get("role") == "user" and str(e.get("content", "")).strip()
+    ]
+    assistant_msgs = [
+        str(e.get("content", "")).strip()
+        for e in dialogue_history
+        if e.get("role") == "assistant" and str(e.get("content", "")).strip()
+    ]
+
+    turn_num = len(user_msgs)
+    if turn_num == 1:
+        system_content += (
+            "\n\nФОКУС ТЕКУЩЕГО ШАГА (Шаг 1 — Пластика, жест и деталь в кадре):\n"
+            "Переведи психологическую мысль фотографа в зримый пластический образ "
+            "(мимика, руки, взгляд, маска, предмет-триггер, крупность плана). "
+            "Задай 1 вопрос о том, какая визуальная деталь в кадре выдаст этот внутренний конфликт."
+        )
+    elif turn_num == 2:
+        system_content += (
+            "\n\nФОКУС ТЕКУЩЕГО ШАГА (Шаг 2 — Светотень, среда и оптика):\n"
+            "Предложи решение через свет и оптическую фактуру (жёсткий рисующий луч, "
+            "контровой силуэт, отражение в стекле/воде, смаз на длинной выдержке "
+            "или вихревое боке). "
+            "Задай 1 вопрос о пространстве и характере света в этой сцене."
+        )
+    elif turn_num >= 3:
+        system_content += (
+            "\n\nФОКУС ТЕКУЩЕГО ШАГА (Шаг 3 — Сборка мизансцены):\n"
+            "Собери найденные образы в цельную мизансцену кадра, предложи конкретный "
+            "композиционный акцент и уточни финальный штрих перед переходом к выбору стилей."
+        )
+
+    if user_msgs and len(user_msgs[-1].split()) <= 7:
+        system_content += (
+            f"\n\nВАЖНО: Фотограф дал краткое согласие («{user_msgs[-1]}»). "
+            "НЕ задавай абстрактных вопросов! Предложи 2 конкретных контрастных визуальных "
+            "решения этого кадра (Вариант 1 и Вариант 2: жест, свет, оптика) и спроси, какой ближе."
+        )
+
+    if assistant_msgs:
+        system_content += (
+            "\n\nЗАПРЕТ НА САМОПОВТОРЫ: НИКОГДА не повторяй и не начинай ответ с фраз, "
+            "которые ты уже произносил в прошлых репликах. Пиши только новую мысль в ответ на "
+            "последнее сообщение фотографа."
+        )
+
     messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
 
-    for entry in dialogue_history:
-        role = entry.get("role", "user")
-        content = entry.get("content", "").strip()
-        if content:
-            messages.append({"role": role, "content": content})
+    # Гарантируем чередование user -> assistant для корректной работы chat-шаблона Qwen/Ollama
+    non_empty = [
+        (str(e.get("role", "user")), str(e.get("content", "")).strip())
+        for e in dialogue_history
+        if str(e.get("content", "")).strip()
+    ]
+    if non_empty and non_empty[0][0] == "assistant":
+        messages.append({
+            "role": "user",
+            "content": f"Тема моего фотопроекта: «{topic}». Помоги раскрыть её визуально.",
+        })
+
+    for role, content in non_empty:
+        messages.append({"role": role, "content": content})
 
     return messages
 
 
 async def generate_socratic_reply(session: CopilotSession, user_input: str) -> str:
     """Обрабатывает реплику пользователя и генерирует следующий вопрос/мысль арт-директора."""
+    previous_assistant = [
+        str(m.get("content", "")).strip()
+        for m in session.dialogue_history
+        if m.get("role") == "assistant" and str(m.get("content", "")).strip()
+    ]
     session.add_user_message(user_input)
     from services.copilot_palace_bridge import get_or_find_session_resonances
 
@@ -90,7 +196,7 @@ async def generate_socratic_reply(session: CopilotSession, user_input: str) -> s
     )
 
     engine, model = get_current_ai()
-    sampling = {"temperature": 0.75, "max_tokens": 500}
+    sampling = {"temperature": 0.7, "max_tokens": 500}
 
     try:
         raw = await get_ai_response_async(engine, model, messages, sampling=sampling)
@@ -109,7 +215,14 @@ async def generate_socratic_reply(session: CopilotSession, user_input: str) -> s
             engine, model = "qwen", "qwen2.5:7b"
             raw = await get_ai_response_async(engine, model, messages, sampling=sampling)
 
-        reply = raw.strip()
+        reply = _deduplicate_assistant_reply(raw.strip(), previous_assistant)
+        if not reply:
+            reply = (
+                f"Если перевести мысль «{user_input[:60]}» в плоскость кадра, "
+                "то возникает выбор между двумя приёмами: застывшая маска лица в жёстком "
+                "контрастном свете или раздвоение фигуры через отражение и длинную выдержку. "
+                "Какое из этих двух визуальных решений точнее передаёт твой замысел?"
+            )
     except Exception as exc:
         logger.error("[COPILOT] Socratic reply generation failed: %s", exc)
         reply = (
@@ -184,8 +297,9 @@ async def start_copilot_discussion(session: CopilotSession) -> str:
 
     prompt = (
         f"Фотограф выбрал тему для арт-проекта: «{session.topic}».\n"
-        "Выступи как вдохновляющий арт-директор: в 1–2 фразах подчеркни потенциал темы "
-        "и задай первый вопрос, определяющий эмоциональное ядро или конфликт кадра."
+        "В 1–2 ёмких предложениях вскрой внутренний визуальный парадокс или драматургическое "
+        "напряжение этой темы (без шаблонных вступлений) и задай ровно один точный вопрос, "
+        "который поможет увидеть главный конфликт будущего кадра."
     )
     messages = [
         {"role": "system", "content": system_content},
@@ -989,11 +1103,25 @@ STYLE_MIDJOURNEY_KEYWORDS: dict[str, str] = {
 }
 
 
-def build_raw_midjourney_prompt(session: CopilotSession) -> str:
+def build_raw_midjourney_prompt(
+    session: CopilotSession,
+    aspect_ratio: str = "16:9",
+    mode: str = "raw",
+) -> str:
     """Генерирует чистый англоязычный промпт для Midjourney v6.1 / Flux."""
+    from services.style_fusion import (
+        build_arsenal_optics_mj_tokens,
+        build_fuji_recipe_mj_tokens,
+        build_mj_technical_flags,
+        translate_ru_photo_terms_to_en,
+    )
+
     project = session.get_active_project()
     hook = project.get("visual_hook") or session.topic
-    parts: list[str] = []
+    parts: list[str] = [
+        "unretouched raw analog 35mm photograph, authentic optical physics, "
+        "natural surface micro-texture"
+    ]
 
     # Стилистические ключевые слова
     for st in session.selected_styles:
@@ -1001,14 +1129,19 @@ def build_raw_midjourney_prompt(session: CopilotSession) -> str:
         if mod:
             parts.append(mod)
 
-    # Визуальный хук/сцена
+    # Визуальный хук/сцена + англоязычный фотографический перевод
     if hook:
-        parts.append(f"cinematic shot of {hook}")
+        en_hook = translate_ru_photo_terms_to_en(hook)
+        if en_hook:
+            parts.append(f"cinematic shot of {hook} ({en_hook})")
+        else:
+            parts.append(f"cinematic shot of {hook}")
 
     # Свет
     light = project.get("lighting_scene") or session.tech_preferences.get("lighting", "")
     if light:
         light_lower = light.lower()
+        en_light = translate_ru_photo_terms_to_en(light)
         if "контровой" in light_lower:
             parts.append("strong dramatic rim backlight, cinematic halo lighting")
         elif "импульс" in light_lower or "лезви" in light_lower:
@@ -1017,50 +1150,71 @@ def build_raw_midjourney_prompt(session: CopilotSession) -> str:
             parts.append("soft diffused atmospheric ambient glow")
         else:
             parts.append(f"dramatic artistic lighting: {light[:60]}")
+        if en_light and en_light not in " ".join(parts):
+            parts.append(en_light)
 
-    # Оптика и насадки
+    # Оптика, насадки, фильтры и метод съемки
     tech = session.tech_preferences or {}
-    lens = (tech.get("lens") or "").lower()
-    if "гелиос" in lens or "helios" in lens:
-        parts.append("shot on vintage Helios 44-2 58mm f/2 lens, circular swirly bokeh")
-    elif "монокль" in lens:
-        parts.append("shot on soft focus monocle lens, ethereal halation glow")
-    else:
-        parts.append("shot on Fujinon lens, rich microcontrast")
+    lens_str = str(tech.get("lens") or "")
+    filt_str = str(tech.get("filter_accessory") or "")
+    supp_str = str(tech.get("support") or "")
+    act_str = f"{supp_str} {project.get('shooting_action', '')}".strip()
 
-    filt = (tech.get("filter_accessory") or "").lower()
-    if "призм" in filt or "prism" in filt:
-        parts.append(
-            "refracted through optical triangular crystal glass prism, chromatic split flare"
+    parts.extend(
+        build_arsenal_optics_mj_tokens(
+            lens_raw=lens_str,
+            filter_raw=filt_str,
+            action_raw=act_str,
+            default_lens_label="Fujinon",
         )
-    elif "mist" in filt or "мист" in filt:
-        parts.append("Black Pro-Mist diffusion filter, soft glowing blooming highlights")
-
-    # Метод съемки / стабилизация
-    supp = (tech.get("support") or "").lower()
-    if "руки" in supp or "icm" in supp or "тремор" in supp:
+    )
+    if any(w in supp_str.lower() for w in ("руки", "icm", "тремор")):
         parts.append(
             "subtle intentional camera movement ICM blur, layered exposure watercolor feel"
         )
 
-    # Фотографические параметры
+    # Внутрикамерный рецепт и эмульсия плёнки Fujifilm X-T4
+    saved_rec = tech.get("fuji_recipe")
+    film_sim_pref = tech.get("film_sim")
+    if isinstance(saved_rec, dict):
+        emulsion_str = build_fuji_recipe_mj_tokens(saved_rec, include_velvia_legacy=True)
+    elif film_sim_pref:
+        emulsion_str = build_fuji_recipe_mj_tokens(str(film_sim_pref), include_velvia_legacy=True)
+    else:
+        try:
+            recipe = build_fuji_recipe_for_project(session)
+            emulsion_str = build_fuji_recipe_mj_tokens(recipe, include_velvia_legacy=True)
+        except Exception:  # noqa: BLE001
+            emulsion_str = build_fuji_recipe_mj_tokens("Velvia/Яркий", include_velvia_legacy=True)
+
+    flags = build_mj_technical_flags(aspect_ratio=aspect_ratio, mode=mode)
     parts.append(
-        "Fujifilm X-T4 film simulation Velvia, fine art gallery photography, "
-        "8k resolution, editorial aesthetic, 35mm film grain --ar 16:9 --v 6.1 --style raw"
+        f"{emulsion_str}, fine art gallery photography, editorial aesthetic, "
+        f"35mm film grain {flags}"
     )
 
     return ", ".join(parts)
 
 
-def generate_midjourney_prompt(session: CopilotSession) -> str:
+def generate_midjourney_prompt(
+    session: CopilotSession,
+    aspect_ratio: str = "16:9",
+    mode: str = "raw",
+) -> str:
     """Форматирует сообщение с Midjourney-промптом для Telegram с кликабельным <code> блоком."""
-    raw_prompt = build_raw_midjourney_prompt(session)
+    raw_prompt = build_raw_midjourney_prompt(
+        session, aspect_ratio=aspect_ratio, mode=mode
+    )
     project = session.get_active_project()
     title = project.get("title", session.topic)
+    mode_label = (
+        "📷 Фотореализм (Raw)" if mode == "raw" else "🖼 Галерейный арт (Art)"
+    )
 
     return (
         f"🎨 <b>Эскизный промпт для нейросетей (Midjourney v6.1 / Flux)</b>\n"
-        f"Проект: «{safe_html_format(title)}»\n\n"
+        f"Проект: «{safe_html_format(title)}»\n"
+        f"Режим: <b>{mode_label}</b> | Формат: <code>--ar {aspect_ratio}</code>\n\n"
         f"<i>Используйте этот промпт для генерации раскадровки сцены перед съемкой:</i>\n\n"
         f"<code>{html.escape(raw_prompt)}</code>\n\n"
         f"💡 <i>Нажмите на блок с кодом выше, чтобы скопировать промпт в один клик.</i>"

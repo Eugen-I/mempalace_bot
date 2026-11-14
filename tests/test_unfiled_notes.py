@@ -148,3 +148,66 @@ def test_shared_drawer_list_state_fallback():
     from handlers.palace import shared
     from handlers.palace.navigation import _drawer_list_state
     assert shared._drawer_list_state is _drawer_list_state
+
+
+@pytest.mark.asyncio
+async def test_unfiled_state_is_ttl_dict_and_room_cb_valid(tmp_path, monkeypatch):
+    from handlers.palace.unfiled_notes import (
+        _unfiled_state,
+        cb_open_room_legacy,
+        cb_unfiled_execute_file,
+        cb_unfiled_noop,
+    )
+    from services.ttl_dict import TtlDict
+
+    assert isinstance(_unfiled_state, TtlDict)
+
+    notes_dir = tmp_path / "my_notes"
+    notes_dir.mkdir()
+    monkeypatch.setattr("handlers.palace.unfiled_notes.NOTES_DIR", str(notes_dir))
+    f1 = notes_dir / "note1.md"
+    f1.write_text("content", encoding="utf-8")
+
+    uid = 9998
+    monkeypatch.setattr("config.ALLOWED_IDS", {uid})
+    _unfiled_state[uid] = {
+        "filename": "note1.md",
+        "selected_path": str(f1),
+        "wing": "psychology",
+        "room": "archetypes",
+    }
+    mock_mcp = AsyncMock()
+    mock_mcp.call_tool = AsyncMock(return_value='{"success": true}')
+    monkeypatch.setattr("handlers.palace.unfiled_notes.get_mcp", lambda: mock_mcp)
+
+    cb = AsyncMock()
+    cb.from_user.id = uid
+    cb.data = "p_uf_c"
+    cb.message.edit_text = AsyncMock()
+    cb.answer = AsyncMock()
+
+    await cb_unfiled_execute_file(cb)
+    markup = cb.message.edit_text.call_args[1]["reply_markup"]
+    room_btn_cb = markup.inline_keyboard[0][0].callback_data
+    assert room_btn_cb.startswith("p_rd_room:")
+
+    # Test noop callback
+    cb_noop = AsyncMock()
+    cb_noop.from_user.id = uid
+    cb_noop.data = "p_unf_noop"
+    await cb_unfiled_noop(cb_noop)
+    cb_noop.answer.assert_called_once()
+
+    # Test legacy p_r: callback
+    called_room = []
+
+    async def fake_drawers_page(edit_fn, u, w, r, offset=0):
+        called_room.append((u, w, r, offset))
+
+    monkeypatch.setattr("handlers.palace.navigation._show_drawers_page", fake_drawers_page)
+    cb_leg = AsyncMock()
+    cb_leg.from_user.id = uid
+    cb_leg.data = "p_r:psychology:archetypes"
+    cb_leg.message.edit_text = AsyncMock()
+    await cb_open_room_legacy(cb_leg)
+    assert called_room == [(uid, "psychology", "archetypes", 0)]

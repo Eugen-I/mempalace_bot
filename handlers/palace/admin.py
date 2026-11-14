@@ -17,6 +17,16 @@ from services.palace_bridge import (
 
 from .shared import router
 
+_background_tasks: set[asyncio.Task] = set()
+_maintenance_lock = asyncio.Lock()
+
+
+def _spawn_background_task(coro) -> None:
+    task = asyncio.create_task(coro)
+    if task is not None and hasattr(task, "add_done_callback"):
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
 
 async def _finalize_admin_result(uid: int, edit_func, text: str, parent_cb: str):
     from .action_bar import finalize_answer
@@ -123,12 +133,13 @@ async def cb_palace_repair(cb: types.CallbackQuery):
 
     async def _run():
         try:
-            result = await palace_repair()
+            async with _maintenance_lock:
+                result = await palace_repair()
             await _finalize_admin_result(uid, msg.edit_text, result, "palace_admin")
         except Exception as e:
             await msg.edit_text(f"❌ Ошибка: {e}")
 
-    asyncio.create_task(_run())
+    _spawn_background_task(_run())
 
 
 @router.callback_query(F.data == "palace_compact")
@@ -140,12 +151,13 @@ async def cb_palace_compact(cb: types.CallbackQuery):
 
     async def _run():
         try:
-            result = await palace_compact()
+            async with _maintenance_lock:
+                result = await palace_compact()
             await _finalize_admin_result(uid, msg.edit_text, result, "palace_admin")
         except Exception as e:
             await msg.edit_text(f"❌ Ошибка: {e}")
 
-    asyncio.create_task(_run())
+    _spawn_background_task(_run())
 
 
 @router.callback_query(F.data == "palace_compress")
@@ -157,12 +169,13 @@ async def cb_palace_compress(cb: types.CallbackQuery):
 
     async def _run():
         try:
-            result = await palace_compress()
+            async with _maintenance_lock:
+                result = await palace_compress()
             await _finalize_admin_result(uid, msg.edit_text, result, "palace_admin")
         except Exception as e:
             await msg.edit_text(f"❌ Ошибка: {e}")
 
-    asyncio.create_task(_run())
+    _spawn_background_task(_run())
 
 
 @router.callback_query(F.data == "palace_wakeup")
@@ -174,9 +187,10 @@ async def cb_palace_wakeup(cb: types.CallbackQuery):
 
     async def _run():
         try:
-            result = await palace_wake_up()
+            async with _maintenance_lock:
+                result = await palace_wake_up()
             await _finalize_admin_result(uid, msg.edit_text, result, "palace_admin")
         except Exception as e:
             await msg.edit_text(f"❌ Ошибка: {e}")
 
-    asyncio.create_task(_run())
+    _spawn_background_task(_run())

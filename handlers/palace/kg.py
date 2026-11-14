@@ -1,4 +1,5 @@
 """handlers/palace/kg.py — Knowledge Graph handlers"""
+import asyncio
 import json
 
 from aiogram import F, types
@@ -181,7 +182,7 @@ async def cb_kg_add_predicate_menu(cb: types.CallbackQuery):
     ))
     await cb.message.edit_text(
         f"🧠 Шаг 2/3: выберите <b>тип связи</b>\n\n"
-        f"Субъект: <b>{state.get('subject', '?')}</b>",
+        f"Субъект: <b>{safe_html_format(state.get('subject', '?'))}</b>",
         parse_mode="HTML", reply_markup=kb.as_markup(),
     )
 
@@ -331,12 +332,35 @@ async def cb_kg_back_to_search(cb: types.CallbackQuery):
     await _send_kg_search_page(uid, cb.message.edit_text)
 
 
+def _build_kgrs_callback(entity: str, uid: int | None = None) -> str:
+    """Формирует callback_data для поиска сущности KG с защитой от лимита 64 байта."""
+    raw = f"p_kgrs:{entity}"
+    if len(raw.encode("utf-8")) <= 64:
+        return raw
+    if uid is not None:
+        state = _kg_page_data.get(uid)
+        if isinstance(state, dict):
+            state["entity"] = entity
+        else:
+            _kg_page_data[uid] = {"entity": entity, "facts": [], "page": 0}
+    encoded = entity.encode("utf-8")[:57]
+    return f"p_kgrs:{encoded.decode('utf-8', errors='ignore')}"
+
+
 @router.callback_query(F.data.startswith("p_kgrs:"))
 @allowed_callback
 async def cb_kg_read_search(cb: types.CallbackQuery):
     await cb.answer()
     uid = cb.from_user.id
-    entity = cb.data[len("p_kgrs:"):]
+    entity = (cb.data or "")[len("p_kgrs:"):]
+    page_data = _kg_page_data.get(uid)
+    full_entity = page_data.get("entity", "") if isinstance(page_data, dict) else ""
+    if (
+        full_entity
+        and len(f"p_kgrs:{full_entity}".encode("utf-8")) > 64
+        and full_entity.startswith(entity)
+    ):
+        entity = full_entity
     await _kg_search_and_show(uid, cb.message.edit_text, entity)
 
 
@@ -386,7 +410,7 @@ async def _kg_read_sources(uid: int, edit_func) -> bool:
         kb = InlineKeyboardBuilder()
         kb.row(types.InlineKeyboardButton(
             text="🔍 Поискать в заметках",
-            callback_data=f"p_kgrs:{data.get('entity', '')}",
+            callback_data=_build_kgrs_callback(data.get("entity", ""), uid),
         ))
         await edit_func(
             "📄 Факты об этой сущности не привязаны к файлам в Дворце.\n\n"
@@ -396,7 +420,7 @@ async def _kg_read_sources(uid: int, edit_func) -> bool:
         return False
     results = []
     for src in sources:
-        full_text = _get_full_text_from_chroma(src)
+        full_text = await asyncio.to_thread(_get_full_text_from_chroma, src)
         if not full_text:
             continue
         parts = src.split("/")
@@ -508,7 +532,7 @@ async def cb_kg_read_result(cb: types.CallbackQuery):
     pure_text = content
     _read_state[uid] = {"room": room, "wing": wing, "drawer": source, "source": ""}
     if source:
-        full_text = _get_full_text_from_chroma(source, wing, room)
+        full_text = await asyncio.to_thread(_get_full_text_from_chroma, source, wing, room)
         if full_text and len(full_text) > len(pure_text):
             pure_text = full_text
             _read_state[uid]["source"] = full_text

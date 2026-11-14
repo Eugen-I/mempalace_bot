@@ -590,6 +590,13 @@ async def test_cb_concept_prompt_action():
     assert "Промпт Midjourney / Flux.1" in cb.message.edits[-1]
     assert "surrealism aesthetic" in cb.message.edits[-1]
     assert "<code>" in cb.message.edits[-1]
+    assert "--no cgi" in cb.message.edits[-1]
+
+    # Переключение в режим Галерейный арт и формат 4:5
+    cb_art = FakeCb(data="bs_prompt:1:art:4:5")
+    await h.cb_concept_prompt(cb_art)
+    assert "Галерейный арт" in cb_art.message.edits[-1]
+    assert "--ar 4:5 --v 6.1 --s 220" in cb_art.message.edits[-1]
 
 
 async def test_cb_concept_refs_action(monkeypatch):
@@ -788,3 +795,111 @@ async def test_safe_edit_or_split_send_fallback_on_edit_error():
     msg.edit_text = fail_edit
     await h.safe_edit_or_split_send(msg, "Текст при сбое edit")
     assert "Текст при сбое edit" in msg.answers
+
+
+def test_format_ideas_text_escapes_html():
+    from services import brainstorm as bs
+
+    ideas = [
+        {
+            "title": "Кадр <f/2.0 & f/8>",
+            "reason": "Контраст <свет> & <тень>",
+            "steps": "1. Снять <raw> -> 2. Проявить",
+        }
+    ]
+    out = bs.format_ideas_text("Тема <тест & штурм>", ideas)
+    assert "&lt;тест &amp; штурм&gt;" in out
+    assert "&lt;f/2.0 &amp; f/8&gt;" in out
+    assert "&lt;свет&gt; &amp; &lt;тень&gt;" in out
+    assert "<f/2.0" not in out
+
+
+async def test_cb_concept_fuji_recipe_answers_callback():
+    concept = _make_sample_fused_concept("Fuji проект")
+    h._storm_data[4242] = {"ideas": [concept]}
+    cb = FakeCb(data="bs_fuji_recipe:1")
+    await h.cb_concept_fuji_recipe(cb)
+    assert len(cb.answers) == 1
+    assert "Рецепт Fujifilm" in cb.message.edits[-1] or "X-T4" in cb.message.edits[-1]
+
+
+async def test_storm_confirm_long_preview_truncates_under_limit():
+    huge_ideas = [
+        {
+            "title": f"Идея {i}",
+            "reason": "Очень длинное обоснование фотопроекта. " * 40,
+            "steps": "Подробный шаг съемки на локации. " * 40,
+        }
+        for i in range(1, 6)
+    ]
+    h._storm_data[4242] = {"topic": "длинный штурм", "ideas": huge_ideas}
+    cb = FakeCb(data="bs_all")
+    await h.cb_save_all(cb)
+    edited_preview = cb.message.edits[-1]
+    assert len(edited_preview) <= 3900
+    assert "превью сокращено" in edited_preview
+    assert len(h._storm_data[4242]["pending"]["text"]) > 4000
+
+
+async def test_cb_concept_save_palace_records_reflection_data(monkeypatch):
+    concept = _make_sample_fused_concept("Проект с рефлексией")
+    h._storm_data[4242] = {
+        "topic": "ночной дождь",
+        "ideas": [concept],
+    }
+
+    async def fake_show_save_wings(edit_func, uid):
+        pass
+
+    monkeypatch.setattr("handlers.palace._show_save_wings", fake_show_save_wings)
+    cb = FakeCb(data="bs_save_concept:1")
+    await h.cb_concept_save_palace(cb)
+    assert h._reflection_data.get(4242) == {
+        "theme": "ночной дождь",
+        "ideas_count": 1,
+    }
+
+
+async def test_cb_concept_deepen_auto_fallback_on_429(monkeypatch):
+    concept = _make_sample_fused_concept("Углубление с фоллбэком")
+    h._storm_data[4242] = {"ideas": [concept]}
+    calls = []
+
+    async def fake_ai(engine, model, msgs, sampling=None):
+        calls.append((engine, model))
+        if engine == "gemini":
+            return "❌ Ошибка 429: Resource_Exhausted quota"
+        return "1. Символизм от локального Qwen."
+
+    monkeypatch.setattr(h, "get_current_ai", lambda: ("gemini", "gemini-2.5-flash"))
+    monkeypatch.setattr(h, "get_ai_response_async", fake_ai)
+    cb = FakeCb(data="bs_deepen:1")
+    await h.cb_concept_deepen(cb)
+    assert calls == [("gemini", "gemini-2.5-flash"), ("qwen", "qwen2.5:7b")]
+    assert "Символизм от локального Qwen" in cb.message.edits[-1]
+
+
+async def test_run_storm_fusion_qwen_retries_with_lower_temp_on_parse_error(monkeypatch):
+    """Если активен локальный qwen и первый ответ fusion не парсится, повтор с низким temp."""
+    concept = _make_sample_fused_concept("Осенний Quantum")
+    valid_json = json.dumps({"projects": [concept.to_dict()]}, ensure_ascii=False)
+    calls = []
+
+    async def fake_ai(engine, model, msgs, sampling=None):
+        calls.append((engine, model, sampling))
+        if len(calls) == 1:
+            return "битый ответ без json"
+        return valid_json
+
+    async def fake_fusion_ctx(topic, mode="fusion", folder=None):
+        return {"fusion_prompt": f"Тема: {topic}", "notes": "", "palace": "", "kg": ""}
+
+    monkeypatch.setattr(h, "get_current_ai", lambda: ("qwen", "qwen2.5:7b"))
+    monkeypatch.setattr(h, "get_ai_response_async", fake_ai)
+    monkeypatch.setattr(bs, "collect_context", fake_fusion_ctx)
+
+    status = FakeStatus()
+    await h.run_storm(4242, status, "Осенняя депрессия...", mode="fusion")
+    assert len(calls) == 2
+    assert calls[1][2] == {"temperature": 0.4, "top_p": 0.9}
+    assert "Осенний Quantum" in status.edits[-1]

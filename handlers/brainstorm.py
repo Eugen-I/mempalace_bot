@@ -9,6 +9,7 @@
 идеи → мост в существующий save-флоу Дворца (handlers.palace.save).
 """
 
+import asyncio
 import html
 import logging
 from typing import Any
@@ -27,7 +28,7 @@ logger = logging.getLogger("BrainstormHandler")
 
 router = Router()
 
-_storm_waiting: TtlDict = TtlDict()
+_storm_waiting: TtlDict = TtlDict(ttl=900)
 _storm_data: TtlDict = TtlDict()
 _reflection_data: TtlDict = TtlDict(ttl=600)
 _reflection_waiting: TtlDict = TtlDict(ttl=3600)
@@ -182,7 +183,18 @@ async def run_storm(uid: int, status_msg, topic: str, mode: str = "standard"):
                     raw = await get_ai_response_async(engine, model, msgs, sampling=sampling)
                     ideas = bs.parse_fusion_ideas(raw)
                 else:
-                    raise
+                    logger.warning(
+                        "[STORM] Fusion parse failed on local %s (%s): %s. "
+                        "Retrying with lower temperature...",
+                        engine, model, parse_err,
+                    )
+                    await _status_edit(
+                        status_msg,
+                        "🔄 Уточняю структуру концепт-проектов через локальный Qwen…",
+                    )
+                    retry_sampling = {"temperature": 0.4, "top_p": 0.9}
+                    raw = await get_ai_response_async(engine, model, msgs, sampling=retry_sampling)
+                    ideas = bs.parse_fusion_ideas(raw)
         else:
             await _status_edit(status_msg, "🔍 Собираю контекст базы знаний…")
             context = await bs.collect_context(topic)
@@ -323,12 +335,17 @@ def get_storm_menu_text_and_kb() -> tuple[str, InlineKeyboardBuilder]:
 
 
 def _clear_copilot_waiting(uid: int) -> None:
-    """Очищает состояние ожидания темы копайлота во избежание взаимных блокировок."""
+    """Очищает состояние ожидания темы копайлота и незавершённого ввода Дворца."""
     try:
         from handlers.copilot import _copilot_waiting_topic
         _copilot_waiting_topic.pop(uid, None)
     except Exception as exc:
         logger.debug("[STORM] clear copilot waiting failed: %s", exc)
+    try:
+        from handlers.palace.shared import _pending_mcp_input
+        _pending_mcp_input.pop(uid, None)
+    except Exception as exc:
+        logger.debug("[STORM] clear palace pending input failed: %s", exc)
 
 
 # ─── /штурм <тема> и /синтез ───
@@ -476,6 +493,14 @@ async def _storm_confirm(uid: int, edit_func, selected: list[dict], label: str):
     )
     kb.row(types.InlineKeyboardButton(text="❌ Отмена", callback_data="bs_cancel"))
     _storm_data[uid]["pending"] = {"text": text, "label": label, "ideas": selected}
+    if len(preview) > 3800:
+        from services.text_formatter import split_message
+
+        parts = split_message(preview, limit=3700)
+        preview = (
+            parts[0]
+            + "\n\n<i>… (превью сокращено, во Дворец сохранится полный текст)</i>"
+        )
     await edit_func(preview, parse_mode="HTML", reply_markup=kb.as_markup())
 
 
@@ -569,10 +594,14 @@ async def cb_concept_prompt(cb: types.CallbackQuery):
     data = _storm_data.get(uid)
     if not data:
         return await cb.message.edit_text("❌ Сессия истекла. Начните /штурм заново.")
+    parts = cb.data.split(":", 3)
     try:
-        idx = int(cb.data.split(":", 1)[1])
-    except ValueError:
+        idx = int(parts[1])
+    except (ValueError, IndexError):
         return
+    mode = parts[2] if len(parts) > 2 and parts[2] in ("raw", "art") else "raw"
+    ar = parts[3] if len(parts) > 3 and parts[3] in ("16:9", "4:5", "3:2", "1:1") else "16:9"
+
     ideas = data.get("ideas", [])
     if idx < 1 or idx > len(ideas):
         return await cb.message.edit_text("❌ Проект не найден.")
@@ -580,17 +609,45 @@ async def cb_concept_prompt(cb: types.CallbackQuery):
     from services.style_fusion import FusedPhotoConcept, build_midjourney_prompt
     if not isinstance(concept, FusedPhotoConcept):
         return
-    prompt_text = build_midjourney_prompt(concept)
+    prompt_text = build_midjourney_prompt(concept, aspect_ratio=ar, mode=mode)
     concept.midjourney_prompt = prompt_text
     title_esc = safe_html_format(concept.title)
+    mode_label = "📷 Фотореализм (Raw)" if mode == "raw" else "🖼 Галерейный арт (Art)"
     text = (
         f"🎨 <b>Промпт Midjourney / Flux.1</b>\n"
-        f"Проект: «{title_esc}»\n\n"
+        f"Проект: «{title_esc}»\n"
+        f"Режим: <b>{mode_label}</b> | Формат: <code>--ar {ar}</code>\n\n"
         f"<code>{safe_html_format(prompt_text)}</code>\n\n"
         "💡 <i>Нажмите на блок кода, чтобы скопировать промпт. "
         "Вставьте его в Midjourney (/imagine) или Flux.</i>"
     )
     kb = InlineKeyboardBuilder()
+    raw_mark = "✅ " if mode == "raw" else ""
+    art_mark = "✅ " if mode == "art" else ""
+    kb.row(
+        types.InlineKeyboardButton(
+            text=f"{raw_mark}📷 Фотореализм",
+            callback_data=f"bs_prompt:{idx}:raw:{ar}",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{art_mark}🖼 Галерейный арт",
+            callback_data=f"bs_prompt:{idx}:art:{ar}",
+        ),
+    )
+    kb.row(
+        types.InlineKeyboardButton(
+            text=f"{'✅ ' if ar == '16:9' else ''}📐 16:9",
+            callback_data=f"bs_prompt:{idx}:{mode}:16:9",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{'✅ ' if ar == '4:5' else ''}📐 4:5",
+            callback_data=f"bs_prompt:{idx}:{mode}:4:5",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{'✅ ' if ar == '3:2' else ''}📐 3:2",
+            callback_data=f"bs_prompt:{idx}:{mode}:3:2",
+        ),
+    )
     kb.row(
         types.InlineKeyboardButton(
             text="📝 В Apple Notes", callback_data=f"bs_export_concept:{idx}",
@@ -698,6 +755,19 @@ async def cb_concept_deepen(cb: types.CallbackQuery):
             {"role": "user", "content": build_deepen_user_prompt(concept)},
         ]
         analysis = await get_ai_response_async(engine, model, msgs)
+        is_quota_or_err = (
+            analysis.startswith("❌")
+            or "429" in analysis
+            or "quota" in analysis.lower()
+            or "resource_exhausted" in analysis.lower()
+        )
+        if is_quota_or_err and engine != "qwen":
+            logger.warning(
+                "[STORM] Deepen engine %s failed: %s. Auto-fallback to local Ollama...",
+                engine, analysis[:100],
+            )
+            engine, model = "qwen", "qwen2.5:7b"
+            analysis = await get_ai_response_async(engine, model, msgs)
         if not analysis.startswith("❌"):
             concept.deepened_analysis = analysis
         text = format_deepen_card(concept, analysis)
@@ -743,6 +813,7 @@ async def cb_concept_fuji_recipe(cb: types.CallbackQuery):
     if idx < 1 or idx > len(ideas):
         await cb.answer("❌ Проект не найден.", show_alert=True)
         return
+    await cb.answer()
     concept = ideas[idx - 1]
     from services.fuji_recipes import (
         build_fuji_recipe_for_concept,
@@ -843,7 +914,8 @@ async def cb_concept_recipe_export(cb: types.CallbackQuery):
     recipe = build_fuji_recipe_for_concept(concept)
     project_title = getattr(concept, "title", "")
     try:
-        export_fuji_recipe_to_apple_notes(
+        await asyncio.to_thread(
+            export_fuji_recipe_to_apple_notes,
             recipe,
             slot_name="C1",
             project_title=project_title,
@@ -885,7 +957,7 @@ async def cb_concept_export_single(cb: types.CallbackQuery):
     if not isinstance(concept, FusedPhotoConcept):
         return
     try:
-        export_concept_to_apple_notes(concept, folder="Фотопроекты")
+        await asyncio.to_thread(export_concept_to_apple_notes, concept, folder="Фотопроекты")
         await cb.answer(
             f"✅ Проект «{concept.title}» сохранён в Apple Notes "
             "(папка «Фотопроекты», статус [В планах])!",
@@ -916,6 +988,10 @@ async def cb_concept_save_palace(cb: types.CallbackQuery):
     if idx < 1 or idx > len(ideas):
         return await cb.message.edit_text("❌ Проект не найден.")
     concept = ideas[idx - 1]
+    _reflection_data[uid] = {
+        "theme": (data.get("topic") or "")[:80],
+        "ideas_count": len(ideas),
+    }
     from handlers.palace import _save_state, _show_save_wings
 
     text = bs.ideas_to_text([concept])

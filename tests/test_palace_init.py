@@ -1298,3 +1298,63 @@ def test_fetch_room_content_disk_fallback(tmp_path, monkeypatch):
         mcp, "philosophy", "зачем_проблемы_у_человека",
     ))
     assert "Текст заметки о проблемах человека" in res
+
+
+def test_process_mcp_text_input_ab_web_query(monkeypatch):
+    _enable(monkeypatch)
+    called = []
+
+    async def fake_run_web(uid, msg, sid, query):
+        called.append((uid, sid, query))
+
+    monkeypatch.setattr(
+        "handlers.palace.action_bar.run_web_search_with_query", fake_run_web,
+    )
+    sh._pending_mcp_input[4242] = "ab_web_query:sid123"
+    msg = FakeAnswerMsg()
+    res = asyncio.run(palace.process_mcp_text_input(
+        4242, "  мой поисковый запрос  ", FakeAnswerFactory(msg),
+    ))
+    assert res is True
+    assert called == [(4242, "sid123", "мой поисковый запрос")]
+
+
+def test_kg_add_subject_and_object_escapes_html(monkeypatch):
+    _enable(monkeypatch)
+    sh._pending_mcp_input[4242] = "kg_add_subject"
+    msg = FakeAnswerMsg()
+    asyncio.run(palace.process_mcp_text_input(
+        4242, "Юнг <Тень & Персона>", FakeAnswerFactory(msg),
+    ))
+    text1, _ = msg.edits[-1]
+    assert "&lt;Тень &amp; Персона&gt;" in text1
+    assert "**" not in text1
+
+    sh._kg_add_state[4242]["predicate"] = "related_to"
+    sh._pending_mcp_input[4242] = "kg_add_object"
+    msg2 = FakeAnswerMsg()
+    asyncio.run(palace.process_mcp_text_input(
+        4242, "Архетип <Маска>", FakeAnswerFactory(msg2),
+    ))
+    text2, _ = msg2.edits[-1]
+    assert "&lt;Маска&gt;" in text2
+    assert "**" not in text2
+
+
+def test_search_connected_rooms_mcp_error_no_unbound_local(monkeypatch):
+    from services import palace_bridge
+
+    class FailingMCP:
+        async def start(self):
+            return None
+
+        async def call_tool(self, name, args=None):
+            raise RuntimeError("follow_tunnels failed before loop")
+
+    monkeypatch.setattr("services.palace_mcp.get_mcp", lambda: FailingMCP())
+    out = asyncio.run(
+        palace_bridge._search_connected_rooms(
+            "запрос", [{"wing": "philosophy", "room": "ethics"}],
+        )
+    )
+    assert out == ""

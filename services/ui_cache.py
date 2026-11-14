@@ -16,6 +16,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
+from types import EllipsisType
 from typing import Any, Iterator
 
 from services.db_pool import get_connection
@@ -110,7 +111,7 @@ class UICallbackCache:
         except sqlite3.Error as exc:
             logger.debug("Ошибка очистки протухших callback: %s", exc)
 
-    def set(self, key: str, value: Any, ttl: float | None = ...) -> None:
+    def set(self, key: str, value: Any, ttl: float | None | EllipsisType = ...) -> None:
         """Сохраняет значение с TTL."""
         self._evict_expired()
         conn = self._get_conn()

@@ -643,11 +643,13 @@ def storm_sampling_params(mode: str) -> dict:
 
 def format_idea(index: int, idea: dict) -> str:
     """Форматирует одну идею для сообщения (индекс — с 1)."""
-    lines = [f"💡 {index}. <b>{idea['title']}</b>"]
+    from services.text_formatter import safe_html_format
+
+    lines = [f"💡 {index}. <b>{safe_html_format(idea['title'])}</b>"]
     if idea.get("reason"):
-        lines.append(f"   <i>Почему:</i> {idea['reason']}")
+        lines.append(f"   <i>Почему:</i> {safe_html_format(idea['reason'])}")
     if idea.get("steps"):
-        lines.append(f"   <i>Шаги:</i> {idea['steps']}")
+        lines.append(f"   <i>Шаги:</i> {safe_html_format(idea['steps'])}")
     return "\n".join(lines)
 
 
@@ -688,7 +690,9 @@ def format_surreal_ideas_text(topic: str, ideas: list[dict]) -> str:
 
 def format_ideas_text(topic: str, ideas: list[dict]) -> str:
     """Полный текст сообщения со всеми идеями."""
-    lines = [f"🧠 <b>Штурм:</b> {topic}\n"]
+    from services.text_formatter import safe_html_format
+
+    lines = [f"🧠 <b>Штурм:</b> {safe_html_format(topic)}\n"]
     for i, idea in enumerate(ideas, start=1):
         lines.append(format_idea(i, idea))
     return "\n".join(lines)
@@ -767,6 +771,8 @@ def ideas_to_text(ideas: list) -> str:
             block = f"{i}. {idea.get('title', 'Без названия')}"
             if idea.get("reason"):
                 block += f" — {idea['reason']}"
+            if idea.get("camera_setup"):
+                block += f" Камера: {idea['camera_setup']}"
             if idea.get("steps"):
                 block += f" Шаги: {idea['steps']}"
             lines.append(block)

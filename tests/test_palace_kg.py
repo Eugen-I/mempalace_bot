@@ -1163,3 +1163,22 @@ async def _dispatch(cb):
             "p_kgsr": k.cb_kg_back_to_search,
         }
         await mapping[d](cb)
+
+
+def test_build_kgrs_callback_long_entity_fits_64_bytes(monkeypatch):
+    """Длинное кириллическое имя сущности не превышает 64 байт в callback_data."""
+    _enable(monkeypatch)
+    long_entity = "очень_длинное_название_философской_сущности_и_концепции_бытия"
+    cb_data = k._build_kgrs_callback(long_entity, uid=4242)
+    assert len(cb_data.encode("utf-8")) <= 64
+    assert cb_data.startswith("p_kgrs:")
+
+    shown = []
+
+    async def fake_search(uid, edit_func, entity):
+        shown.append((uid, entity))
+
+    monkeypatch.setattr(k, "_kg_search_and_show", fake_search)
+    cb = FakeCb(data=cb_data)
+    asyncio.run(k.cb_kg_read_search(cb))
+    assert shown == [(4242, long_entity)]

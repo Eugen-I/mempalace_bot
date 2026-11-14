@@ -14,6 +14,7 @@ from config import NOTES_DIR, allowed_callback, allowed_only
 from services.cascade_delete import cascade_delete_note
 from services.palace_mcp import get_mcp
 from services.text_formatter import safe_html_format
+from services.ttl_dict import TtlDict
 
 from .shared import _pending_mcp_input
 
@@ -23,8 +24,8 @@ router = Router()
 PAGE_SIZE = 5
 TEXT_PAGE_SIZE = 3000
 
-# Состояние пользователя: {uid: {...}}
-_unfiled_state: dict[int, dict[str, Any]] = {}
+# Состояние пользователя: {uid: {...}} с автоочисткой (TTL 30 мин)
+_unfiled_state: TtlDict = TtlDict(ttl=1800)
 
 
 def list_unfiled_notes() -> list[dict[str, Any]]:
@@ -33,7 +34,7 @@ def list_unfiled_notes() -> list[dict[str, Any]]:
     if not notes_root.exists():
         return []
 
-    items = []
+    items: list[dict[str, Any]] = []
     try:
         for entry in os.scandir(notes_root):
             if entry.is_file() and not entry.name.startswith("."):
@@ -221,6 +222,10 @@ async def show_unfiled_content(edit_func, uid: int, file_page: int = 0):
         nav_row.append(types.InlineKeyboardButton(
             text="◀️ Пред. стр.", callback_data=f"p_unf_tp:{file_page - 1}",
         ))
+    if total_pages > 1:
+        nav_row.append(types.InlineKeyboardButton(
+            text=f"📄 {file_page + 1}/{total_pages}", callback_data="p_unf_noop",
+        ))
     if file_page < total_pages - 1:
         nav_row.append(types.InlineKeyboardButton(
             text="След. стр. ▶️", callback_data=f"p_unf_tp:{file_page + 1}",
@@ -301,6 +306,12 @@ async def cb_unfiled_text_page(cb: types.CallbackQuery):
     except ValueError:
         page = 0
     await show_unfiled_content(cb.message.edit_text, uid, file_page=page)
+
+
+@router.callback_query(F.data == "p_unf_noop")
+@allowed_callback
+async def cb_unfiled_noop(cb: types.CallbackQuery):
+    await cb.answer()
 
 
 # ─── УДАЛЕНИЕ НЕРАЗОБРАННОЙ ЗАМЕТКИ ───
@@ -630,17 +641,19 @@ async def cb_unfiled_execute_file(cb: types.CallbackQuery):
         logger.error("Ошибка MCP mempalace_add_drawer: %s", e)
         parsed = {"success": False, "error": str(e)}
 
-    # Очищаем кэши комнат
+    # Очищаем кэши комнат и формируем актуальный callback открытия комнаты
+    room_cb = f"p_r:{wing}:{room}"
     try:
-        from .navigation import _drawer_list_state
+        from .navigation import _build_room_callback_data, _drawer_list_state
         _drawer_list_state.pop(uid, None)
+        room_cb = _build_room_callback_data(wing, room)
     except Exception as e:
         logger.debug("Не удалось очистить _drawer_list_state: %s", e)
 
     kb = InlineKeyboardBuilder()
     kb.row(
         types.InlineKeyboardButton(
-            text="🚪 Открыть комнату", callback_data=f"p_r:{wing}:{room}",
+            text="🚪 Открыть комнату", callback_data=room_cb,
         ),
     )
     kb.row(
@@ -666,3 +679,16 @@ async def cb_unfiled_execute_file(cb: types.CallbackQuery):
         msg = f"⚠️ Заметка перемещена на диске, но при индексации возникла ошибка: {err}"
 
     await cb.message.edit_text(msg, parse_mode="HTML", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data.startswith("p_r:"))
+@allowed_callback
+async def cb_open_room_legacy(cb: types.CallbackQuery):
+    """Обработчик совместимости для кнопок p_r:<wing>:<room>."""
+    await cb.answer()
+    parts = (cb.data or "").split(":", 2)
+    if len(parts) < 3:
+        return
+    _, wing, room = parts
+    from .navigation import _show_drawers_page
+    await _show_drawers_page(cb.message.edit_text, cb.from_user.id, wing, room, 0)

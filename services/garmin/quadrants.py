@@ -238,6 +238,13 @@ def assess_autonomic_quadrants(
             ascii_matrix=render_ascii_quadrant_matrix(QUADRANT_UNKNOWN),
         )
 
+    # has_missing_data already guarantees all four values below are not None;
+    # explicit asserts make that contract visible to type checkers.
+    assert latest_hrv is not None
+    assert latest_rhr is not None
+    assert effective_hrv_base is not None
+    assert effective_rhr_base is not None
+
     # 2. Daily classifications history
     daily_quadrants: list[str] = []
     min_len = min(len(hrv_values), len(rhr_values))

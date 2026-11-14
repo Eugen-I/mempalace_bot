@@ -1385,7 +1385,7 @@ async def cb_copilot_to_field_assistant(cb: types.CallbackQuery):
         logger.debug("[COPILOT] field assistant edit failed: %s", e)
 
 
-@router.callback_query(F.data == "cp_gen_mj_prompt", allowed_callback)
+@router.callback_query(F.data.startswith("cp_gen_mj_prompt"), allowed_callback)
 async def cb_copilot_gen_mj_prompt(cb: types.CallbackQuery):
     """Генерация и отображение промпта для Midjourney / Flux."""
     uid = cb.from_user.id
@@ -1395,10 +1395,40 @@ async def cb_copilot_gen_mj_prompt(cb: types.CallbackQuery):
         await cb.answer("Сессия не найдена")
         return
 
+    parts = (cb.data or "cp_gen_mj_prompt").split(":", 2)
+    mode = parts[1] if len(parts) > 1 and parts[1] in ("raw", "art") else "raw"
+    ar = parts[2] if len(parts) > 2 and parts[2] in ("16:9", "4:5", "3:2", "1:1") else "16:9"
+
     await cb.answer("Генерирую эскизный промпт...")
-    text = generate_midjourney_prompt(session)
+    text = generate_midjourney_prompt(session, aspect_ratio=ar, mode=mode)
 
     builder = InlineKeyboardBuilder()
+    raw_mark = "✅ " if mode == "raw" else ""
+    art_mark = "✅ " if mode == "art" else ""
+    builder.row(
+        types.InlineKeyboardButton(
+            text=f"{raw_mark}📷 Фотореализм",
+            callback_data=f"cp_gen_mj_prompt:raw:{ar}",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{art_mark}🖼 Галерейный арт",
+            callback_data=f"cp_gen_mj_prompt:art:{ar}",
+        ),
+    )
+    builder.row(
+        types.InlineKeyboardButton(
+            text=f"{'✅ ' if ar == '16:9' else ''}📐 16:9",
+            callback_data=f"cp_gen_mj_prompt:{mode}:16:9",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{'✅ ' if ar == '4:5' else ''}📐 4:5",
+            callback_data=f"cp_gen_mj_prompt:{mode}:4:5",
+        ),
+        types.InlineKeyboardButton(
+            text=f"{'✅ ' if ar == '3:2' else ''}📐 3:2",
+            callback_data=f"cp_gen_mj_prompt:{mode}:3:2",
+        ),
+    )
     builder.row(
         types.InlineKeyboardButton(
             text="📋 К полевому чек-листу", callback_data="cp_to_field_assistant",

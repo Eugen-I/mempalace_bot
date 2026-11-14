@@ -330,6 +330,7 @@ async def _search_connected_rooms(
             if not sw or not sr or key in seen:
                 continue
             seen.add(key)
+            cw, cr = sw, sr
             try:
                 raw = await mcp.call_tool(
                     "mempalace_follow_tunnels", {"wing": sw, "room": sr},

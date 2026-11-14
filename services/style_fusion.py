@@ -14,7 +14,11 @@ import urllib.parse
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from services.json_parser import extract_partial_json_array, safe_parse_llm_json
+from services.json_parser import (
+    extract_partial_json_array,
+    safe_parse_llm_json,
+    salvage_truncated_json_object,
+)
 
 logger = logging.getLogger("StyleFusion")
 
@@ -94,6 +98,25 @@ STYLE_ROLE_TRAITS: dict[str, dict[str, str]] = {
 }
 
 
+def _normalize_style_name(raw_style: Any, default_style: str = "Сюрреализм") -> str:
+    """Нормализует название стиля от LLM к каноническому из AVAILABLE_STYLES."""
+    if not raw_style:
+        return default_style
+    s = str(raw_style).strip()
+    if not s:
+        return default_style
+    s_low = s.lower()
+    if "сюрреал" in s_low or "surreal" in s_low:
+        return "Сюрреализм"
+    if "пиктор" in s_low or "pictor" in s_low:
+        return "Пиктореализм"
+    if "экспресс" in s_low or "express" in s_low:
+        return "Экспрессионизм"
+    if "импресс" in s_low or "impress" in s_low:
+        return "Импрессионизм"
+    return s
+
+
 @dataclass
 class StyleAssignment:
     role: str
@@ -104,11 +127,37 @@ class StyleAssignment:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "StyleAssignment":
+    def from_dict(
+        cls,
+        data: Any,
+        default_role: str = "narrative",
+        default_style: str = "Сюрреализм",
+    ) -> "StyleAssignment":
+        if isinstance(data, str):
+            parts = re.split(r"\s*[—–:\-]\s*", data.strip(), maxsplit=1)
+            style = _normalize_style_name(parts[0], default_style=default_style)
+            traits = (
+                parts[1].strip()
+                if len(parts) > 1 and parts[1].strip()
+                else STYLE_ROLE_TRAITS.get(style, {}).get(default_role, "")
+            )
+            return cls(role=default_role, style=style, traits=traits)
+
+        if not isinstance(data, dict):
+            return cls(
+                role=default_role,
+                style=default_style,
+                traits=STYLE_ROLE_TRAITS.get(default_style, {}).get(default_role, ""),
+            )
+
+        role = str(data.get("role") or default_role)
+        raw_style = data.get("style") or data.get("name") or default_style
+        style = _normalize_style_name(raw_style, default_style=default_style)
+        traits = str(data.get("traits") or data.get("description") or "")
         return cls(
-            role=str(data.get("role", "narrative")),
-            style=str(data.get("style", "Сюрреализм")),
-            traits=str(data.get("traits", "")),
+            role=role,
+            style=style,
+            traits=traits,
         )
 
 
@@ -140,10 +189,19 @@ class StyleTriad:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "StyleTriad":
+        nar_raw = data.get("narrative") or data.get("plot") or data.get("story") or {}
+        lig_raw = data.get("lighting") or data.get("light") or {}
+        opt_raw = data.get("optics") or data.get("optic") or data.get("texture") or {}
         return cls(
-            narrative=StyleAssignment.from_dict(data.get("narrative", {})),
-            lighting=StyleAssignment.from_dict(data.get("lighting", {})),
-            optics=StyleAssignment.from_dict(data.get("optics", {})),
+            narrative=StyleAssignment.from_dict(
+                nar_raw, default_role="narrative", default_style="Сюрреализм"
+            ),
+            lighting=StyleAssignment.from_dict(
+                lig_raw, default_role="lighting", default_style="Экспрессионизм"
+            ),
+            optics=StyleAssignment.from_dict(
+                opt_raw, default_role="optics", default_style="Пиктореализм"
+            ),
             rationale=str(data.get("rationale", "")),
         )
 
@@ -176,24 +234,70 @@ class FusedPhotoConcept:
         else:
             triad = generate_style_triad()
 
-        steps_raw = data.get("shooting_steps", [])
-        steps = [str(s).strip() for s in steps_raw if str(s).strip()]
+        steps_raw = data.get("shooting_steps")
+        if steps_raw is None:
+            steps_raw = data.get("steps", [])
+        if isinstance(steps_raw, str):
+            steps = [
+                s.strip()
+                for s in re.split(r"[\r\n;]+", steps_raw)
+                if s.strip()
+            ]
+        elif isinstance(steps_raw, list):
+            steps = [str(s).strip() for s in steps_raw if str(s).strip()]
+        else:
+            steps = []
+
+        cam_raw = data.get("camera_setup")
+        if cam_raw is None:
+            cam_raw = data.get("settings", {})
+        if isinstance(cam_raw, dict):
+            camera_setup = dict(cam_raw)
+        elif isinstance(cam_raw, str) and cam_raw.strip():
+            camera_setup = {}
+            for idx, part in enumerate(re.split(r"[;\r\n]+", cam_raw), start=1):
+                if ":" in part:
+                    k, v = part.split(":", 1)
+                    if k.strip() and v.strip():
+                        camera_setup[k.strip()] = v.strip()
+                elif part.strip():
+                    camera_setup[f"Параметр {idx}"] = part.strip()
+        elif isinstance(cam_raw, list):
+            camera_setup = {}
+            for idx, item in enumerate(cam_raw, start=1):
+                s_item = str(item).strip()
+                if ":" in s_item:
+                    k, v = s_item.split(":", 1)
+                    camera_setup[k.strip()] = v.strip()
+                elif s_item:
+                    camera_setup[f"Параметр {idx}"] = s_item
+        else:
+            camera_setup = {}
+
+        gear_raw = data.get("gear_recipe")
+        if isinstance(gear_raw, dict):
+            gear_recipe = dict(gear_raw)
+        elif isinstance(gear_raw, str) and gear_raw.strip():
+            gear_recipe = {"camera": "Fujifilm X-T4", "lens": gear_raw.strip()}
+        else:
+            gear_recipe = {}
+
+        shooting_action = str(
+            data.get("shooting_action")
+            or data.get("physical_action")
+            or data.get("action")
+            or ""
+        ).strip()
 
         return cls(
-            title=str(data.get("title", "Без названия")).strip(),
+            title=str(data.get("title") or data.get("name") or "Без названия").strip(),
             triad=triad,
             manifesto=str(data.get("manifesto", "")).strip(),
             scene_description=str(data.get("scene_description", "")).strip(),
             lighting_setup=str(data.get("lighting_setup", "")).strip(),
-            camera_setup=(
-                data.get("camera_setup", {})
-                if isinstance(data.get("camera_setup"), dict) else {}
-            ),
-            shooting_action=str(data.get("shooting_action", "")).strip(),
-            gear_recipe=(
-                data.get("gear_recipe", {})
-                if isinstance(data.get("gear_recipe"), dict) else {}
-            ),
+            camera_setup=camera_setup,
+            shooting_action=shooting_action,
+            gear_recipe=gear_recipe,
             shooting_steps=steps,
             deepened_analysis=str(data.get("deepened_analysis", "")).strip(),
             midjourney_prompt=str(data.get("midjourney_prompt", "")).strip(),
@@ -348,10 +452,13 @@ def build_fusion_system_prompt() -> str:
         '        "Шаг 2: ...",\n'
         '        "Шаг 3: ...",\n'
         '        "Шаг 4: ..."\n'
-        "      ]\n"
+        "      ],\n"
         "    }\n"
         "  ]\n"
         "}\n"
+        "ВАЖНО ДЛЯ JSON: НЕ используй неэкранированные двойные кавычки (\") внутри "
+        "строковых значений (для кавычек в русском тексте используй ёлочки «...», "
+        "а выдержку в секундах пиши как \"1/6 с\", а не \"1/6\"\").\n"
         "Верни ТОЛЬКО валидный JSON без markdown-блоков и текста до/после."
     )
 
@@ -416,20 +523,130 @@ def validate_fusion_concept(concept: FusedPhotoConcept) -> tuple[bool, str]:
     return True, "OK"
 
 
+def _repair_concept_fields(concept: FusedPhotoConcept) -> FusedPhotoConcept:
+    """Дополняет частично заполненные или дублирующиеся поля концепта от локальной LLM."""
+    if not concept.title or len(concept.title.strip()) < 3 or concept.title == "Без названия":
+        return concept
+
+    # 1. Гарантируем 3 уникальных стиля в триаде
+    used: list[str] = []
+    for role_attr, role_key in (
+        ("narrative", "narrative"),
+        ("lighting", "lighting"),
+        ("optics", "optics"),
+    ):
+        assign: StyleAssignment = getattr(concept.triad, role_attr)
+        norm_style = _normalize_style_name(assign.style, default_style=AVAILABLE_STYLES[0])
+        if norm_style in used:
+            for candidate in AVAILABLE_STYLES:
+                if candidate not in used:
+                    norm_style = candidate
+                    break
+        used.append(norm_style)
+        assign.style = norm_style
+        assign.role = role_key
+        if not assign.traits.strip():
+            assign.traits = STYLE_ROLE_TRAITS.get(norm_style, {}).get(role_key, "")
+
+    if not concept.triad.rationale.strip():
+        concept.triad.rationale = (
+            f"Синтез: {concept.triad.narrative.style} (сюжет), "
+            f"{concept.triad.lighting.style} (свет) и {concept.triad.optics.style} (оптика)."
+        )
+
+    # 2. Дополняем текстовые блоки при обрыве генерации
+    if not concept.manifesto:
+        concept.manifesto = concept.triad.rationale
+    if not concept.scene_description:
+        concept.scene_description = concept.triad.narrative.traits or concept.manifesto
+    if not concept.lighting_setup:
+        concept.lighting_setup = (
+            concept.triad.lighting.traits
+            or STYLE_ROLE_TRAITS.get(concept.triad.lighting.style, {}).get("lighting", "")
+        )
+
+    # 3. Гарантируем минимум 2 параметра камеры
+    if len(concept.camera_setup) < 2:
+        opt_trait = (
+            concept.triad.optics.traits[:80]
+            if concept.triad.optics.traits
+            else "Художественная оптика"
+        )
+        defaults = {
+            "Приём съёмки": opt_trait,
+            "Выдержка": "1/6 с",
+            "Диафрагма": "f/2.8",
+            "Имитация плёнки": "Classic Chrome",
+        }
+        for k, v in defaults.items():
+            if k not in concept.camera_setup:
+                concept.camera_setup[k] = v
+            if len(concept.camera_setup) >= 3:
+                break
+
+    if not concept.gear_recipe:
+        concept.gear_recipe = {"camera": "Fujifilm X-T4"}
+
+    # 4. Физическое действие и пошаговый план
+    if not concept.shooting_action:
+        if concept.shooting_steps:
+            concept.shooting_action = concept.shooting_steps[0]
+        else:
+            concept.shooting_action = (
+                concept.triad.optics.traits
+                or "Плавная работа с оптическим рисунком и светотенью с рук"
+            )
+
+    if len(concept.shooting_steps) == 1:
+        concept.shooting_steps.append(f"Шаг 2: Выполнить приём — {concept.shooting_action}")
+    elif len(concept.shooting_steps) == 0:
+        cam_pairs = ", ".join(
+            f"{k}: {v}" for k, v in list(concept.camera_setup.items())[:2]
+        )
+        light_preview = (
+            concept.lighting_setup[:90] or "контрастный светотеневой рисунок"
+        )
+        concept.shooting_steps = [
+            f"Шаг 1: Настроить камеру ({cam_pairs})",
+            f"Шаг 2: Выстроить свет — {light_preview}",
+            f"Шаг 3: Выполнить съёмку — {concept.shooting_action[:90]}",
+        ]
+
+    return concept
+
+
 def parse_fusion_concepts(raw_response: str) -> list[FusedPhotoConcept]:
     """Парсит и валидирует концепт-проекты из ответа LLM."""
     projects_raw: list[Any] = []
     parsed = safe_parse_llm_json(raw_response, expected_type=dict)
     if isinstance(parsed, dict):
-        projects_raw = parsed.get("projects") or parsed.get("ideas") or []
+        projects_raw = (
+            parsed.get("projects")
+            or parsed.get("ideas")
+            or parsed.get("concepts")
+            or parsed.get("items")
+            or []
+        )
+        if not projects_raw and "title" in parsed and (
+            "triad" in parsed or "camera_setup" in parsed or "manifesto" in parsed
+        ):
+            projects_raw = [parsed]
     elif not isinstance(parsed, dict):
         list_parsed = safe_parse_llm_json(raw_response, expected_type=list)
         if isinstance(list_parsed, list):
             projects_raw = list_parsed
 
-    # Fallback: спасение закрытых проектов из частично обрезанного ответа (MAX_TOKENS)
+    # Fallback 1: спасение закрытых проектов из частично обрезанного ответа (MAX_TOKENS)
     if not projects_raw:
-        projects_raw = extract_partial_json_array(raw_response, array_keys=("projects", "ideas"))
+        projects_raw = extract_partial_json_array(
+            raw_response, array_keys=("projects", "ideas", "concepts"),
+        )
+
+    # Fallback 2: спасение первого незакрытого проекта, если ответ оборвался внутри него
+    if not projects_raw:
+        projects_raw = salvage_truncated_json_object(
+            raw_response, array_keys=("projects", "ideas", "concepts"),
+        )
 
     if not isinstance(projects_raw, list) or not projects_raw:
         logger.warning("[FUSION] Failed to parse JSON response: %s", raw_response[:200])
@@ -440,7 +657,7 @@ def parse_fusion_concepts(raw_response: str) -> list[FusedPhotoConcept]:
         if not isinstance(p, dict):
             continue
         try:
-            concept = FusedPhotoConcept.from_dict(p)
+            concept = _repair_concept_fields(FusedPhotoConcept.from_dict(p))
             ok, reason = validate_fusion_concept(concept)
             if ok:
                 valid_concepts.append(concept)
@@ -685,7 +902,198 @@ STYLE_MIDJOURNEY_MODIFIERS: dict[str, str] = {
         "impressionistic photography, luminous color vibration, Claude Monet palette, "
         "watercolor brush wash effect, intentional camera movement ICM blur, layered light"
     ),
+    "Конструктивизм": (
+        "Russian constructivism aesthetic, Alexander Rodchenko diagonal composition, "
+        "dynamic industrial geometry, bold stark graphic lines"
+    ),
 }
+
+ROLE_MIDJOURNEY_MODIFIERS: dict[str, dict[str, str]] = {
+    "Сюрреализм": {
+        "narrative": (
+            "uncanny narrative staging, paradoxical scale and spatial juxtaposition, "
+            "decontextualized symbolic objects"
+        ),
+        "lighting": (
+            "paradoxical twilight luminescence, eerie directional shadow play, "
+            "metaphysical nocturnal sun"
+        ),
+        "optics": (
+            "prismatic optical refraction, double-exposure spatial displacement, "
+            "mirror reflection split"
+        ),
+    },
+    "Пиктореализм": {
+        "narrative": (
+            "timeless elegiac composition, solitary poetic figure in atmospheric space, "
+            "quiet contemplative mood"
+        ),
+        "lighting": (
+            "velvety sfumato light falloff, soft backlit halo rim glow, "
+            "delicate silver luminance transitions"
+        ),
+        "optics": (
+            "soft-focus pictorial lens diffusion, matte silver halide grain, "
+            "smoothed micro-contrast"
+        ),
+    },
+    "Экспрессионизм": {
+        "narrative": (
+            "existential psychological framing, dramatic diagonal tension, "
+            "inner anxiety expressed through posture and architecture"
+        ),
+        "lighting": (
+            "razor-sharp chiaroscuro light beam, deep graphic diagonal shadows, "
+            "harsh single-source directional contrast"
+        ),
+        "optics": (
+            "Dutch angle 20 degree tilted horizon, wide-angle perspective distortion, "
+            "geometric optical imbalance"
+        ),
+    },
+    "Импрессионизм": {
+        "narrative": (
+            "fleeting candid moment, dynamic atmospheric motion, "
+            "shimmering breath of nature"
+        ),
+        "lighting": (
+            "dappled sunlight reflections, shimmering chromatic shadow reflexes, "
+            "dissolving contours in vibrant light"
+        ),
+        "optics": (
+            "painterly optical bokeh swirl, layered dark-mode multiple exposure glazing, "
+            "fluid motion blur"
+        ),
+    },
+    "Конструктивизм": {
+        "narrative": (
+            "bold architectural geometry, extreme low or high vantage point, "
+            "graphic visual rhythm"
+        ),
+        "lighting": (
+            "stark geometric shadow grids, high-contrast directional sunlight"
+        ),
+        "optics": (
+            "steep foreshortening, tilted diagonal framing, crisp structural edges"
+        ),
+    },
+}
+
+FUJI_FILM_SIM_MJ_MAPPING: dict[str, str] = {
+    "Classic Chrome": (
+        "Kodachrome 64 documentary slide film aesthetic, muted desaturated tones, "
+        "deep slate-blue shadows, warm earthy highlights"
+    ),
+    "Классический Негатив": (
+        "Fujicolor Superia 400 analog color negative film, high-contrast nostalgic color grading, "
+        "teal-cyan shadows and warm amber highlights"
+    ),
+    "ACROS": (
+        "Fujifilm Neopan 100 Acros black and white silver gelatin print, "
+        "deep pitch-black shadows, rich tonal micro-gradation, fine organic silver halide grain"
+    ),
+    "ACROS (+R Красный)": (
+        "Fujifilm Neopan 100 Acros black and white silver gelatin print with red contrast filter, "
+        "dramatic darkened skies, high-contrast monochrome micro-texture"
+    ),
+    "ACROS (+Ye Желтый)": (
+        "Fujifilm Neopan 100 Acros black and white silver gelatin print with yellow filter, "
+        "harmonic monochrome tonal separation, natural silver halide grain"
+    ),
+    "ACROS (+G Зеленый)": (
+        "Fujifilm Neopan 100 Acros black and white silver gelatin print with green filter, "
+        "expressive skin micro-texture and foliage luminance"
+    ),
+    "ETERNA/Кино": (
+        "Kodak Vision3 500T 35mm motion picture cinema film, soft highlight roll-off, "
+        "muted cinematic color palette, logarithmic tonal range"
+    ),
+    "ETERNA Bleach Bypass": (
+        "35mm bleach bypass silver retention process, harsh metallic contrast, "
+        "desaturated cold steely palette, gritty analog texture"
+    ),
+    "ASTIA/Слабая": (
+        "Fujichrome Astia 100F slide film, soft velvety skin tones, "
+        "pastel micro-contrast, delicate luminance transitions"
+    ),
+    "Velvia/Яркий": (
+        "Fujichrome Velvia 50 vivid slide film, rich saturated chromatic depth, "
+        "deep shadows, luminous color contrast"
+    ),
+    "Velvia": (
+        "Fujichrome Velvia 50 vivid slide film, rich saturated chromatic depth, "
+        "deep shadows, luminous color contrast"
+    ),
+    "PROVIA/Стандартный": (
+        "Fujichrome Provia 100F reversal slide film, natural true-to-life color reproduction, "
+        "balanced analog tonal curve"
+    ),
+    "PRO Neg. Hi": (
+        "Fujifilm Pro 400H portrait color negative film, crisp shadow separation, "
+        "natural warm skin tones"
+    ),
+    "PRO Neg. Std": (
+        "Fujifilm Pro 160NS medium format negative aesthetic, ultra-smooth tonal gradation, "
+        "soft low-contrast pastel palette"
+    ),
+    "Монохромный": (
+        "Ilford HP5 Plus 400 black and white 35mm film, classic documentary monochrome grain"
+    ),
+    "Монохромный (+R Красный)": (
+        "Ilford HP5 Plus 400 black and white 35mm film with red filter, stark monochrome contrast"
+    ),
+    "Монохромный (+Ye Желтый)": (
+        "Ilford HP5 Plus 400 black and white 35mm film with yellow filter, classic tonal balance"
+    ),
+    "Монохромный (+G Зеленый)": (
+        "Ilford HP5 Plus 400 black and white 35mm film with green filter, rich midtone texture"
+    ),
+    "Сепия": (
+        "vintage warm sepia-toned silver gelatin print, archival albumen warmth, "
+        "aged analog paper texture"
+    ),
+}
+
+_RU_TO_EN_PHOTO_TERMS: tuple[tuple[str, str], ...] = (
+    ("одинокая фигура", "solitary human figure"),
+    ("фигура", "human figure"),
+    ("силуэт", "dramatic dark silhouette"),
+    ("пальто", "dark trench coat"),
+    ("бетон", "wet brutalist concrete wall texture"),
+    ("асфальт", "rain-slicked dark asphalt"),
+    ("туман", "dense atmospheric fog"),
+    ("дымк", "misty atmospheric haze"),
+    ("отражени", "mirror reflection on wet surface"),
+    ("луж", "rain puddle reflection"),
+    ("зеркал", "shattered mirror glass reflection"),
+    ("оскол", "sharp glass shard"),
+    ("тень", "deep elongated shadow"),
+    ("тени", "deep dramatic shadows"),
+    ("дожд", "falling rain droplets and wet surfaces"),
+    ("мокр", "wet glistening surface"),
+    ("окн", "light streaming through window frame"),
+    ("дерев", "bare organic tree branches"),
+    ("ветв", "intertwined branches"),
+    ("рук", "expressive human hands with natural skin texture"),
+    ("лиц", "emotive close-up face with natural skin pores"),
+    ("портрет", "intimate fine art portrait"),
+    ("причал", "weathered wooden pier by water"),
+    ("вод", "dark rippling water surface"),
+    ("лестниц", "geometric spiral staircase"),
+    ("проулок", "narrow moody urban alley"),
+    ("улиц", "empty nocturnal street"),
+    ("небоскреб", "monumental glass skyscraper facade"),
+    ("фасад", "architectural building facade"),
+    ("контровой", "strong dramatic rim backlight, halo contour glow"),
+    ("натриев", "warm amber sodium vapor streetlamp light"),
+    ("фонар", "solitary streetlamp pool of light"),
+    ("боковой", "chiaroscuro directional side lighting"),
+    ("сумерк", "twilight blue hour atmosphere"),
+    ("ноч", "nocturnal low-key lighting"),
+    ("луч", "narrow shaft of volumetric light"),
+    ("рассеян", "soft diffused ambient light"),
+    ("жестк", "hard directional high-contrast light"),
+)
 
 STYLE_CURATED_REFERENCES: dict[str, list[dict[str, str]]] = {
     "Сюрреализм": [
@@ -951,51 +1359,277 @@ def build_concept_navigation_kb(
     return kb
 
 
-def build_midjourney_prompt(concept: FusedPhotoConcept) -> str:
-    """Генерирует готовый английский промпт для Midjourney v6 / Flux.1."""
-    parts = []
+def translate_ru_photo_terms_to_en(text: str) -> str:
+    """Переводит ключевые русские фотографические мотивы и свет в английские дескрипторы."""
+    if not text:
+        return ""
+    low = text.lower()
+    matched: list[str] = []
+    for ru_stem, en_phrase in _RU_TO_EN_PHOTO_TERMS:
+        if ru_stem in low and en_phrase not in matched:
+            matched.append(en_phrase)
+            if len(matched) >= 5:
+                break
+    return ", ".join(matched)
 
-    # Стилистические модификаторы триады
-    for style in concept.triad.styles():
+
+def build_arsenal_optics_mj_tokens(
+    lens_raw: str,
+    filter_raw: str,
+    action_raw: str = "",
+    default_lens_label: str = "Fujifilm Fujinon",
+) -> list[str]:
+    """Отображает полный оптический арсенал и физику съёмки в английские токены Midjourney."""
+    tokens: list[str] = []
+    lens = (lens_raw or "").lower()
+    filt = (filter_raw or "").lower()
+    act = (action_raw or "").lower()
+    combined = f"{lens} {filt} {act}"
+
+    # 1. Объектив
+    if "гелиос" in lens or "helios" in lens:
+        tokens.append(
+            "shot on vintage Helios 44-2 58mm f/2 lens, circular swirly bokeh, "
+            "organic optical vignette"
+        )
+    elif "kamlan" in lens or "камлан" in lens or "1.1" in lens:
+        tokens.append(
+            "shot on manual Kamlan 50mm f/1.1 lens wide open at f/1.1, "
+            "paper-thin depth of field, creamy melting bokeh, soft spherical aberration glow"
+        )
+    elif "pentacon" in lens or "пентакон" in lens or "перевёрнут" in lens or "перевернут" in lens:
+        tokens.append(
+            "shot on modified vintage Pentacon 29mm lens with reversed front element, "
+            "tack-sharp central subject surrounded by extreme radial swirly vortex bokeh "
+            "and optical edge coma"
+        )
+    elif "монокль" in lens or "monocle" in lens:
+        tokens.append(
+            "shot on soft focus monocle lens, ethereal halation glow, "
+            "pictorialist spherical aberration"
+        )
+    elif "отверсти" in lens or "center-hole" in lens:
+        tokens.append(
+            "shot through custom center-hole diopter filter, tack-sharp central subject "
+            "framed by dreamy optical tunnel refraction blur"
+        )
+    else:
+        tokens.append(f"shot on {default_lens_label} lens, rich microcontrast")
+
+    # 2. Фильтры, модификаторы и вспышка
+    if "призм" in filt or "prism" in filt or "призм" in act:
+        tokens.append(
+            "refracted through optical triangular crystal glass prism, chromatic split flare"
+        )
+    if "mist" in filt or "мист" in filt:
+        tokens.append("Black Pro-Mist diffusion filter, soft glowing blooming highlights")
+    if "отверсти" in filt and "center-hole" not in " ".join(tokens):
+        tokens.append(
+            "shot through custom center-hole diopter filter, tack-sharp central subject "
+            "framed by dreamy optical tunnel refraction blur"
+        )
+    if any(w in combined for w in ("ткан", "вуаль", "тюль", "прозрачн", "veil", "tulle")):
+        tokens.append(
+            "shot through sheer translucent tulle fabric veil close to lens, "
+            "misty tactile diffusion, veiled highlights"
+        )
+    if any(w in combined for w in ("nd", "k&f", "нейтрально-сер", "длинная выдержка")):
+        tokens.append(
+            "long exposure on tripod with variable ND filter, silky flowing motion blur "
+            "contrasted against tack-sharp static elements"
+        )
+    if any(w in combined for w in ("godox", "вспышк", "шторк", "flash")):
+        tokens.append(
+            "rear-curtain sync flash photography with Godox V1F, frozen sharp subject "
+            "with ambient ghost motion trails"
+        )
+
+    # 3. Физика рук, мультиэкспозиция и ICM
+    if any(w in act for w in ("мульти", "icm", "лессировк", "тремор", "смаз", "двойн", "руки")):
+        if "тёмный" in act or "темный" in act:
+            tokens.append(
+                "in-camera double exposure in Darken blend mode (silhouette filled with "
+                "secondary texture), multiple exposure layering, "
+                "intentional camera movement ICM watercolor blur"
+            )
+        elif "яркий" in act:
+            tokens.append(
+                "in-camera double exposure in Lighten blend mode, glowing spectral overlay, "
+                "multiple exposure layering, intentional camera movement ICM watercolor blur"
+            )
+        else:
+            tokens.append(
+                "multiple exposure layering, intentional camera movement ICM watercolor blur"
+            )
+
+    if "голландск" in act or "dutch" in act or "наклон" in act:
+        tokens.append("Dutch angle tilted horizon 20 degrees, dynamic off-balance framing")
+
+    return tokens
+
+
+def build_fuji_recipe_mj_tokens(
+    recipe_or_sim: Any,
+    include_velvia_legacy: bool = False,
+) -> str:
+    """Преобразует рецепт Fujifilm X-T4 в описание реальной плёночной эмульсии и зерна."""
+    sim_name = "Velvia/Яркий"
+    h_tone = 0.0
+    s_tone = 0.0
+    grain = ""
+    clarity = 0
+    wb_r = 0
+    wb_b = 0
+
+    if isinstance(recipe_or_sim, str) and recipe_or_sim.strip():
+        sim_name = recipe_or_sim.strip()
+    elif isinstance(recipe_or_sim, dict):
+        sim_name = str(recipe_or_sim.get("film_simulation") or "Velvia/Яркий")
+        h_tone = float(recipe_or_sim.get("highlight_tone") or 0.0)
+        s_tone = float(recipe_or_sim.get("shadow_tone") or 0.0)
+        grain = str(recipe_or_sim.get("grain_effect") or "")
+        clarity = int(recipe_or_sim.get("clarity") or 0)
+        wb_r = int(recipe_or_sim.get("wb_shift_r") or 0)
+        wb_b = int(recipe_or_sim.get("wb_shift_b") or 0)
+    elif recipe_or_sim is not None and hasattr(recipe_or_sim, "film_simulation"):
+        sim_name = str(getattr(recipe_or_sim, "film_simulation", "Velvia/Яркий"))
+        h_tone = float(getattr(recipe_or_sim, "highlight_tone", 0.0))
+        s_tone = float(getattr(recipe_or_sim, "shadow_tone", 0.0))
+        grain = str(getattr(recipe_or_sim, "grain_effect", ""))
+        clarity = int(getattr(recipe_or_sim, "clarity", 0))
+        wb_r = int(getattr(recipe_or_sim, "wb_shift_r", 0))
+        wb_b = int(getattr(recipe_or_sim, "wb_shift_b", 0))
+
+    emulsion = FUJI_FILM_SIM_MJ_MAPPING.get(sim_name)
+    if not emulsion:
+        for key, val in FUJI_FILM_SIM_MJ_MAPPING.items():
+            if key.lower() in sim_name.lower() or sim_name.lower() in key.lower():
+                emulsion = val
+                break
+    if not emulsion:
+        emulsion = FUJI_FILM_SIM_MJ_MAPPING["Classic Chrome"]
+
+    sub_tokens: list[str] = []
+    if include_velvia_legacy and "velvia" not in sim_name.lower():
+        sub_tokens.append(f"Fujifilm X-T4 film simulation Velvia / {sim_name}")
+    elif "velvia" in sim_name.lower():
+        sub_tokens.append("Fujifilm X-T4 film simulation Velvia")
+    else:
+        sub_tokens.append(f"Fujifilm X-T4 film simulation {sim_name}")
+
+    sub_tokens.append(emulsion)
+
+    # Тоновая кривая
+    if s_tone >= 2.0:
+        sub_tokens.append("crushed ink-black shadows")
+    elif s_tone <= -1.0:
+        sub_tokens.append("lifted matte atmospheric shadows")
+    if h_tone <= -1.0:
+        sub_tokens.append("soft rolled-off creamy highlights")
+    elif h_tone >= 1.5:
+        sub_tokens.append("crisp specular highlights")
+
+    # Зерно и чёткость
+    grain_low = grain.lower()
+    if "сильный" in grain_low:
+        sub_tokens.append("pronounced coarse 35mm silver halide film grain")
+    elif "слабый" in grain_low:
+        sub_tokens.append("fine organic 35mm film grain")
+    else:
+        sub_tokens.append("authentic 35mm analog film grain")
+
+    if clarity < 0:
+        sub_tokens.append("negative clarity dreamy highlight halation")
+
+    # Цветовой сдвиг баланса белого (WB Shift R/B)
+    if wb_r >= 2 and wb_b <= -2:
+        sub_tokens.append("warm amber-golden analog color cast")
+    elif wb_r <= -2 and wb_b >= 2:
+        sub_tokens.append("cool cyan-slate nocturnal color cast")
+    elif wb_r >= 2 and wb_b >= 2:
+        sub_tokens.append("split-toned magenta-violet twilight cast")
+
+    return ", ".join(sub_tokens)
+
+
+def build_mj_technical_flags(aspect_ratio: str = "16:9", mode: str = "raw") -> str:
+    """Формирует финальный блок параметров Midjourney v6.1 и анти-CGI защиту."""
+    valid_ars = ("16:9", "4:5", "3:2", "1:1", "21:9")
+    ar = aspect_ratio if aspect_ratio in valid_ars else "16:9"
+    neg = "--no cgi, 3d render, digital painting, illustration, plastic airbrushed skin"
+    if mode == "art":
+        return f"--ar {ar} --v 6.1 --s 220 --w 35 --c 12 {neg}"
+    return f"--ar {ar} --v 6.1 --style raw --s 90 {neg}"
+
+
+def build_midjourney_prompt(
+    concept: FusedPhotoConcept,
+    aspect_ratio: str = "16:9",
+    mode: str = "raw",
+) -> str:
+    """Генерирует фотореалистичный английский промпт для Midjourney v6.1 / Flux.1."""
+    parts: list[str] = [
+        "unretouched raw analog 35mm photograph, authentic optical physics, "
+        "natural surface micro-texture"
+    ]
+
+    # Стилистические модификаторы триады с учётом конкретной роли каждого стиля
+    role_pairs = (
+        ("narrative", concept.triad.narrative.style),
+        ("lighting", concept.triad.lighting.style),
+        ("optics", concept.triad.optics.style),
+    )
+    for role_key, style in role_pairs:
         mod = STYLE_MIDJOURNEY_MODIFIERS.get(style)
-        if mod:
+        if mod and mod not in parts:
             parts.append(mod)
+        role_mod = ROLE_MIDJOURNEY_MODIFIERS.get(style, {}).get(role_key)
+        if role_mod and role_mod not in parts:
+            parts.append(role_mod)
 
-    # Описание сцены
+    # Описание сцены + автоматический англоязычный фотографический перевод
     scene = concept.scene_description.strip()
     if scene:
-        parts.append(f"scene: {scene}")
+        en_scene = translate_ru_photo_terms_to_en(scene)
+        if en_scene:
+            parts.append(f"scene: {scene} ({en_scene})")
+        else:
+            parts.append(f"scene: {scene}")
 
-    # Световая схема
+    # Световая схема + автоматический англоязычный перевод света
     lighting = concept.lighting_setup.strip()
     if lighting:
-        parts.append(f"lighting: {lighting}")
+        en_light = translate_ru_photo_terms_to_en(lighting)
+        if en_light:
+            parts.append(f"lighting: {lighting} ({en_light})")
+        else:
+            parts.append(f"lighting: {lighting}")
 
-    # Оптика и насадки
+    # Оптика, фильтры, насадки и действие рук
     gear = concept.gear_recipe
-    lens = str(gear.get("lens", "")).lower()
-    if "гелиос" in lens or "helios" in lens:
-        parts.append("shot on vintage Helios 44-2 58mm f/2 lens, circular swirly bokeh")
-    elif "монокль" in lens or "monocle" in lens:
-        parts.append("shot on soft focus monocle lens, ethereal halation glow")
-    else:
-        parts.append("shot on Fujifilm Fujinon lens, rich microcontrast")
+    lens_str = str(gear.get("lens", ""))
+    filt_str = str(gear.get("filter_or_accessory", ""))
+    parts.extend(
+        build_arsenal_optics_mj_tokens(
+            lens_raw=lens_str,
+            filter_raw=filt_str,
+            action_raw=concept.shooting_action,
+            default_lens_label="Fujifilm Fujinon",
+        )
+    )
 
-    filter_name = str(gear.get("filter_or_accessory", "")).lower()
-    if "призм" in filter_name or "prism" in filter_name:
-        parts.append("refracted through optical triangular crystal glass prism, chromatic split")
-    elif "mist" in filter_name or "мист" in filter_name:
-        parts.append("Black Pro-Mist diffusion filter, soft glowing blooming highlights")
+    # Реальная эмульсия и рецепт плёнки Fujifilm X-T4
+    try:
+        from services.fuji_recipes import build_fuji_recipe_for_concept
+        fuji_rec = build_fuji_recipe_for_concept(concept)
+        emulsion_str = build_fuji_recipe_mj_tokens(fuji_rec, include_velvia_legacy=True)
+    except Exception:  # noqa: BLE001
+        cam_sim = str(concept.camera_setup.get("film_sim", "Velvia/Яркий"))
+        emulsion_str = build_fuji_recipe_mj_tokens(cam_sim, include_velvia_legacy=True)
 
-    # Действие и мультиэкспозиция
-    action = concept.shooting_action.lower()
-    if "мульти" in action or "icm" in action or "лессировк" in action or "тремор" in action:
-        parts.append("multiple exposure layering, intentional camera movement ICM watercolor blur")
-
-    # Технические флаги
+    flags = build_mj_technical_flags(aspect_ratio=aspect_ratio, mode=mode)
     parts.append(
-        "Fujifilm X-T4 film simulation Velvia, fine art gallery photography, "
-        "8k resolution, editorial aesthetic --ar 16:9 --v 6.1 --style raw"
+        f"{emulsion_str}, fine art gallery photography, editorial aesthetic {flags}"
     )
 
     return ", ".join(parts)
