@@ -44,7 +44,9 @@ def _plan(profile: UserProfile | None = None):
 
 def _text(path: Path) -> str:
     with fitz.open(path) as document:
-        return "\n".join(page.get_text() for page in document)
+        raw = "\n".join(page.get_text() for page in document)
+    # PDF line wrapping differs between platforms/font metrics; compare words.
+    return " ".join(raw.split())
 
 
 def test_plan_pdf_contains_sections_and_citations(tmp_path):
