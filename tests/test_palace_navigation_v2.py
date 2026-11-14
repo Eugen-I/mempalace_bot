@@ -9,6 +9,8 @@
 """
 
 import json
+from pathlib import Path
+
 import pytest
 
 from handlers.palace import navigation as nav
@@ -203,3 +205,23 @@ async def test_export_palace_map_html_callback(monkeypatch):
     assert "graph-canvas" in html_text
     assert "w1" in html_text
     assert "r1" in html_text
+    assert nav._exported_map_path is not None
+    exported = Path(nav._exported_map_path)
+    assert exported.read_text(encoding="utf-8") == html_text
+    exported.unlink()
+
+
+@pytest.mark.asyncio
+async def test_open_browser_requires_export_first(monkeypatch):
+    """Кнопка браузера не открывает несуществующий файл до экспорта карты."""
+    monkeypatch.setattr(nav, "_exported_map_path", None)
+    monkeypatch.setattr(nav.os.path, "exists", lambda path: False)
+    popen_calls = []
+    import subprocess
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: popen_calls.append(args))
+
+    cb = FakeCb(data="p_open_browser")
+    await nav.cb_open_browser(cb)
+
+    assert cb.answered is True
+    assert popen_calls == []

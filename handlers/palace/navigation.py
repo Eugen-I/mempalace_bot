@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import secrets
+import tempfile
 from pathlib import Path
 
 from aiogram import F, types
@@ -38,6 +39,7 @@ _drawer_list_state: TtlDict = TtlDict()
 _active_drawer: TtlDict = TtlDict()
 _room_callback_map: UICallbackCache = UICallbackCache(namespace="palace_rooms")
 _wing_callback_map: UICallbackCache = UICallbackCache(namespace="palace_wings")
+_exported_map_path: str | None = None
 
 
 def _encode_callback_part(value: str) -> str:
@@ -827,11 +829,14 @@ async def cb_export_map(cb: types.CallbackQuery):
         html_bytes = html_content.encode("utf-8")
 
         # Сохраняем во временный файл для мгновенного открытия в браузере на Mac
+        global _exported_map_path
         try:
-            with open("/tmp/palace-graph.html", "w", encoding="utf-8") as f:
+            fd, map_path = tempfile.mkstemp(prefix="palace-graph-", suffix=".html")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(html_content)
+            _exported_map_path = map_path
         except Exception:
-            pass
+            logger.debug("[MAP_EXPORT] не удалось сохранить временный файл", exc_info=True)
 
         total_rooms_count = sum(len(r) for r in rooms_by_wing.values())
         caption = (
@@ -881,11 +886,19 @@ async def cb_export_map(cb: types.CallbackQuery):
 async def cb_open_browser(cb: types.CallbackQuery):
     try:
         import subprocess
-        tmp_path = "/tmp/palace-graph.html"
         repo_path = os.path.join(
             os.path.dirname(__file__), "..", "..", "palace-graph.html"
         )
-        target = repo_path if os.path.exists(repo_path) else tmp_path
+        if os.path.exists(repo_path):
+            target = repo_path
+        elif _exported_map_path and os.path.exists(_exported_map_path):
+            target = _exported_map_path
+        else:
+            await cb.answer(
+                "❌ Сначала сформируйте карту кнопкой экспорта.",
+                show_alert=True,
+            )
+            return
         subprocess.Popen(["open", target])
         await cb.answer("🚀 Граф открыт в вашем браузере!")
     except Exception as e:

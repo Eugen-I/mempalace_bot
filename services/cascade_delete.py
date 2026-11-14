@@ -106,7 +106,8 @@ def delete_from_sqlite_embeddings(
             params.append(f"%{file_basename}%")
 
         if clauses:
-            query = f"DELETE FROM notes_embeddings WHERE {' OR '.join(clauses)}"
+            # clauses contain only fixed SQL fragments; values are bound via params.
+            query = f"DELETE FROM notes_embeddings WHERE {' OR '.join(clauses)}"  # nosec B608
             cur.execute(query, params)
             deleted = cur.rowcount
             conn.commit()
